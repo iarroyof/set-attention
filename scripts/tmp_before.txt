@@ -1,0 +1,201 @@
+import argparse
+import os
+from typing import List
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from set_attention.patch import replace_multihead_attn
+from set_attention.experiments.data_nlp import TextPairConfig, make_textpair_loader, make_textpair_loader_from_lists
+from set_attention.experiments.datasets_hf import load_seq2seq_pairs
+from set_attention.utils.profiling import profiler
+from set_attention.experiments.nlp_eval import corpus_bleu, rouge_l
+from set_attention.tokenizers.active_tokenizer import ActiveUniverseTokenizer, TokenizerConfig
+from set_attention.experiments.token_sets import build_token_sets_from_texts
+from set_attention.heads.ska_tokenized import SetKernelMultiheadAttentionTokenized
+
+
+class TinySeq2Seq(nn.Module):
+    def __init__(self, src_vocab: int, tgt_vocab: int, d_model: int = 128, nhead: int = 4, layers: int = 4):
+        super().__init__()
+        self.src_emb = nn.Embedding(src_vocab, d_model)
+        self.tgt_emb = nn.Embedding(tgt_vocab, d_model)
+        enc = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
+        dec = nn.TransformerDecoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
+        self.enc = nn.TransformerEncoder(enc, num_layers=layers)
+        self.dec = nn.TransformerDecoder(dec, num_layers=layers)
+        self.out = nn.Linear(d_model, tgt_vocab)
+
+    def forward(self, src, tgt):
+        mem = self.enc(self.src_emb(src))
+        out = self.dec(self.tgt_emb(tgt), mem)
+        return self.out(out)
+
+
+class TinySeq2SeqSKATok(nn.Module):
+    """Seq2Seq with tokenizer-aware SKA cross-attention (dot self-attn).
+
+    Expects per-batch token sets for src and tgt provided at forward.
+    """
+
+    def __init__(self, src_vocab: int, tgt_vocab: int, d_model: int = 128, nhead: int = 4, layers: int = 2,
+                 ska_gamma: float = 0.3, gate_topk: int = 8):
+        super().__init__()
+        self.src_emb = nn.Embedding(src_vocab, d_model)
+        self.tgt_emb = nn.Embedding(tgt_vocab, d_model)
+        enc = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
+        self.enc = nn.TransformerEncoder(enc, num_layers=layers)
+        # dot-product self-attn for decoder
+        self.dec_self = nn.TransformerEncoder(nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True), num_layers=1)
+        # tokenizer-aware SKA for cross-attention
+        self.cross_attn = SetKernelMultiheadAttentionTokenized(embed_dim=d_model, num_heads=nhead, batch_first=True, gamma=ska_gamma)
+        # Learnable gating over tokenizer atoms (enable externally after tokenizer is known)
+        self.gate_topk = gate_topk
+        self.out = nn.Linear(d_model, tgt_vocab)
+
+    def enable_gating(self, vocab_size: int, atom_dim: int = 64):
+        self.cross_attn.enable_gating(vocab_size=vocab_size, atom_dim=atom_dim, gate_topk=self.gate_topk)
+
+    def forward(self, src, tgt_in,
+                src_sets_vals: torch.LongTensor, src_sets_offs: torch.LongTensor,
+                tgt_sets_vals: torch.LongTensor, tgt_sets_offs: torch.LongTensor,
+                src_sigs: torch.LongTensor | None = None, tgt_sigs: torch.LongTensor | None = None):
+        mem = self.enc(self.src_emb(src))
+        dec_h = self.dec_self(self.tgt_emb(tgt_in))
+        # Cross attention using tokenizer-aware SKA
+        h, _ = self.cross_attn(
+            dec_h, mem, mem,
+            token_sets_q=tgt_sets_vals, token_offs_q=tgt_sets_offs,
+            token_sets_k=src_sets_vals, token_offs_k=src_sets_offs,
+            token_sigs_q=tgt_sigs, token_sigs_k=src_sigs,
+        )
+        return self.out(h)
+
+
+def main():
+    # Enable cuDNN autotuner for consistent shapes
+    torch.backends.cudnn.benchmark = True
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--src", required=False)
+    ap.add_argument("--tgt", required=False)
+    ap.add_argument("--attn", choices=["dot", "cosine", "rbf", "intersect", "ska_true", "ska_tok"], default="dot")
+    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--epochs", type=int, default=2)
+    ap.add_argument("--max-len", type=int, default=64)
+    ap.add_argument("--batch", type=int, default=64)
+    ap.add_argument("--demo", action="store_true", help="Run with a tiny synthetic parallel corpus if files are missing")
+    ap.add_argument("--demo-samples", type=int, default=200)
+    ap.add_argument("--dataset", type=str, default="", choices=["", "wmt16_en_ro", "cnn_dailymail"], help="Optional: download a real dataset (subsampled)")
+    ap.add_argument("--limit", type=int, default=200, help="Limit number of examples for quick tests")
+    ap.add_argument("--tokenizer", type=str, default="", help="Path to saved tokenizer dir (will train if missing and ska_tok)")
+    ap.add_argument("--gate-topk", type=int, default=8)
+    args = ap.parse_args()
+
+    # Build data loader from HF dataset, local files, or demo
+    loader = None
+    if args.dataset:
+        try:
+            print(f"[Data] Downloading dataset {args.dataset} (limit={args.limit})")
+            src_list, tgt_list = load_seq2seq_pairs(args.dataset, split="train", limit=args.limit)
+            loader = make_textpair_loader_from_lists(src_list, tgt_list, max_len=args.max_len, batch_size=args.batch)
+        except Exception as e:
+            print(f"[Data] Failed to load dataset {args.dataset}: {e}. Falling back to demo.")
+            args.demo = True
+    if args.demo and loader is None:
+        # Create a tiny synthetic corpus: sequences of numbers and their reverse
+        import tempfile
+        import random
+        random.seed(0)
+        os.makedirs("data", exist_ok=True)
+        src_path = os.path.join("data", "demo.src")
+        tgt_path = os.path.join("data", "demo.tgt")
+        with open(src_path, "w", encoding="utf-8") as fs, open(tgt_path, "w", encoding="utf-8") as ft:
+            for _ in range(args.demo_samples):
+                length = min(8, max(3, int(random.random() * 8)))
+                toks = [str(int(1 + random.random() * 9)) for __ in range(length)]
+                fs.write(" ".join(toks) + "\n")
+                ft.write(" ".join(reversed(toks)) + "\n")
+        cfg = TextPairConfig(src_path=src_path, tgt_path=tgt_path, max_len=args.max_len, batch_size=args.batch)
+        loader = make_textpair_loader(cfg)
+    elif loader is None:
+        if not args.src or not args.tgt:
+            raise SystemExit("--src and --tgt are required unless --demo is set or --dataset is provided.")
+        cfg = TextPairConfig(src_path=args.src, tgt_path=args.tgt, max_len=args.max_len, batch_size=args.batch)
+        loader = make_textpair_loader(cfg)
+    ds = loader.dataset
+        try:
+            loader = make_textpair_loader(cfg)
+        except FileNotFoundError as e:
+            raise SystemExit(f"File not found: {e}. Provide valid --src/--tgt or use --demo to run a synthetic example.")
+
+    sim = args.attn
+    if sim == "ska_tok":
+        model = TinySeq2SeqSKATok(src_vocab=len(ds.src_stoi), tgt_vocab=len(ds.tgt_stoi), layers=2, nhead=4, ska_gamma=0.3, gate_topk=args.gate_topk)
+        # Prepare tokenizer
+        tok = None
+        if args.tokenizer and os.path.isdir(args.tokenizer):
+            print(f"[Tokenizer] Loading from {args.tokenizer}")
+            tok = ActiveUniverseTokenizer.load(args.tokenizer)
+        else:
+            print("[Tokenizer] Training new tokenizer on source corpus")
+            src_lines = [s for s, _ in ds.pairs]
+            cfg_tok = TokenizerConfig(seed_lengths=(3, 4, 5), min_freq=2, max_len=args.max_len)
+            tok = ActiveUniverseTokenizer(cfg_tok)
+            tok.fit(src_lines)
+            if args.tokenizer:
+                os.makedirs(args.tokenizer, exist_ok=True)
+                tok.save(args.tokenizer)
+                print(f"[Tokenizer] Saved to {args.tokenizer}")
+        model.enable_gating(vocab_size=len(tok.sym2id), atom_dim=64)
+
+        # Precompute per-sequence token sets and signatures once using raw strings
+        all_src_texts = [s for (s, _) in ds.pairs]
+        all_tgt_texts = [t for (_, t) in ds.pairs]
+        src_vals_all, src_offs_all = build_token_sets_from_texts(tok, all_src_texts)
+        tgt_vals_all, tgt_offs_all = build_token_sets_from_texts(tok, all_tgt_texts)
+        # Precompute MinHash signatures (vectorized)
+        from set_attention.kernels.sketches import MinHasher
+        mh = MinHasher(k=64, device=src_vals_all.device)
+        src_sigs_all = mh.sketch_vec(src_vals_all, src_offs_all)
+        tgt_sigs_all = mh.sketch_vec(tgt_vals_all, tgt_offs_all)
+        # Move to device once
+        device = torch.device(args.device)
+        src_vals_all = src_vals_all.to(device); src_offs_all = src_offs_all.to(device); src_sigs_all = src_sigs_all.to(device)
+        tgt_vals_all = tgt_vals_all.to(device); tgt_offs_all = tgt_offs_all.to(device); tgt_sigs_all = tgt_sigs_all.to(device)
+    if loader is None:
+        if not args.src or not args.tgt:
+            raise SystemExit("--src and --tgt are required unless --demo is set or --dataset is provided.")
+        cfg = TextPairConfig(src_path=args.src, tgt_path=args.tgt, max_len=args.max_len, batch_size=args.batch)
+        loader = make_textpair_loader(cfg)
+    ds = loader.dataset
+
+    else:
+        model = TinySeq2Seq(src_vocab=len(ds.src_stoi), tgt_vocab=len(ds.tgt_stoi))
+        if args.attn != "dot":
+            replace_multihead_attn(model, sim=args.attn)
+    device = torch.device(args.device)
+    model.to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=3e-4)
+
+    for ep in range(1, args.epochs + 1):
+        refs, hyps = [], []
+        with profiler(True) as prof:
+            # Use a DataLoader with workers and pinned memory for fair comparison
+            from torch.utils.data import DataLoader
+            if sim == "ska_tok":
+                loader_local = DataLoader(ds, batch_size=args.batch, shuffle=False, num_workers=2, pin_memory=True)
+                print("[Seq2Seq-Text] Using sequential loader (shuffle=False) for ska_tok batching")
+            else:
+                loader_local = DataLoader(ds, batch_size=args.batch, shuffle=False, num_workers=2, pin_memory=True)
+            for batch in loader_local:
+                if isinstance(batch, tuple):
+                    src, tgt = batch
+                else:
+                    src, tgt = batch[0], batch[1]
+                src, tgt = src.to(device, non_blocking=True), tgt.to(device, non_blocking=True)
+                tgt_in = torch.cat([tgt[:, :1], tgt[:, :-1]], dim=1)
+                if sim == "ska_tok":
+                    # Gather precomputed per-sequence sets/signatures for this batch in order
+                    # Build batch-wise CSR by concatenating examples
+                    start_idx = int(_seen) if '_seen' in globals() else 0
+                    # Track running index across batches using a closure variable
+                    try:

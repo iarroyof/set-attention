@@ -1,0 +1,10 @@
+program: scripts/train_tiny_vit_cifar.py
+method: grid
+metric:
+  name: train/loss
+  goal: minimize
+parameters:
+  attn:
+    values: [dot, rbf, intersect, ska_true]
+  epochs:
+    value: 1

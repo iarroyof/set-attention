@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.env/
+.venv/
+env/
+pip-wheel-metadata/
+
+# Editor / OS
+.vscode/
+.idea/
+*.iml
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+
+# Data (ignore all dataset files)
+data/
+data/**
+
+# PyTorch / model artifacts
+*.pt
+*.pth
+*.ckpt
+pytorch_model.bin
+checkpoints/
+models/
+saved_models/
+runs/
+logs/
+tensorboard/
+
+# Training / experiment metadata
+trainer_state.json
+*.tar.gz
+*.zip
+*.tgz
+*.tar
+
+# Caches
+.cache/
+cache/
+cached_*
+transformers_cache/
+hf_cache/
+huggingface/
+*.sqlite
+
+# Weights & experiment tracking
+wandb/
+mlruns/
+azureml/
+.neptune/
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+
+# Large files hint (use Git LFS instead of committing big binaries)
+# e.g. run: git lfs install &&
+

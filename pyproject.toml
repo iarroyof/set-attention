@@ -1,0 +1,42 @@
+[project]
+name = "set-attention"
+version = "0.1.0"
+description = "Patchable kernel-based attention heads for PyTorch Transformers/Diffusion"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "Set Attention Dev" }
+]
+dependencies = [
+  "torch>=2.0",
+  "einops>=0.7",
+  "numpy>=1.22",
+  "pyyaml>=6.0"
+]
+
+[project.optional-dependencies]
+wandb = ["wandb>=0.16"]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
+  "ruff>=0.5",
+  "black>=24.3.0"
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["set_attention*"]
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
