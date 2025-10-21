@@ -1,66 +1,78 @@
+# -----------------------------
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual environments
-venv/
-.env/
+# Virtual environments / tooling
 .venv/
+venv/
 env/
+.env/
+.env.*
 pip-wheel-metadata/
 
-# Editor / OS
+# Editors / OS
 .vscode/
 .idea/
 *.iml
 .ipynb_checkpoints/
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Data (ignore all dataset files)
+# Data (ignore datasets entirely; keep an empty dir placeholder)
 data/
-data/**
+!data/.gitkeep
 
-# PyTorch / model artifacts
-*.pt
-*.pth
-*.ckpt
-pytorch_model.bin
-checkpoints/
-models/
-saved_models/
+# Artifacts / experiments / logs
 runs/
 logs/
 tensorboard/
+wandb/
+mlruns/
+azureml/
+.neptune/
+checkpoints/
+models/
+saved_models/
+artifacts/
+outputs/
 
-# Training / experiment metadata
-trainer_state.json
-*.tar.gz
-*.zip
-*.tgz
+# Model & ML binaries
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.h5
+*.onnx
+*.npz
+*.npy
+*.pkl
+*.joblib
+
+# Big archives (don’t commit these; use releases or storage)
 *.tar
+*.tar.gz
+*.tgz
+*.zip
 
 # Caches
 .cache/
 cache/
 cached_*
+pytest_cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
 transformers_cache/
 hf_cache/
 huggingface/
 *.sqlite
 
-# Weights & experiment tracking
-wandb/
-mlruns/
-azureml/
-.neptune/
-
 # Packaging / build
 build/
 dist/
 *.egg-info/
-
-# Large files hint (use Git LFS instead of committing big binaries)
-# e.g. run: git lfs install &&
-
