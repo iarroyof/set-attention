@@ -6,11 +6,10 @@ import torch.nn.functional as F
 
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
 from set_attention.sets.bank_builders import build_windowed_bank_from_ids
-from set_attention.sets.bank_cache import SetBankCache
-from set_attention.sets.bank_utils import gather_bank_batch
-from set_attention.sets.banked import BankedSetBatch
 from set_attention.heads.banked_attention import SetBankAttention
 from set_attention.heads.token_router import TokenSetRouter
+from set_attention.universe import SetFeatureCache, UniversePool
+from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.profiling import profiler
 from set_attention.experiments.nlp_eval import corpus_bleu
 from set_attention.training.text_utils import (
@@ -74,7 +73,7 @@ def main():
     val_refs = [tgt.split() for _, tgt in val_text_pairs]
 
     max_len = X.size(1) + 2
-    vocab_size = int(X.max().item() + 1)
+    vocab_size = len(vocab_tokens)
     device = torch.device(args.device)
 
     sequences_train = [torch.tensor(src) for src, _ in train_pairs_int]
@@ -91,10 +90,12 @@ def main():
     else:
         phi_snapshot = atom_emb.weight
 
-    train_cache = SetBankCache(phi_snapshot, minhash_k=args.minhash_k)
-    train_cache.precompute(train_bank.values, train_bank.set_offsets)
-    val_cache = SetBankCache(phi_snapshot, minhash_k=args.minhash_k)
-    val_cache.precompute(val_bank.values, val_bank.set_offsets)
+    universe_ids = torch.arange(vocab_size, device=device, dtype=torch.long)
+    universe = UniversePool(universe_ids, metadata={"task": "toy_lm"}).to(device)
+    train_minhash = MinHasher(k=args.minhash_k, device=train_bank.values.device)
+    val_minhash = MinHasher(k=args.minhash_k, device=val_bank.values.device)
+    train_cache = SetFeatureCache(universe, train_bank.values, train_bank.set_offsets, train_bank.seq_offsets, minhash=train_minhash).to(device)
+    val_cache = SetFeatureCache(universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=val_minhash).to(device)
 
     backbone = TinyLMBackbone(vocab_size, args.d_model, args.nhead, args.layers).to(device)
     set_attn = SetBankAttention(
@@ -139,9 +140,8 @@ def main():
             tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
 
             phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-            bank = train_bank if train else val_bank
             cache = train_cache if train else val_cache
-            Phi, Sig, Size, mask = gather_bank_batch(bank, cache, batch_idx, phi_dynamic, adapter is not None, args.d_model, args.minhash_k)
+            Phi, Sig, Size, mask = cache.gather_padded(batch_idx, phi_dynamic)
             token_states = backbone(src_ids)
             Z = set_attn(Phi, Sig, Size, mask, Phi, Sig, Size, mask)
             routed = router(token_states, Z, Phi, mask)

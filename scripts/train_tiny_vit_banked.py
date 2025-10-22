@@ -14,12 +14,12 @@ except Exception:
     torchvision = None
 
 from set_attention.sets.bank_builders import build_windowed_bank_from_ids
-from set_attention.sets.bank_cache import SetBankCache
-from set_attention.sets.bank_utils import gather_bank_batch
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
 from set_attention.heads.banked_attention import SetBankAttention
 from set_attention.heads.token_router import TokenSetRouter
 from set_attention.sets.banked import BankedSetBatch
+from set_attention.universe import SetFeatureCache, UniversePool
+from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.profiling import profiler
 
 
@@ -121,8 +121,10 @@ def main():
             phi_snapshot = adapter(atom_emb.weight).detach()
     else:
         phi_snapshot = atom_emb.weight
-    cache = SetBankCache(phi_snapshot, minhash_k=args.minhash_k)
-    cache.precompute(bank.values, bank.set_offsets)
+    universe_ids = torch.arange(vocab_size, device=device, dtype=torch.long)
+    universe = UniversePool(universe_ids, metadata={"task": "tiny_vit"}).to(device)
+    minhash = MinHasher(k=args.minhash_k, device=bank.values.device)
+    cache = SetFeatureCache(universe, bank.values, bank.set_offsets, bank.seq_offsets, minhash=minhash).to(device)
 
     backbone = TinyViTBackbone(dim=128, depth=4, heads=4, patch=args.patch).to(device)
     set_attn = SetBankAttention(
@@ -154,10 +156,11 @@ def main():
                 yb = yb.to(device, non_blocking=True)
                 tokens = backbone(xb)
                 phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi, Sig, Size, mask = gather_bank_batch(bank, cache, batch_idx, phi_dynamic, adapter is not None, 128, args.minhash_k)
+                Phi, Sig, Size, mask = cache.gather_padded(batch_idx, phi_dynamic)
                 Z = set_attn(Phi, Sig, Size, mask, Phi, Sig, Size, mask)
                 routed = router(tokens, Z, Phi, mask)
-                logits = head(routed)
+                cls_repr = routed.mean(dim=1)
+                logits = head(cls_repr)
                 loss = F.cross_entropy(logits, yb)
                 optim.zero_grad(set_to_none=True)
                 loss.backward()

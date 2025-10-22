@@ -10,10 +10,7 @@ import torch.nn.functional as F
 from set_attention.tokenizers.active_tokenizer import ActiveUniverseTokenizer, TokenizerConfig
 from set_attention.training.seq_loaders import get_seq2seq_datasets
 from set_attention.sets.bank_builders import build_windowed_bank_from_texts
-from set_attention.sets.bank_cache import SetBankCache
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
-from set_attention.sets.banked import BankedSetBatch
-from set_attention.sets.bank_utils import gather_bank_batch
 from set_attention.heads.banked_attention import SetBankAttention
 from set_attention.heads.token_router import TokenSetRouter
 from set_attention.training.text_utils import (
@@ -22,6 +19,8 @@ from set_attention.training.text_utils import (
     text_batch_iterator,
     SPECIAL_TOKENS,
 )
+from set_attention.universe import SetFeatureCache, UniversePool
+from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.profiling import profiler
 from set_attention.experiments.nlp_eval import corpus_bleu, rouge_l
 
@@ -42,45 +41,6 @@ class TinySeq2SeqBackbone(nn.Module):
         dec = self.dec_self(self.tgt_emb(tgt_in_ids))
         return dec, mem
 
-
-def gather_bank_batch(
-    bank,
-    cache: SetBankCache,
-    batch_indices: torch.Tensor,
-    phi_dynamic: torch.Tensor,
-    use_adapter: bool,
-    atom_dim: int,
-    minhash_k: int,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    device = batch_indices.device
-    seq_offsets = bank.seq_offsets
-    B = batch_indices.numel()
-    counts = []
-    for idx in batch_indices.tolist():
-        a = int(seq_offsets[idx].item())
-        c = int(seq_offsets[idx + 1].item())
-        counts.append(c - a)
-    S_max = max(counts) if counts else 0
-    Phi_pad = torch.zeros(B, S_max, atom_dim, device=device)
-    Sig_pad = torch.zeros(B, S_max, minhash_k, dtype=torch.long, device=device)
-    Size_pad = torch.zeros(B, S_max, dtype=torch.long, device=device)
-    mask = torch.zeros(B, S_max, dtype=torch.bool, device=device)
-    for bi, idx in enumerate(batch_indices.tolist()):
-        a = int(seq_offsets[idx].item())
-        c = int(seq_offsets[idx + 1].item())
-        if c <= a:
-            continue
-        set_idx = torch.arange(a, c, device=device, dtype=torch.long)
-        sig_seq, size_seq = cache.gather_sig_size(set_idx)
-        Sig_pad[bi, : sig_seq.size(0)] = sig_seq
-        Size_pad[bi, : size_seq.size(0)] = size_seq
-        mask[bi, : sig_seq.size(0)] = True
-        if use_adapter:
-            Phi_seq = cache.compute_phi_for_indices(set_idx, phi_dynamic)
-        else:
-            Phi_seq = cache.Phi_sets.index_select(0, set_idx)
-        Phi_pad[bi, : Phi_seq.size(0)] = Phi_seq
-    return Phi_pad, Sig_pad, Size_pad, mask
 
 
 def main():
@@ -173,16 +133,18 @@ def main():
         phi_snapshot = atom_emb.weight
         print("[Adapter] disabled (atom pool frozen; Φ pooled from fixed atom_emb)")
 
-    cache_src = SetBankCache(phi_snapshot, minhash_k=args.minhash_k)
-    cache_src.precompute(src_bank.values, src_bank.set_offsets)
-    cache_tgt = SetBankCache(phi_snapshot, minhash_k=args.minhash_k)
-    cache_tgt.precompute(tgt_bank.values, tgt_bank.set_offsets)
+    universe_ids = torch.arange(V, device=device, dtype=torch.long)
+    universe = UniversePool(universe_ids, metadata={"tokenizer": args.tokenizer or "inline"}).to(device)
+    print(universe.log_summary(prefix="[Universe]"))
+
+    train_minhash = MinHasher(k=args.minhash_k, device=src_bank.values.device)
+    cache_src = SetFeatureCache(universe, src_bank.values, src_bank.set_offsets, src_bank.seq_offsets, minhash=train_minhash).to(device)
+    cache_tgt = SetFeatureCache(universe, tgt_bank.values, tgt_bank.set_offsets, tgt_bank.seq_offsets, minhash=train_minhash).to(device)
 
     if has_val:
-        val_cache_src = SetBankCache(phi_snapshot, minhash_k=args.minhash_k)
-        val_cache_src.precompute(val_src_bank.values, val_src_bank.set_offsets)
-        val_cache_tgt = SetBankCache(phi_snapshot, minhash_k=args.minhash_k)
-        val_cache_tgt.precompute(val_tgt_bank.values, val_tgt_bank.set_offsets)
+        val_minhash = MinHasher(k=args.minhash_k, device=val_src_bank.values.device)
+        val_cache_src = SetFeatureCache(universe, val_src_bank.values, val_src_bank.set_offsets, val_src_bank.seq_offsets, minhash=val_minhash).to(device)
+        val_cache_tgt = SetFeatureCache(universe, val_tgt_bank.values, val_tgt_bank.set_offsets, val_tgt_bank.seq_offsets, minhash=val_minhash).to(device)
 
     model = TinySeq2SeqBackbone(
         src_vocab=len(train_src_stoi),
@@ -234,12 +196,8 @@ def main():
                 tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
 
                 phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi_q, Sig_q, Size_q, mask_q = gather_bank_batch(
-                    tgt_bank, cache_tgt, batch_idx_tensor, phi_dynamic, adapter is not None, args.atom_dim, args.minhash_k
-                )
-                Phi_k, Sig_k, Size_k, mask_k = gather_bank_batch(
-                    src_bank, cache_src, batch_idx_tensor, phi_dynamic, adapter is not None, args.atom_dim, args.minhash_k
-                )
+                Phi_q, Sig_q, Size_q, mask_q = cache_tgt.gather_padded(batch_idx_tensor, phi_dynamic)
+                Phi_k, Sig_k, Size_k, mask_k = cache_src.gather_padded(batch_idx_tensor, phi_dynamic)
 
                 dec_h, _ = model(src_ids, tgt_in)
                 Z_sets = set_attn(Phi_q, Sig_q, Size_q, mask_q, Phi_k, Sig_k, Size_k, mask_k)
@@ -293,12 +251,8 @@ def main():
                     tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
 
                     phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                    Phi_q, Sig_q, Size_q, mask_q = gather_bank_batch(
-                        val_tgt_bank, val_cache_tgt, batch_idx_tensor, phi_dynamic, adapter is not None, args.atom_dim, args.minhash_k
-                    )
-                    Phi_k, Sig_k, Size_k, mask_k = gather_bank_batch(
-                        val_src_bank, val_cache_src, batch_idx_tensor, phi_dynamic, adapter is not None, args.atom_dim, args.minhash_k
-                    )
+                    Phi_q, Sig_q, Size_q, mask_q = val_cache_tgt.gather_padded(batch_idx_tensor, phi_dynamic)
+                    Phi_k, Sig_k, Size_k, mask_k = val_cache_src.gather_padded(batch_idx_tensor, phi_dynamic)
 
                     dec_h, _ = model(src_ids, tgt_in)
                     Z_sets = set_attn(Phi_q, Sig_q, Size_q, mask_q, Phi_k, Sig_k, Size_k, mask_k)

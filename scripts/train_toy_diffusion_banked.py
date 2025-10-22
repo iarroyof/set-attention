@@ -1,6 +1,7 @@
 import argparse
 import os
 import random
+from typing import Iterator, Tuple
 
 import torch
 import torch.nn as nn
@@ -13,11 +14,11 @@ from set_attention.eval.mmd_simple import mmd2_unbiased_from_feats
 from set_attention.utils.metrics import chamfer_l2, one_nn_two_sample
 from set_attention.utils.profiling import profiler
 from set_attention.sets.bank_builders import build_windowed_bank_from_ids
-from set_attention.sets.bank_cache import SetBankCache
-from set_attention.sets.bank_utils import gather_bank_batch
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
 from set_attention.heads.banked_attention import SetBankAttention
 from set_attention.heads.token_router import TokenSetRouter
+from set_attention.universe import SetFeatureCache, UniversePool
+from set_attention.kernels.sketches import MinHasher
 
 
 def make_id_sequence(x: torch.Tensor) -> torch.Tensor:
@@ -65,7 +66,9 @@ class BankedDenoiser(nn.Module):
         return self.proj_out(routed)
 
 
-def tensor_batch_iterator(data: torch.Tensor, batch_size: int, shuffle: bool) -> torch.Iterator:
+def tensor_batch_iterator(
+    data: torch.Tensor, batch_size: int, shuffle: bool
+) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
     indices = list(range(data.size(0)))
     if shuffle:
         random.shuffle(indices)
@@ -123,10 +126,12 @@ def main():
     else:
         phi_snapshot = atom_emb.weight
 
-    train_cache = SetBankCache(phi_snapshot, minhash_k=args.minhash_k)
-    train_cache.precompute(train_bank.values, train_bank.set_offsets)
-    val_cache = SetBankCache(phi_snapshot, minhash_k=args.minhash_k)
-    val_cache.precompute(val_bank.values, val_bank.set_offsets)
+    universe_ids = torch.arange(vocab_size, device=args.device, dtype=torch.long)
+    universe = UniversePool(universe_ids, metadata={"task": "toy_diffusion"}).to(args.device)
+    train_minhash = MinHasher(k=args.minhash_k, device=train_bank.values.device)
+    val_minhash = MinHasher(k=args.minhash_k, device=val_bank.values.device)
+    train_cache = SetFeatureCache(universe, train_bank.values, train_bank.set_offsets, train_bank.seq_offsets, minhash=train_minhash).to(args.device)
+    val_cache = SetFeatureCache(universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=val_minhash).to(args.device)
 
     model = BankedDenoiser(in_dim=data_cfg.dim, d_model=args.d_model, nhead=args.nhead, layers=args.layers, router_topk=args.router_topk).to(args.device)
     ddpm = SimpleDDPM(T=args.steps, device=args.device)
@@ -143,7 +148,7 @@ def main():
             for batch_idx, xb in tensor_batch_iterator(train_data, data_cfg.batch_size, shuffle=True):
                 xb = xb.to(args.device)
                 phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi, Sig, Size, mask = gather_bank_batch(train_bank, train_cache, batch_idx.to(args.device), phi_dynamic, adapter is not None, args.d_model, args.minhash_k)
+                Phi, Sig, Size, mask = train_cache.gather_padded(batch_idx.to(args.device), phi_dynamic)
                 model.set_current_bank(Phi, Sig, Size, mask)
                 loss = ddpm.loss(model, xb, lambda t, dim: timestep_embedding(t, args.d_model), args.d_model)
                 optimizer.zero_grad(set_to_none=True)
@@ -159,7 +164,7 @@ def main():
             for batch_idx, xb in tensor_batch_iterator(val_data, data_cfg.batch_size, shuffle=False):
                 xb = xb.to(args.device)
                 phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi, Sig, Size, mask = gather_bank_batch(val_bank, val_cache, batch_idx.to(args.device), phi_dynamic, adapter is not None, args.d_model, args.minhash_k)
+                Phi, Sig, Size, mask = val_cache.gather_padded(batch_idx.to(args.device), phi_dynamic)
                 model.set_current_bank(Phi, Sig, Size, mask)
                 val_mmd, val_chamfer, val_nn1 = eval_suite(ddpm, model, xb, args.d_model)
                 mmds.append(val_mmd)
