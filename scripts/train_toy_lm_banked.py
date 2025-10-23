@@ -51,7 +51,7 @@ def main():
     ap.add_argument("--minhash-k", type=int, default=64)
     ap.add_argument("--adapter-rank", type=int, default=0)
     ap.add_argument("--router-topk", type=int, default=0)
-    ap.add_argument("--profile", action="store_true")
+    ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
     args = ap.parse_args()
 
     X, Y = make_char_data()
@@ -76,8 +76,12 @@ def main():
     vocab_size = len(vocab_tokens)
     device = torch.device(args.device)
 
-    sequences_train = [torch.tensor(src) for src, _ in train_pairs_int]
-    sequences_val = [torch.tensor(src) for src, _ in val_pairs_int]
+    def remap_to_vocab(seq):
+        # Map raw integer tokens (0..raw_vocab) onto the padded vocabulary indices.
+        return torch.tensor([stoi[f"tok{int(tok)}"] for tok in seq], dtype=torch.long)
+
+    sequences_train = [remap_to_vocab(src) for src, _ in train_pairs_int]
+    sequences_val = [remap_to_vocab(src) for src, _ in val_pairs_int]
     train_bank = build_windowed_bank_from_ids(sequences_train, window=args.window, stride=args.stride).to(device)
     val_bank = build_windowed_bank_from_ids(sequences_val, window=args.window, stride=args.stride).to(device)
 

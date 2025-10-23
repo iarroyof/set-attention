@@ -1,7 +1,7 @@
 import argparse
 import os
 import random
-from typing import Iterator, Tuple
+from typing import Iterator, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -67,15 +67,18 @@ class BankedDenoiser(nn.Module):
 
 
 def tensor_batch_iterator(
-    data: torch.Tensor, batch_size: int, shuffle: bool
+    data: torch.Tensor, batch_size: int, shuffle: bool, generator: Optional[torch.Generator] = None
 ) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
-    indices = list(range(data.size(0)))
+    if data.numel() == 0:
+        return
     if shuffle:
-        random.shuffle(indices)
-    for start in range(0, len(indices), batch_size):
+        perm = torch.randperm(data.size(0), generator=generator)
+        indices = perm
+    else:
+        indices = torch.arange(data.size(0), dtype=torch.long)
+    for start in range(0, data.size(0), batch_size):
         batch_idx = indices[start : start + batch_size]
-        batch = data[batch_idx]
-        yield torch.tensor(batch_idx, dtype=torch.long), batch
+        yield batch_idx.clone(), data[batch_idx]
 
 
 def main():
@@ -91,50 +94,87 @@ def main():
     ap.add_argument("--minhash-k", type=int, default=32)
     ap.add_argument("--adapter-rank", type=int, default=0)
     ap.add_argument("--router-topk", type=int, default=0)
-    ap.add_argument("--profile", action="store_true")
+    ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
     ap.add_argument("--config", type=str, default="configs/diffusion_toy.yaml")
+    defaults = ap.parse_args([])
     args = ap.parse_args()
 
     cfg_yaml = {}
+    yaml_path = args.config
     if os.path.isfile(args.config):
         import yaml
 
-        cfg_yaml = yaml.safe_load(open(args.config, "r", encoding="utf-8"))
-    torch.manual_seed(int(cfg_yaml.get("seed", 2024)))
+        with open(yaml_path, "r", encoding="utf-8") as handle:
+            cfg_yaml = yaml.safe_load(handle) or {}
+
+    def override_from_cfg(cfg_key: str, arg_name: str):
+        if cfg_key in cfg_yaml and getattr(args, arg_name) == getattr(defaults, arg_name):
+            setattr(args, arg_name, cfg_yaml[cfg_key])
+
+    override_from_cfg("steps", "steps")
+    override_from_cfg("d_model", "d_model")
+    override_from_cfg("nhead", "nhead")
+    override_from_cfg("layers", "layers")
+
+    seed = int(cfg_yaml.get("seed", 2024))
+    torch.manual_seed(seed)
+    random.seed(seed)
+    device = torch.device(args.device)
+
     data_cfg = ToyDiffConfig(
         n_samples=int(cfg_yaml.get("n_samples", 1000)),
         seq_len=int(cfg_yaml.get("seq_len", 16)),
         dim=int(cfg_yaml.get("dim", 8)),
         batch_size=int(cfg_yaml.get("batch_size", 64)),
+        val_frac=float(cfg_yaml.get("val_frac", 0.2)),
+        seed=seed,
+        n_modes=int(cfg_yaml.get("n_modes", 4)),
     )
     train_loader, val_loader = make_toy_continuous_sequences(data_cfg)
-    train_data = torch.cat([b[0] for b in train_loader], dim=0)
-    val_data = torch.cat([b[0] for b in val_loader], dim=0)
+
+    def subset_tensor(loader):
+        ds = loader.dataset
+        if hasattr(ds, "dataset") and hasattr(ds, "indices"):
+            base_tensor = ds.dataset.tensors[0]
+            return base_tensor[ds.indices].clone()
+        if hasattr(ds, "tensors"):
+            return ds.tensors[0].clone()
+        raise ValueError("Unsupported dataset type for tensor extraction")
+
+    train_data = subset_tensor(train_loader)
+    val_data = subset_tensor(val_loader)
+
+    seq_len = train_data.size(1) if train_data.dim() > 1 else 0
+    feat_dim = train_data.size(2) if train_data.dim() > 2 else 0
+    print(
+        f"[Diffusion-Banked] dataset loaded | train sequences {train_data.size(0)} | "
+        f"val sequences {val_data.size(0)} | seq len {seq_len} | dim {feat_dim}"
+    )
 
     train_ids = [make_id_sequence(x) for x in train_data]
     val_ids = [make_id_sequence(x) for x in val_data]
-    train_bank = build_windowed_bank_from_ids(train_ids, window=args.window, stride=args.stride).to(args.device)
-    val_bank = build_windowed_bank_from_ids(val_ids, window=args.window, stride=args.stride).to(args.device)
+    train_bank = build_windowed_bank_from_ids(train_ids, window=args.window, stride=args.stride).to(device)
+    val_bank = build_windowed_bank_from_ids(val_ids, window=args.window, stride=args.stride).to(device)
 
     vocab_size = int(max(train_bank.values.max(), val_bank.values.max()).item() + 1) if train_bank.values.numel() > 0 else data_cfg.seq_len * 2
-    atom_emb = nn.Embedding(vocab_size, args.d_model).to(args.device)
+    atom_emb = nn.Embedding(vocab_size, args.d_model).to(device)
     adapter = None
     if args.adapter_rank > 0:
-        adapter = AtomFeatureAdapter(args.d_model, rank=args.adapter_rank).to(args.device)
+        adapter = AtomFeatureAdapter(args.d_model, rank=args.adapter_rank).to(device)
         with torch.no_grad():
             phi_snapshot = adapter(atom_emb.weight).detach()
     else:
         phi_snapshot = atom_emb.weight
 
-    universe_ids = torch.arange(vocab_size, device=args.device, dtype=torch.long)
-    universe = UniversePool(universe_ids, metadata={"task": "toy_diffusion"}).to(args.device)
+    universe_ids = torch.arange(vocab_size, device=device, dtype=torch.long)
+    universe = UniversePool(universe_ids, metadata={"task": "toy_diffusion"}).to(device)
     train_minhash = MinHasher(k=args.minhash_k, device=train_bank.values.device)
     val_minhash = MinHasher(k=args.minhash_k, device=val_bank.values.device)
-    train_cache = SetFeatureCache(universe, train_bank.values, train_bank.set_offsets, train_bank.seq_offsets, minhash=train_minhash).to(args.device)
-    val_cache = SetFeatureCache(universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=val_minhash).to(args.device)
+    train_cache = SetFeatureCache(universe, train_bank.values, train_bank.set_offsets, train_bank.seq_offsets, minhash=train_minhash).to(device)
+    val_cache = SetFeatureCache(universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=val_minhash).to(device)
 
-    model = BankedDenoiser(in_dim=data_cfg.dim, d_model=args.d_model, nhead=args.nhead, layers=args.layers, router_topk=args.router_topk).to(args.device)
-    ddpm = SimpleDDPM(T=args.steps, device=args.device)
+    model = BankedDenoiser(in_dim=data_cfg.dim, d_model=args.d_model, nhead=args.nhead, layers=args.layers, router_topk=args.router_topk).to(device)
+    ddpm = SimpleDDPM(T=args.steps, device=device)
     params = list(model.parameters()) + list(atom_emb.parameters())
     if adapter is not None:
         params += list(adapter.parameters())
@@ -144,11 +184,12 @@ def main():
         model.train()
         total_loss = 0.0
         count = 0
+        train_gen = torch.Generator().manual_seed(seed + epoch)
         with profiler(args.profile) as prof:
-            for batch_idx, xb in tensor_batch_iterator(train_data, data_cfg.batch_size, shuffle=True):
-                xb = xb.to(args.device)
+            for batch_idx, xb in tensor_batch_iterator(train_data, data_cfg.batch_size, shuffle=True, generator=train_gen):
+                xb = xb.to(device)
                 phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi, Sig, Size, mask = train_cache.gather_padded(batch_idx.to(args.device), phi_dynamic)
+                Phi, Sig, Size, mask = train_cache.gather_padded(batch_idx.to(device), phi_dynamic)
                 model.set_current_bank(Phi, Sig, Size, mask)
                 loss = ddpm.loss(model, xb, lambda t, dim: timestep_embedding(t, args.d_model), args.d_model)
                 optimizer.zero_grad(set_to_none=True)
@@ -162,15 +203,27 @@ def main():
         with torch.no_grad():
             mmds, chamfers, nn1s = [], [], []
             for batch_idx, xb in tensor_batch_iterator(val_data, data_cfg.batch_size, shuffle=False):
-                xb = xb.to(args.device)
+                xb = xb.to(device)
                 phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi, Sig, Size, mask = val_cache.gather_padded(batch_idx.to(args.device), phi_dynamic)
+                Phi, Sig, Size, mask = val_cache.gather_padded(batch_idx.to(device), phi_dynamic)
                 model.set_current_bank(Phi, Sig, Size, mask)
                 val_mmd, val_chamfer, val_nn1 = eval_suite(ddpm, model, xb, args.d_model)
                 mmds.append(val_mmd)
                 chamfers.append(val_chamfer)
                 nn1s.append(val_nn1)
-        msg = f"[Diffusion-Banked] epoch {epoch:02d} train loss {train_loss:.4f} | val MMD {sum(mmds)/len(mmds):.4f} | Chamfer {sum(chamfers)/len(chamfers):.4f} | 1NN {sum(nn1s)/len(nn1s):.3f}"
+
+        def safe_mean(values):
+            return float(sum(values) / len(values)) if values else float("nan")
+
+        val_mmd_mean = safe_mean(mmds)
+        val_chamfer_mean = safe_mean(chamfers)
+        val_nn1_mean = safe_mean(nn1s)
+
+        msg = (
+            f"[Diffusion-Banked] epoch {epoch:02d} "
+            f"train loss {train_loss:.4f} | val MMD {val_mmd_mean:.4f} | "
+            f"Chamfer {val_chamfer_mean:.4f} | 1NN {val_nn1_mean:.3f}"
+        )
         if args.profile:
             msg += f" | time {prof['time_s']:.2f}s"
             if torch.cuda.is_available():

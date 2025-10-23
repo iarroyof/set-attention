@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 
@@ -47,3 +47,22 @@ def gather_bank_batch(
             Phi_seq = cache.Phi_sets.index_select(0, set_idx)
         Phi_pad[b_idx, : Phi_seq.size(0)] = Phi_seq
     return Phi_pad, Sig_pad, Size_pad, mask
+
+
+def update_coverage_stats(
+    mask: torch.Tensor,
+    set_idx: torch.Tensor,
+    coverage_mask: Optional[torch.Tensor] = None,
+) -> Tuple[int, int, Optional[torch.Tensor]]:
+    """Accumulate coverage statistics for a batch and optionally mark covered sets.
+
+    Returns the total number of active sets in the batch, the batch sequence count,
+    and the mutated coverage mask (if provided).
+    """
+    if mask.numel() == 0:
+        return 0, int(mask.size(0)), coverage_mask
+    batch_sets = int(mask.sum().item())
+    batch_seqs = int(mask.size(0))
+    if coverage_mask is not None and coverage_mask.numel() > 0 and set_idx.numel() > 0:
+        coverage_mask[set_idx.detach().cpu().long()] = True
+    return batch_sets, batch_seqs, coverage_mask

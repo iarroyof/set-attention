@@ -1,7 +1,7 @@
 import argparse
 import os
 import time
-from typing import List, Tuple
+from typing import List
 
 import torch
 import torch.nn as nn
@@ -15,9 +15,10 @@ except Exception:
 
 from set_attention.sets.bank_builders import build_windowed_bank_from_ids
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
+from set_attention.sets.bank_utils import update_coverage_stats
+from set_attention.sets.banked import BankedSetBatch
 from set_attention.heads.banked_attention import SetBankAttention
 from set_attention.heads.token_router import TokenSetRouter
-from set_attention.sets.banked import BankedSetBatch
 from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.profiling import profiler
@@ -38,13 +39,13 @@ def patch_ids_from_image(img: torch.Tensor, patch: int) -> torch.Tensor:
     return torch.tensor(ids, dtype=torch.long)
 
 
-def build_patch_banks(dataset, patch: int, limit: int) -> Tuple[BankedSetBatch, List[int]]:
+def build_patch_banks(dataset, patch: int, limit: int) -> BankedSetBatch:
     sequences = []
     for idx in range(limit):
         img, _ = dataset[idx]
         sequences.append(patch_ids_from_image(img, patch))
     bank = build_windowed_bank_from_ids(sequences, window=8, stride=4)
-    return bank, [i for i in range(limit)]
+    return bank
 
 
 class PatchEmbed(nn.Module):
@@ -72,16 +73,17 @@ class TinyViTBackbone(nn.Module):
 
 
 class IndexedDataset(torch.utils.data.Dataset):
-    def __init__(self, base_dataset, limit: int):
+    def __init__(self, base_dataset, indices: List[int]):
         self.base = base_dataset
-        self.limit = min(limit, len(base_dataset))
+        self.indices = indices
 
     def __len__(self):
-        return self.limit
+        return len(self.indices)
 
     def __getitem__(self, idx):
-        img, label = self.base[idx]
-        return idx, img, label
+        base_idx = self.indices[idx]
+        img, label = self.base[base_idx]
+        return base_idx, img, label
 
 
 def main():
@@ -92,12 +94,13 @@ def main():
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--patch", type=int, default=4)
     ap.add_argument("--limit", type=int, default=2048)
+    ap.add_argument("--val-frac", type=float, default=0.1)
     ap.add_argument("--window", type=int, default=8)
     ap.add_argument("--stride", type=int, default=4)
     ap.add_argument("--minhash-k", type=int, default=64)
     ap.add_argument("--adapter-rank", type=int, default=0)
     ap.add_argument("--router-topk", type=int, default=0)
-    ap.add_argument("--profile", action="store_true")
+    ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
     args = ap.parse_args()
 
     if torchvision is None:
@@ -106,11 +109,30 @@ def main():
     device = torch.device(args.device)
     transform = T.Compose([T.ToTensor()])
     base_dataset = torchvision.datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
-    indexed_dataset = IndexedDataset(base_dataset, args.limit)
-    loader = torch.utils.data.DataLoader(indexed_dataset, batch_size=args.batch, shuffle=True, num_workers=2)
+    total_limit = min(args.limit, len(base_dataset))
+    indices_full = list(range(total_limit))
+    if args.val_frac <= 0.0 or total_limit < 2:
+        train_indices = indices_full
+        val_indices: List[int] = []
+    else:
+        val_count = max(1, int(total_limit * args.val_frac))
+        if val_count >= total_limit:
+            val_count = max(1, total_limit // 5)
+        train_indices = indices_full[:-val_count]
+        val_indices = indices_full[-val_count:]
 
-    bank, order = build_patch_banks(base_dataset, args.patch, args.limit)
-    bank = bank.to(device)
+    train_dataset = IndexedDataset(base_dataset, train_indices)
+    val_dataset = IndexedDataset(base_dataset, val_indices) if val_indices else None
+    loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2, pin_memory=(device.type == "cuda"))
+    val_loader = (
+        torch.utils.data.DataLoader(val_dataset, batch_size=args.batch, shuffle=False, num_workers=2, pin_memory=(device.type == "cuda"))
+        if val_dataset is not None
+        else None
+    )
+
+    bank = build_patch_banks(base_dataset, args.patch, total_limit).to(device)
+    val_count_log = len(val_dataset) if val_dataset is not None else 0
+    print(f"[ViT-Banked] dataset prepared | train samples {len(train_dataset)} | val samples {val_count_log} | total banked {total_limit}")
     vocab_size = int(bank.values.max().item() + 1) if bank.values.numel() > 0 else (args.patch * args.patch * 2)
 
     atom_emb = nn.Embedding(vocab_size, 128).to(device)
@@ -144,9 +166,57 @@ def main():
         params += list(adapter.parameters())
     optim = torch.optim.AdamW(params, lr=3e-4)
 
+    modules = [backbone, set_attn, router, head]
+    if adapter is not None:
+        modules.append(adapter)
+
+    def set_mode(train_flag: bool) -> None:
+        for mod in modules:
+            mod.train(train_flag)
+
+    coverage_size = cache.num_sets()
+
+    def evaluate(loader):
+        if loader is None or len(loader.dataset) == 0:
+            return None
+        set_mode(False)
+        total_loss = 0.0
+        total_acc = 0.0
+        total_top5 = 0.0
+        total_n = 0
+        with torch.no_grad():
+            for idx_batch, xb, yb in loader:
+                batch_idx = idx_batch.to(device)
+                xb = xb.to(device, non_blocking=True)
+                yb = yb.to(device, non_blocking=True)
+                tokens = backbone(xb)
+                phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+                Phi, Sig, Size, mask = cache.gather_padded(batch_idx, phi_dynamic)
+                Z = set_attn(Phi, Sig, Size, mask, Phi, Sig, Size, mask)
+                routed = router(tokens, Z, Phi, mask)
+                cls_repr = routed.mean(dim=1)
+                logits = head(cls_repr)
+                loss = F.cross_entropy(logits, yb)
+                pred = logits.argmax(dim=-1)
+                topk = logits.topk(min(5, logits.size(-1)), dim=-1).indices
+                total_loss += float(loss.detach()) * xb.size(0)
+                total_acc += float((pred == yb).sum().item())
+                total_top5 += float((topk == yb.unsqueeze(-1)).any(dim=-1).sum().item())
+                total_n += xb.size(0)
+        set_mode(True)
+        denom = max(1, total_n)
+        return {
+            "loss": total_loss / denom,
+            "acc": total_acc / denom,
+            "top5": total_top5 / denom,
+        }
+
     for ep in range(1, args.epochs + 1):
-        backbone.train()
-        total_loss, total_acc, total_n = 0.0, 0.0, 0
+        set_mode(True)
+        total_loss, total_acc, total_top5, total_n = 0.0, 0.0, 0.0, 0
+        sets_seen_total = 0.0
+        seq_seen_total = 0
+        coverage_mask = torch.zeros(coverage_size, dtype=torch.bool)
         with profiler(args.profile) as prof:
             if args.profile and torch.cuda.is_available():
                 torch.cuda.reset_peak_memory_stats()
@@ -166,12 +236,34 @@ def main():
                 loss.backward()
                 optim.step()
                 pred = logits.argmax(dim=-1)
+                topk = logits.topk(min(5, logits.size(-1)), dim=-1).indices
+                batch_top5 = (topk == yb.unsqueeze(-1)).any(dim=-1).sum().item()
+                with torch.no_grad():
+                    set_idx_batch, _ = cache.gather_sequence_sets(batch_idx)
+                batch_sets, batch_seqs, coverage_mask = update_coverage_stats(mask, set_idx_batch, coverage_mask)
+                sets_seen_total += float(batch_sets)
+                seq_seen_total += batch_seqs
                 total_loss += float(loss.detach()) * xb.size(0)
                 total_acc += float((pred == yb).sum().item())
+                total_top5 += float(batch_top5)
                 total_n += xb.size(0)
-                if total_n >= args.limit:
-                    break
-        msg = f"[ViT-Banked][{args.attn}] epoch {ep:02d} loss {total_loss/max(1,total_n):.4f} acc {total_acc/max(1,total_n):.3f}"
+        denom = max(1, total_n)
+        avg_loss = total_loss / denom
+        avg_acc = total_acc / denom
+        avg_top5 = total_top5 / denom
+        avg_sets_per_seq = sets_seen_total / max(1, seq_seen_total)
+        coverage_ratio = (coverage_mask.float().mean().item() if coverage_mask.numel() > 0 else 0.0)
+        val_metrics = evaluate(val_loader)
+        msg = (
+            f"[ViT-Banked][{args.attn}] epoch {ep:02d} "
+            f"train loss {avg_loss:.4f} acc {avg_acc:.3f} top5 {avg_top5:.3f} "
+            f"| sets/seq {avg_sets_per_seq:.2f} | coverage {coverage_ratio*100:.1f}%"
+        )
+        if val_metrics is not None:
+            msg += (
+                f" | val loss {val_metrics['loss']:.4f} acc {val_metrics['acc']:.3f} "
+                f"top5 {val_metrics['top5']:.3f}"
+            )
         if args.profile:
             msg += f" | time {prof['time_s']:.2f}s"
             if torch.cuda.is_available():
