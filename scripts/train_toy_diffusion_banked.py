@@ -96,6 +96,13 @@ def main():
     ap.add_argument("--router-topk", type=int, default=0)
     ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
     ap.add_argument("--config", type=str, default="configs/diffusion_toy.yaml")
+    ap.add_argument("--samples", type=int, default=None, help="Override number of synthetic sequences.")
+    ap.add_argument("--data-seq-len", type=int, default=None, help="Override synthetic sequence length.")
+    ap.add_argument("--data-dim", type=int, default=None, help="Override synthetic feature dimensionality.")
+    ap.add_argument("--data-batch-size", type=int, default=None, help="Override synthetic batch size.")
+    ap.add_argument("--data-val-frac", type=float, default=None, help="Override validation fraction.")
+    ap.add_argument("--data-modes", type=int, default=None, help="Override number of mixture modes.")
+    ap.add_argument("--data-seed", type=int, default=None, help="Override synthetic data seed.")
     defaults = ap.parse_args([])
     args = ap.parse_args()
 
@@ -117,6 +124,8 @@ def main():
     override_from_cfg("layers", "layers")
 
     seed = int(cfg_yaml.get("seed", 2024))
+    if args.data_seed is not None:
+        seed = int(args.data_seed)
     torch.manual_seed(seed)
     random.seed(seed)
     device = torch.device(args.device)
@@ -130,6 +139,19 @@ def main():
         seed=seed,
         n_modes=int(cfg_yaml.get("n_modes", 4)),
     )
+    if args.samples is not None:
+        data_cfg.n_samples = int(args.samples)
+    if args.data_seq_len is not None:
+        data_cfg.seq_len = int(args.data_seq_len)
+    if args.data_dim is not None:
+        data_cfg.dim = int(args.data_dim)
+    if args.data_batch_size is not None:
+        data_cfg.batch_size = int(args.data_batch_size)
+    if args.data_val_frac is not None:
+        data_cfg.val_frac = float(args.data_val_frac)
+    if args.data_modes is not None:
+        data_cfg.n_modes = int(args.data_modes)
+    data_cfg.seed = seed
     train_loader, val_loader = make_toy_continuous_sequences(data_cfg)
 
     def subset_tensor(loader):

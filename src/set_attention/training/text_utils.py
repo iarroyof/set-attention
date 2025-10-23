@@ -7,7 +7,7 @@ from typing import Iterable, Iterator, List, Sequence, Tuple
 import torch
 
 from set_attention.experiments.token_sets import build_token_sets_from_texts
-from set_attention.tokenizers.active_tokenizer import ActiveUniverseTokenizer
+from set_attention.tokenizers.registry import TokenizerProtocol
 from set_attention.kernels.sketches import MinHasher
 
 SPECIAL_TOKENS = {"<pad>", "<s>", "</s>"}
@@ -66,7 +66,7 @@ class TokenSetStore:
         return values, offsets, signatures
 
 
-def build_token_set_store(dataset, tokenizer: ActiveUniverseTokenizer, k: int, device: torch.device) -> Tuple[TokenSetStore, TokenSetStore]:
+def build_token_set_store(dataset, tokenizer: TokenizerProtocol, k: int, device: torch.device) -> Tuple[TokenSetStore, TokenSetStore]:
     src_texts = [s for (s, _) in dataset.pairs]
     tgt_texts = [t for (_, t) in dataset.pairs]
     src_vals, src_offs = build_token_sets_from_texts(tokenizer, src_texts)

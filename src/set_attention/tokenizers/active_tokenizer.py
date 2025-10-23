@@ -7,6 +7,10 @@ from typing import Dict, Iterable, List, Tuple
 
 import torch
 
+from set_attention.tokenizers.utils import write_tokenizer_meta
+
+ACTIVE_TOKENIZER_TYPE = "ausa"
+
 
 @dataclass
 class TokenizerConfig:
@@ -93,6 +97,9 @@ class ActiveUniverseTokenizer:
         items = sorted(self.vocab.values(), key=lambda ve: (-ve.freq, len(ve.sym), ve.sym))
         return torch.tensor([ve.id for ve in items[: max(1, rank)]], dtype=torch.long)
 
+    def vocab_size(self) -> int:
+        return len(self.sym2id) + 1
+
     def save(self, out_dir: str):
         os.makedirs(out_dir, exist_ok=True)
         meta = {
@@ -102,6 +109,7 @@ class ActiveUniverseTokenizer:
         }
         with open(os.path.join(out_dir, "tokenizer.json"), "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2, ensure_ascii=False)
+        write_tokenizer_meta(out_dir, ACTIVE_TOKENIZER_TYPE, meta["config"])
 
     @staticmethod
     def load(out_dir: str) -> "ActiveUniverseTokenizer":
@@ -115,4 +123,3 @@ class ActiveUniverseTokenizer:
             tok.sym2id[entry.sym] = entry.id
             tok.id2sym[entry.id] = entry.sym
         return tok
-

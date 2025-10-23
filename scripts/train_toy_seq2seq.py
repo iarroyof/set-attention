@@ -1,4 +1,7 @@
 import argparse
+import json
+from pathlib import Path
+from typing import Any, Dict
 
 import torch
 import torch.nn as nn
@@ -6,7 +9,10 @@ import torch.nn.functional as F
 
 from set_attention.heads.ska_tokenized import SetKernelMultiheadAttentionTokenized
 from set_attention.patch import replace_multihead_attn
-from set_attention.tokenizers.active_tokenizer import ActiveUniverseTokenizer, TokenizerConfig
+from set_attention.tokenizers.active_tokenizer import ACTIVE_TOKENIZER_TYPE
+from set_attention.tokenizers.hf_bpe import HF_BPE_TYPE
+from set_attention.tokenizers.hf_unigram import HF_UNIGRAM_TYPE
+from set_attention.tokenizers.registry import available_tokenizer_types, create_tokenizer, load_tokenizer, save_tokenizer
 from set_attention.training.text_utils import (
     build_token_set_store,
     ids_to_tokens,
@@ -15,6 +21,35 @@ from set_attention.training.text_utils import (
 )
 from set_attention.experiments.data_nlp import InMemoryTextPairDataset
 from set_attention.utils.profiling import profiler
+
+
+def _parse_tokenizer_config_arg(value: str) -> Dict[str, Any]:
+    if not value:
+        return {}
+    path = Path(value)
+    if path.is_file():
+        return json.loads(path.read_text())
+    return json.loads(value)
+
+
+def _default_tokenizer_config(kind: str, max_len: int) -> Dict[str, Any]:
+    if kind == ACTIVE_TOKENIZER_TYPE:
+        return {"seed_lengths": (3, 4, 5), "min_freq": 1, "max_len": max_len}
+    if kind in {HF_UNIGRAM_TYPE, HF_BPE_TYPE}:
+        return {"vocab_size": 512, "min_frequency": 1}
+    return {}
+
+
+def _normalize_tokenizer_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = dict(config)
+    if "seed_lengths" in out:
+        out["seed_lengths"] = tuple(int(v) for v in out["seed_lengths"])
+    if "special_tokens" in out:
+        out["special_tokens"] = tuple(str(v) for v in out["special_tokens"])
+    for key in ("min_freq", "min_frequency", "vocab_size", "max_len"):
+        if key in out:
+            out[key] = int(out[key])
+    return out
 
 
 def make_toy_pairs(n=1000, seq_len=16, vocab=32, seed=7):
@@ -51,13 +86,7 @@ class TinySeq2SeqSKATok(nn.Module):
             nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True),
             num_layers=1,
         )
-        self.cross = SetKernelMultiheadAttentionTokenized(
-            embed_dim=d_model,
-            num_heads=nhead,
-            batch_first=True,
-            sim="rbf",
-            rbf_gamma=ska_gamma,
-        )
+        self.cross = SetKernelMultiheadAttentionTokenized(embed_dim=d_model, num_heads=nhead, batch_first=True, gamma=ska_gamma)
         self.proj = nn.Linear(d_model, vocab_size)
         self.gate_topk = gate_topk
 
@@ -104,6 +133,26 @@ def main():
     ap.add_argument("--inter-norm", type=int, default=1)
     ap.add_argument("--token-set-k", type=int, default=32)
     ap.add_argument("--profile", action="store_true")
+    tokenizer_choices = tuple(available_tokenizer_types())
+    ap.add_argument(
+        "--tokenizer-dir",
+        "--tokenizer",
+        dest="tokenizer_dir",
+        default="",
+        help="Optional directory to load/save tokenizer state.",
+    )
+    ap.add_argument(
+        "--tokenizer-type",
+        choices=tokenizer_choices,
+        default=ACTIVE_TOKENIZER_TYPE,
+        help="Tokenizer backend to use when training a new tokenizer.",
+    )
+    ap.add_argument(
+        "--tokenizer-config",
+        type=str,
+        default="",
+        help="JSON string or path with tokenizer config overrides.",
+    )
     args = ap.parse_args()
 
     src_int, tgt_int = make_toy_pairs()
@@ -112,10 +161,34 @@ def main():
     dataset = InMemoryTextPairDataset(src_texts, tgt_texts, max_len=src_int.size(1) + 2)
 
     tokenizer = None
+    tokenizer_dir = args.tokenizer_dir
+    needs_tokenizer = args.attn == "ska_tok" or bool(tokenizer_dir)
+    if needs_tokenizer:
+        config_overrides = _parse_tokenizer_config_arg(args.tokenizer_config)
+        tokenizer_config = _default_tokenizer_config(args.tokenizer_type, dataset.max_len)
+        if config_overrides:
+            tokenizer_config.update(config_overrides)
+        tokenizer_config = _normalize_tokenizer_config(tokenizer_config)
+
+        if tokenizer_dir and Path(tokenizer_dir).is_dir():
+            print(f"[Tokenizer] Loading {args.tokenizer_type} tokenizer from {tokenizer_dir}")
+            load_cfg = config_overrides if config_overrides else None
+            tokenizer = load_tokenizer(tokenizer_dir, kind=args.tokenizer_type, config=load_cfg)
+        else:
+            print(f"[Tokenizer] Training new {args.tokenizer_type} tokenizer on synthetic corpus")
+            tokenizer = create_tokenizer(args.tokenizer_type, tokenizer_config)
+            tokenizer.fit(src_texts)
+            if tokenizer_dir:
+                Path(tokenizer_dir).mkdir(parents=True, exist_ok=True)
+                save_tokenizer(tokenizer, tokenizer_dir)
+                print(f"[Tokenizer] Saved to {tokenizer_dir}")
+
+    device = torch.device(args.device)
+
     if args.attn == "ska_tok":
-        tokenizer = ActiveUniverseTokenizer(TokenizerConfig(seed_lengths=(3, 4, 5), min_freq=1, max_len=dataset.max_len))
-        tokenizer.fit(src_texts)
-        src_store, tgt_store = build_token_set_store(dataset, tokenizer, args.token_set_k, torch.device(args.device))
+        if tokenizer is None:
+            raise RuntimeError("Tokenizer is required for --attn ska_tok.")
+        src_store, tgt_store = build_token_set_store(dataset, tokenizer, args.token_set_k, device)
     else:
         src_store = tgt_store = None
 
@@ -128,7 +201,7 @@ def main():
             ska_gamma=args.gamma,
             gate_topk=args.inter_topk,
         )
-        model.enable_gating(vocab_size=len(tokenizer.sym2id) + 1, atom_dim=args.d_model)
+        model.enable_gating(vocab_size=tokenizer.vocab_size(), atom_dim=args.d_model)
     else:
         model = TinySeq2Seq(
             vocab_size=len(dataset.src_stoi),
@@ -150,7 +223,6 @@ def main():
                 inter_normalize=bool(args.inter_norm),
             )
 
-    device = torch.device(args.device)
     model.to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=3e-4)
 

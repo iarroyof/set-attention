@@ -1,6 +1,8 @@
 import argparse
+import json
 import os
-from typing import List, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 import torch
 import torch.nn as nn
@@ -9,7 +11,15 @@ import torch.nn.functional as F
 from set_attention.training.seq_loaders import get_seq2seq_datasets
 from set_attention.patch import replace_multihead_attn
 from set_attention.heads.ska_tokenized import SetKernelMultiheadAttentionTokenized
-from set_attention.tokenizers.active_tokenizer import ActiveUniverseTokenizer, TokenizerConfig
+from set_attention.tokenizers.active_tokenizer import ACTIVE_TOKENIZER_TYPE
+from set_attention.tokenizers.hf_bpe import HF_BPE_TYPE
+from set_attention.tokenizers.hf_unigram import HF_UNIGRAM_TYPE
+from set_attention.tokenizers.registry import (
+    available_tokenizer_types,
+    create_tokenizer,
+    load_tokenizer,
+    save_tokenizer,
+)
 from set_attention.training.text_utils import (
     build_token_set_store,
     encode_sentence,
@@ -18,6 +28,35 @@ from set_attention.training.text_utils import (
 )
 from set_attention.experiments.nlp_eval import corpus_bleu, rouge_l
 from set_attention.utils.profiling import profiler
+
+
+def _parse_tokenizer_config_arg(value: str) -> Dict[str, Any]:
+    if not value:
+        return {}
+    path = Path(value)
+    if path.is_file():
+        return json.loads(path.read_text())
+    return json.loads(value)
+
+
+def _default_tokenizer_config(kind: str, max_len: int) -> Dict[str, Any]:
+    if kind == ACTIVE_TOKENIZER_TYPE:
+        return {"seed_lengths": (3, 4, 5), "min_freq": 2, "max_len": max_len}
+    if kind in {HF_UNIGRAM_TYPE, HF_BPE_TYPE}:
+        return {"vocab_size": 16000, "min_frequency": 2}
+    return {}
+
+
+def _normalize_tokenizer_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = dict(config)
+    if "seed_lengths" in out:
+        out["seed_lengths"] = tuple(int(v) for v in out["seed_lengths"])
+    if "special_tokens" in out:
+        out["special_tokens"] = tuple(str(v) for v in out["special_tokens"])
+    for key in ("min_freq", "min_frequency", "vocab_size", "max_len"):
+        if key in out:
+            out[key] = int(out[key])
+    return out
 
 
 class TinySeq2Seq(nn.Module):
@@ -48,13 +87,7 @@ class TinySeq2SeqSKATok(nn.Module):
             nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True),
             num_layers=1,
         )
-        self.cross_attn = SetKernelMultiheadAttentionTokenized(
-            embed_dim=d_model,
-            num_heads=nhead,
-            batch_first=True,
-            sim="rbf",
-            rbf_gamma=ska_gamma,
-        )
+        self.cross_attn = SetKernelMultiheadAttentionTokenized(embed_dim=d_model, num_heads=nhead, batch_first=True, gamma=ska_gamma)
         self.out = nn.Linear(d_model, tgt_vocab)
         self.gate_topk = gate_topk
 
@@ -106,7 +139,26 @@ def main():
     parser.add_argument("--layers", type=int, default=4)
     parser.add_argument("--ska-gamma", type=float, default=0.3)
     parser.add_argument("--gate-topk", type=int, default=8)
-    parser.add_argument("--tokenizer", type=str, default="")
+    tokenizer_choices = tuple(available_tokenizer_types())
+    parser.add_argument(
+        "--tokenizer-dir",
+        "--tokenizer",
+        dest="tokenizer_dir",
+        default="",
+        help="Optional directory to load/save tokenizer state.",
+    )
+    parser.add_argument(
+        "--tokenizer-type",
+        choices=tokenizer_choices,
+        default=ACTIVE_TOKENIZER_TYPE,
+        help="Tokenizer backend to use when training a new tokenizer.",
+    )
+    parser.add_argument(
+        "--tokenizer-config",
+        type=str,
+        default="",
+        help="JSON string or path with tokenizer config overrides.",
+    )
     parser.add_argument("--token-set-k", type=int, default=64)
     args = parser.parse_args()
 
@@ -122,6 +174,7 @@ def main():
     )
 
     train_pairs = train_ds.pairs
+    src_texts = [s for (s, _) in train_pairs]
     train_src_stoi = train_ds.src_stoi
     train_tgt_stoi = train_ds.tgt_stoi
     train_tgt_itos = train_ds.tgt_itos
@@ -138,23 +191,32 @@ def main():
 
     device = torch.device(args.device)
 
-    if args.attn == "ska_tok" or args.tokenizer:
-        if args.tokenizer and os.path.isdir(args.tokenizer):
-            print(f"[Tokenizer] Loading from {args.tokenizer}")
-            tokenizer = ActiveUniverseTokenizer.load(args.tokenizer)
+    tokenizer = None
+    tokenizer_dir = args.tokenizer_dir
+    needs_tokenizer = args.attn == "ska_tok" or bool(tokenizer_dir)
+    if needs_tokenizer:
+        config_overrides = _parse_tokenizer_config_arg(args.tokenizer_config)
+        tokenizer_config = _default_tokenizer_config(args.tokenizer_type, max_len)
+        if config_overrides:
+            tokenizer_config.update(config_overrides)
+        tokenizer_config = _normalize_tokenizer_config(tokenizer_config)
+
+        if tokenizer_dir and os.path.isdir(tokenizer_dir):
+            print(f"[Tokenizer] Loading {args.tokenizer_type} tokenizer from {tokenizer_dir}")
+            load_cfg = config_overrides if config_overrides else None
+            tokenizer = load_tokenizer(tokenizer_dir, kind=args.tokenizer_type, config=load_cfg)
         else:
-            print("[Tokenizer] Training new tokenizer on source corpus")
-            src_lines = [s for (s, _) in train_pairs]
-            tokenizer = ActiveUniverseTokenizer(TokenizerConfig(seed_lengths=(3, 4, 5), min_freq=2, max_len=max_len))
-            tokenizer.fit(src_lines)
-            if args.tokenizer:
-                os.makedirs(args.tokenizer, exist_ok=True)
-                tokenizer.save(args.tokenizer)
-                print(f"[Tokenizer] Saved to {args.tokenizer}")
-    else:
-        tokenizer = None
+            print(f"[Tokenizer] Training new {args.tokenizer_type} tokenizer on source corpus")
+            tokenizer = create_tokenizer(args.tokenizer_type, tokenizer_config)
+            tokenizer.fit(src_texts)
+            if tokenizer_dir:
+                os.makedirs(tokenizer_dir, exist_ok=True)
+                save_tokenizer(tokenizer, tokenizer_dir)
+                print(f"[Tokenizer] Saved to {tokenizer_dir}")
 
     if args.attn == "ska_tok":
+        if tokenizer is None:
+            raise RuntimeError("Tokenizer is required for --attn ska_tok.")
         src_store, tgt_store = build_token_set_store(train_ds, tokenizer, args.token_set_k, device)
         if has_val:
             val_src_store, val_tgt_store = build_token_set_store(val_ds, tokenizer, args.token_set_k, device)
@@ -165,6 +227,8 @@ def main():
 
     model: nn.Module
     if args.attn == "ska_tok":
+        if tokenizer is None:
+            raise RuntimeError("Tokenizer is required for --attn ska_tok.")
         model = TinySeq2SeqSKATok(
             src_vocab=len(train_src_stoi),
             tgt_vocab=len(train_tgt_stoi),
@@ -174,7 +238,7 @@ def main():
             ska_gamma=args.ska_gamma,
             gate_topk=args.gate_topk,
         )
-        model.enable_gating(vocab_size=len(tokenizer.sym2id) + 1, atom_dim=args.d_model)
+        model.enable_gating(vocab_size=tokenizer.vocab_size(), atom_dim=args.d_model)
     else:
         model = TinySeq2Seq(
             src_vocab=len(train_src_stoi),
@@ -263,4 +327,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

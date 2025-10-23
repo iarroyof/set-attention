@@ -72,6 +72,19 @@ class TinyViTBackbone(nn.Module):
         return self.enc(tokens)
 
 
+class SyntheticVisionDataset(torch.utils.data.Dataset):
+    def __init__(self, num_samples: int, img_size: int = 32, num_classes: int = 10, seed: int = 0):
+        g = torch.Generator().manual_seed(seed)
+        self.images = torch.rand(num_samples, 3, img_size, img_size, generator=g)
+        self.labels = torch.randint(0, num_classes, (num_samples,), generator=g)
+
+    def __len__(self) -> int:
+        return int(self.images.size(0))
+
+    def __getitem__(self, idx: int):
+        return self.images[idx], self.labels[idx]
+
+
 class IndexedDataset(torch.utils.data.Dataset):
     def __init__(self, base_dataset, indices: List[int]):
         self.base = base_dataset
@@ -101,15 +114,27 @@ def main():
     ap.add_argument("--adapter-rank", type=int, default=0)
     ap.add_argument("--router-topk", type=int, default=0)
     ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
+    ap.add_argument("--data-mode", choices=["cifar10", "synthetic"], default="cifar10")
+    ap.add_argument("--demo-samples", type=int, default=512, help="Used when --data-mode synthetic is selected.")
+    ap.add_argument("--num-classes", type=int, default=10)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--num-workers", type=int, default=2)
     args = ap.parse_args()
 
-    if torchvision is None:
-        raise RuntimeError("torchvision is required for the ViT banked demo.")
-
     device = torch.device(args.device)
-    transform = T.Compose([T.ToTensor()])
-    base_dataset = torchvision.datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
-    total_limit = min(args.limit, len(base_dataset))
+    pin_memory = device.type == "cuda" and args.num_workers > 0
+
+    if args.data_mode == "cifar10":
+        if torchvision is None:
+            raise RuntimeError("torchvision is required for CIFAR10 data mode. Install torchvision or use --data-mode synthetic.")
+        transform = T.Compose([T.ToTensor()])
+        base_dataset = torchvision.datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
+        dataset_len = len(base_dataset)
+    else:
+        base_dataset = SyntheticVisionDataset(num_samples=args.demo_samples, img_size=32, num_classes=args.num_classes, seed=args.seed)
+        dataset_len = len(base_dataset)
+
+    total_limit = min(args.limit, dataset_len)
     indices_full = list(range(total_limit))
     if args.val_frac <= 0.0 or total_limit < 2:
         train_indices = indices_full
@@ -118,14 +143,26 @@ def main():
         val_count = max(1, int(total_limit * args.val_frac))
         if val_count >= total_limit:
             val_count = max(1, total_limit // 5)
-        train_indices = indices_full[:-val_count]
-        val_indices = indices_full[-val_count:]
+        train_indices = indices_full[:-val_count] if val_count < total_limit else indices_full
+        val_indices = indices_full[-val_count:] if val_count < total_limit else []
 
     train_dataset = IndexedDataset(base_dataset, train_indices)
     val_dataset = IndexedDataset(base_dataset, val_indices) if val_indices else None
-    loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True, num_workers=2, pin_memory=(device.type == "cuda"))
+    loader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=args.batch,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=pin_memory,
+    )
     val_loader = (
-        torch.utils.data.DataLoader(val_dataset, batch_size=args.batch, shuffle=False, num_workers=2, pin_memory=(device.type == "cuda"))
+        torch.utils.data.DataLoader(
+            val_dataset,
+            batch_size=args.batch,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=pin_memory,
+        )
         if val_dataset is not None
         else None
     )

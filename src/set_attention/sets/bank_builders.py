@@ -3,12 +3,12 @@ from typing import List, Tuple
 
 import torch
 
-from set_attention.tokenizers.active_tokenizer import ActiveUniverseTokenizer
+from set_attention.tokenizers.registry import TokenizerProtocol
 from set_attention.sets.banked import BankedSetBatch
 
 
 def build_windowed_bank_from_texts(
-    tokenizer: ActiveUniverseTokenizer,
+    tokenizer: TokenizerProtocol,
     texts: List[str],
     window: int = 5,
     stride: int = 5,

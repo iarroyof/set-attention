@@ -1,13 +1,23 @@
 import argparse
+import json
 import os
 import random
-from typing import Iterable, Tuple
+from pathlib import Path
+from typing import Any, Dict, Iterable, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from set_attention.tokenizers.active_tokenizer import ActiveUniverseTokenizer, TokenizerConfig
+from set_attention.tokenizers.active_tokenizer import ACTIVE_TOKENIZER_TYPE
+from set_attention.tokenizers.hf_bpe import HF_BPE_TYPE
+from set_attention.tokenizers.hf_unigram import HF_UNIGRAM_TYPE
+from set_attention.tokenizers.registry import (
+    available_tokenizer_types,
+    create_tokenizer,
+    load_tokenizer,
+    save_tokenizer,
+)
 from set_attention.training.seq_loaders import get_seq2seq_datasets
 from set_attention.sets.bank_builders import build_windowed_bank_from_texts
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
@@ -23,6 +33,35 @@ from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.profiling import profiler
 from set_attention.experiments.nlp_eval import corpus_bleu, rouge_l
+
+
+def _parse_tokenizer_config_arg(value: str) -> Dict[str, Any]:
+    if not value:
+        return {}
+    path = Path(value)
+    if path.is_file():
+        return json.loads(path.read_text())
+    return json.loads(value)
+
+
+def _default_tokenizer_config(kind: str, max_len: int) -> Dict[str, Any]:
+    if kind == ACTIVE_TOKENIZER_TYPE:
+        return {"seed_lengths": (3, 4, 5), "min_freq": 2, "max_len": max_len}
+    if kind in {HF_UNIGRAM_TYPE, HF_BPE_TYPE}:
+        return {"vocab_size": 16000, "min_frequency": 2}
+    return {}
+
+
+def _normalize_tokenizer_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = dict(config)
+    if "seed_lengths" in out:
+        out["seed_lengths"] = tuple(int(v) for v in out["seed_lengths"])
+    if "special_tokens" in out:
+        out["special_tokens"] = tuple(str(v) for v in out["special_tokens"])
+    for key in ("min_freq", "min_frequency", "vocab_size", "max_len"):
+        if key in out:
+            out[key] = int(out[key])
+    return out
 
 class TinySeq2SeqBackbone(nn.Module):
     def __init__(self, src_vocab: int, tgt_vocab: int, d_model: int, nhead: int, layers: int):
@@ -55,7 +94,26 @@ def main():
     parser.add_argument("--demo-samples", type=int, default=200)
     parser.add_argument("--dataset", choices=["", "wmt16_en_ro", "cnn_dailymail"], default="")
     parser.add_argument("--limit", type=int, default=200)
-    parser.add_argument("--tokenizer", type=str, default="")
+    tokenizer_choices = tuple(available_tokenizer_types())
+    parser.add_argument(
+        "--tokenizer-dir",
+        "--tokenizer",
+        dest="tokenizer_dir",
+        default="",
+        help="Optional directory to load/save tokenizer state.",
+    )
+    parser.add_argument(
+        "--tokenizer-type",
+        choices=tokenizer_choices,
+        default=ACTIVE_TOKENIZER_TYPE,
+        help="Tokenizer backend to use when training a new tokenizer.",
+    )
+    parser.add_argument(
+        "--tokenizer-config",
+        type=str,
+        default="",
+        help="JSON string or path with tokenizer config overrides.",
+    )
     parser.add_argument("--atom-dim", type=int, default=128)
     parser.add_argument("--adapter-rank", type=int, default=0)
     parser.add_argument("--minhash-k", type=int, default=64)
@@ -82,27 +140,34 @@ def main():
     )
 
     train_pairs = train_ds.pairs
+    src_texts = [s for (s, _) in train_pairs]
+    tgt_texts = [t for (_, t) in train_pairs]
     train_src_stoi = train_ds.src_stoi
     train_tgt_stoi = train_ds.tgt_stoi
     train_tgt_itos = train_ds.tgt_itos
     max_len = train_ds.max_len
     train_ref_tokens = [t.split() for _, t in train_pairs]
 
-    if args.tokenizer and os.path.isdir(args.tokenizer):
-        print(f"[Tokenizer] Loading from {args.tokenizer}")
-        tokenizer = ActiveUniverseTokenizer.load(args.tokenizer)
-    else:
-        print("[Tokenizer] Training new tokenizer on source corpus")
-        src_lines = [s for (s, _) in train_ds.pairs]
-        tokenizer = ActiveUniverseTokenizer(TokenizerConfig(seed_lengths=(3, 4, 5), min_freq=2, max_len=64))
-        tokenizer.fit(src_lines)
-        if args.tokenizer:
-            os.makedirs(args.tokenizer, exist_ok=True)
-            tokenizer.save(args.tokenizer)
-            print(f"[Tokenizer] Saved to {args.tokenizer}")
+    tokenizer_dir = args.tokenizer_dir
+    config_overrides = _parse_tokenizer_config_arg(args.tokenizer_config)
+    tokenizer_config = _default_tokenizer_config(args.tokenizer_type, max_len)
+    if config_overrides:
+        tokenizer_config.update(config_overrides)
+    tokenizer_config = _normalize_tokenizer_config(tokenizer_config)
 
-    src_texts = [s for (s, _) in train_pairs]
-    tgt_texts = [t for (_, t) in train_pairs]
+    if tokenizer_dir and os.path.isdir(tokenizer_dir):
+        print(f"[Tokenizer] Loading {args.tokenizer_type} tokenizer from {tokenizer_dir}")
+        load_cfg = config_overrides if config_overrides else None
+        tokenizer = load_tokenizer(tokenizer_dir, kind=args.tokenizer_type, config=load_cfg)
+    else:
+        print(f"[Tokenizer] Training new {args.tokenizer_type} tokenizer on source corpus")
+        tokenizer = create_tokenizer(args.tokenizer_type, tokenizer_config)
+        tokenizer.fit(src_texts)
+        if tokenizer_dir:
+            os.makedirs(tokenizer_dir, exist_ok=True)
+            save_tokenizer(tokenizer, tokenizer_dir)
+            print(f"[Tokenizer] Saved to {tokenizer_dir}")
+
     src_bank = build_windowed_bank_from_texts(tokenizer, src_texts, window=args.window, stride=args.stride).to(args.device)
     tgt_bank = build_windowed_bank_from_texts(tokenizer, tgt_texts, window=args.window, stride=args.stride).to(args.device)
 
@@ -119,7 +184,7 @@ def main():
         val_ref_tokens = []
 
     device = torch.device(args.device)
-    V = len(tokenizer.sym2id) + 1
+    V = tokenizer.vocab_size()
     atom_emb = nn.Embedding(V, args.atom_dim).to(device)
     adapter = None
     if args.adapter_rank > 0:
@@ -134,7 +199,13 @@ def main():
         print("[Adapter] disabled (atom pool frozen; Φ pooled from fixed atom_emb)")
 
     universe_ids = torch.arange(V, device=device, dtype=torch.long)
-    universe = UniversePool(universe_ids, metadata={"tokenizer": args.tokenizer or "inline"}).to(device)
+    universe = UniversePool(
+        universe_ids,
+        metadata={
+            "tokenizer_type": args.tokenizer_type,
+            "tokenizer_path": tokenizer_dir or "inline",
+        },
+    ).to(device)
     print(universe.log_summary(prefix="[Universe]"))
 
     train_minhash = MinHasher(k=args.minhash_k, device=src_bank.values.device)

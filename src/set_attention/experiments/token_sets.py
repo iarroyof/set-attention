@@ -2,11 +2,11 @@ from __future__ import annotations
 from typing import List, Tuple
 import torch
 
-from set_attention.tokenizers.active_tokenizer import ActiveUniverseTokenizer, TokenizerConfig
+from set_attention.tokenizers.registry import TokenizerProtocol
 
 
 def build_token_sets_from_texts(
-    tokenizer: ActiveUniverseTokenizer,
+    tokenizer: TokenizerProtocol,
     texts: List[str],
 ) -> Tuple[torch.LongTensor, torch.LongTensor]:
     """
@@ -25,4 +25,3 @@ def build_token_sets_from_texts(
     else:
         vals = torch.empty(0, dtype=torch.long)
     return vals, torch.tensor(offs, dtype=torch.long)
-
