@@ -54,6 +54,13 @@ def test_compute_phi_and_gather_padded():
     assert not mask[1, 1].item()
     assert Size[0, 0].item() == 2 and Size[1, 0].item() == 1
 
+    # Flat gather concatenates sets with ptr delimiters.
+    Phi_flat, Sig_flat, Size_flat, ptrs = cache.gather_flat(torch.tensor([0, 1]), phi_cur)
+    assert Phi_flat.shape == (3, 2)
+    assert Sig_flat.shape == (3, 8)
+    assert Size_flat.tolist() == [2, 2, 1]
+    assert ptrs.tolist() == [0, 2, 3]
+
 
 def test_gather_requires_minhash():
     universe_ids, values, set_offsets, seq_offsets = _make_base_tensors()
@@ -62,4 +69,4 @@ def test_gather_requires_minhash():
     phi_cur = _make_phi()
 
     with pytest.raises(RuntimeError, match="MinHash"):
-        cache.gather_padded(torch.tensor([0]), phi_cur)
+        cache.gather_flat(torch.tensor([0]), phi_cur)

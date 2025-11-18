@@ -1,23 +1,37 @@
 from __future__ import annotations
-from typing import Tuple, Optional
+
+from typing import Tuple
+
+import contextlib
 
 import torch
 import torch.nn as nn
 
-from set_attention.kernels.sketches import symdiff_from_jaccard
+from set_attention.kernels.ska_backends import get_backend
+from set_attention.sets.bank_utils import pad_segments_from_ptrs
 
 
 class SetBankAttention(nn.Module):
-    """Multihead attention over banks of sets per sequence (blockwise).
+    """Multi-head attention operating on concatenated set banks."""
 
-    Inputs are concatenated over sequences; `q_ptrs` and `k_ptrs` delimit blocks
-    per sequence. Computes per-sequence W and returns concatenated set outputs.
-    """
-
-    def __init__(self, d_model: int, num_heads: int = 4, tau: float = 1.0, gamma: float = 0.3, beta: float = 1.0,
-                 score_mode: str = "delta_plus_dot", eta: float = 1.0):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int = 4,
+        tau: float = 1.0,
+        gamma: float = 0.3,
+        beta: float = 1.0,
+        score_mode: str = "delta_plus_dot",
+        eta: float = 1.0,
+        backend: str = "python",
+        precision: str = "fp32",
+    ):
         super().__init__()
-        assert d_model % num_heads == 0
+        if d_model % num_heads != 0:
+            raise ValueError("d_model must be divisible by num_heads.")
+        if precision not in {"fp32", "fp16", "bf16"}:
+            raise ValueError("precision must be one of {'fp32','fp16','bf16'}.")
+
         self.d_model = d_model
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
@@ -25,65 +39,91 @@ class SetBankAttention(nn.Module):
         self.gamma = float(gamma)
         self.beta = float(beta)
         self.eta = float(eta)
-        self.score_mode = score_mode  # one of: delta_rbf, delta_plus_dot, intersect_norm, intersect_plus_dot, dot
+        self.score_mode = score_mode
+        self.precision = precision
+        self.backend_name = backend
 
         self.proj_A = nn.Linear(d_model, d_model, bias=False)
         self.proj_B = nn.Linear(d_model, d_model, bias=False)
-        self.val_proj = nn.Linear(d_model, self.head_dim, bias=True)
+        self.value_proj = nn.Linear(d_model, d_model, bias=False)
+        self.backend = get_backend(backend, score_mode=score_mode)
 
     def forward(
         self,
-        phi_q: torch.Tensor,  # (B, Sq, D)
-        sig_q: torch.Tensor,  # (B, Sq, K)
-        size_q: torch.Tensor,  # (B, Sq)
-        mask_q: Optional[torch.Tensor],  # (B, Sq) bool, True=valid
-        phi_k: torch.Tensor,  # (B, Sk, D)
-        sig_k: torch.Tensor,  # (B, Sk, K)
-        size_k: torch.Tensor,  # (B, Sk)
-        mask_k: Optional[torch.Tensor],  # (B, Sk) bool, True=valid
-    ) -> torch.Tensor:
-        """Batched set×set attention.
+        phi_q: torch.Tensor,
+        sig_q: torch.Tensor,
+        size_q: torch.Tensor,
+        q_ptrs: torch.Tensor,
+        phi_k: torch.Tensor,
+        sig_k: torch.Tensor,
+        size_k: torch.Tensor,
+        k_ptrs: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Compute set outputs given concatenated query & key banks."""
+        phi_q, sig_q, size_q, q_ptrs = self._ensure_flat(phi_q, sig_q, size_q, q_ptrs)
+        phi_k, sig_k, size_k, k_ptrs = self._ensure_flat(phi_k, sig_k, size_k, k_ptrs)
+        nq = phi_q.shape[0]
+        if nq == 0:
+            empty = torch.zeros(0, self.num_heads, self.head_dim, device=phi_q.device, dtype=phi_q.dtype)
+            return empty, q_ptrs
 
-        Returns Z_sets: (B, Sq, H, Dh)
-        """
-        B, Sq, D = phi_q.shape
-        Sk = phi_k.shape[1]
-        # Δ-RBF via MinHash Jaccard
-        eq = (sig_q.unsqueeze(2) == sig_k.unsqueeze(1)).float()  # (B, Sq, Sk, K)
-        jacc = eq.mean(dim=-1)  # (B, Sq, Sk)
-        # Expected |S∩K| from Jaccard; then Δ = |S|+|K|-2|S∩K|
-        SA = size_q.unsqueeze(2).float()  # (B, Sq, 1)
-        SB = size_k.unsqueeze(1).float()  # (B, 1, Sk)
-        inter = (jacc / (1.0 + jacc + 1e-8)) * (SA + SB)
-        delta = SA + SB - 2.0 * inter  # (B, Sq, Sk)
-        s_delta = torch.exp(-self.gamma * delta)
+        orig_dtype = phi_q.dtype
+        with self._autocast(phi_q.device):
+            phi_q_cast = phi_q
+            phi_k_cast = phi_k
+            proj_q = self.proj_A(phi_q_cast) if self.beta != 0 else None
+            proj_k = self.proj_B(phi_k_cast) if self.beta != 0 else None
+            value_heads = self.value_proj(phi_k_cast).view(-1, self.num_heads, self.head_dim)
+            context = self.backend(
+                sig_q=sig_q,
+                size_q=size_q,
+                sig_k=sig_k,
+                size_k=size_k,
+                q_ptrs=q_ptrs,
+                k_ptrs=k_ptrs,
+                values=value_heads,
+                gamma=self.gamma,
+                beta=self.beta,
+                tau=self.tau,
+                eta=self.eta,
+                proj_q=proj_q,
+                proj_k=proj_k,
+            )
+        return context.to(orig_dtype), q_ptrs
 
-        # Content term via projections
-        AQ = self.proj_A(phi_q)  # (B, Sq, D)
-        BK = self.proj_B(phi_k)  # (B, Sk, D)
-        dot = torch.matmul(AQ, BK.transpose(1, 2))  # (B, Sq, Sk)
+    def padded_context(
+        self,
+        context_flat: torch.Tensor,
+        q_ptrs: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Utility to obtain padded context/mask for router-side diagnostics."""
+        padded, mask = pad_segments_from_ptrs(context_flat, q_ptrs, fill_value=0.0)
+        return padded, mask
 
-        # Normalized intersection score
-        inter_norm = inter / (torch.sqrt(SA * SB) + 1e-8)
+    def _autocast(self, device: torch.device):
+        if device.type != "cuda" or self.precision == "fp32":
+            return contextlib.nullcontext()
+        dtype = torch.float16 if self.precision == "fp16" else torch.bfloat16
+        return torch.autocast(device_type="cuda", dtype=dtype)
 
-        if self.score_mode == "delta_rbf":
-            scores = s_delta
-        elif self.score_mode == "delta_plus_dot":
-            scores = s_delta + self.beta * dot
-        elif self.score_mode == "intersect_norm":
-            scores = self.eta * inter_norm
-        elif self.score_mode == "intersect_plus_dot":
-            scores = self.eta * inter_norm + self.beta * dot
-        elif self.score_mode == "dot":
-            scores = self.beta * dot
-        else:
-            raise ValueError(f"Unknown score_mode: {self.score_mode}")
-        if mask_k is not None:
-            mask = ~mask_k.unsqueeze(1).expand_as(scores)  # invalid -> True
-            scores = scores.masked_fill(mask, float("-inf"))
-        W = torch.softmax(scores / max(1e-6, self.tau), dim=-1)  # (B, Sq, Sk)
-
-        V = self.val_proj(phi_k)  # (B, Sk, Dh)
-        Z = torch.matmul(W, V)  # (B, Sq, Dh)
-        Z = Z.unsqueeze(2).expand(B, Sq, self.num_heads, self.head_dim)
-        return Z
+    def _ensure_flat(
+        self,
+        phi: torch.Tensor,
+        sig: torch.Tensor,
+        size: torch.Tensor,
+        ptrs_or_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        if ptrs_or_mask.dtype == torch.bool:
+            mask = ptrs_or_mask
+            B = mask.size(0)
+            counts = mask.sum(dim=1, dtype=torch.long)
+            ptrs = torch.zeros(B + 1, dtype=torch.long, device=mask.device)
+            if B > 0:
+                ptrs[1:] = torch.cumsum(counts, dim=0)
+            flat_phi = phi[mask]
+            flat_sig = sig[mask]
+            flat_size = size[mask]
+            return flat_phi, flat_sig, flat_size, ptrs
+        if ptrs_or_mask.dim() != 1:
+            raise ValueError("Expected pointer tensor of shape (B+1,).")
+        return phi, sig, size, ptrs_or_mask

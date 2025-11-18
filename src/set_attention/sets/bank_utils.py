@@ -66,3 +66,41 @@ def update_coverage_stats(
     if coverage_mask is not None and coverage_mask.numel() > 0 and set_idx.numel() > 0:
         coverage_mask[set_idx.detach().cpu().long()] = True
     return batch_sets, batch_seqs, coverage_mask
+
+
+def pad_segments_from_ptrs(
+    data: torch.Tensor,
+    ptrs: torch.Tensor,
+    *,
+    fill_value: float | int = 0.0,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Pad a concatenated (N, ...) tensor into (B, S_max, ...) using ptr delimiters.
+
+    Args:
+        data: Tensor with leading dimension N (total sets).
+        ptrs: (B+1,) tensor of int64 offsets delimiting sets per sequence.
+        fill_value: Value used to initialize the padded tensor.
+
+    Returns:
+        padded: (B, S_max, ...) tensor filled with data rows.
+        mask: (B, S_max) bool tensor indicating valid locations.
+    """
+    B = int(ptrs.numel() - 1)
+    if B <= 0:
+        padded_shape = (0, 0) + tuple(data.shape[1:])
+        padded = data.new_full(padded_shape, fill_value)
+        mask = ptrs.new_zeros((0, 0), dtype=torch.bool)
+        return padded, mask
+    counts = ptrs[1:] - ptrs[:-1]
+    S_max = int(counts.max().item()) if counts.numel() > 0 else 0
+    padded_shape = (B, S_max) + tuple(data.shape[1:])
+    padded = data.new_full(padded_shape, fill_value)
+    mask = torch.zeros(B, S_max, dtype=torch.bool, device=data.device)
+    if data.shape[0] == 0 or S_max == 0:
+        return padded, mask
+    seq_ids = torch.repeat_interleave(torch.arange(B, device=data.device, dtype=torch.long), counts)
+    base_offsets = ptrs[:-1]
+    rel_ids = torch.arange(data.shape[0], device=data.device, dtype=torch.long) - torch.repeat_interleave(base_offsets, counts)
+    padded[seq_ids, rel_ids] = data
+    mask[seq_ids, rel_ids] = True
+    return padded, mask

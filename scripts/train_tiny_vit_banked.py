@@ -13,9 +13,11 @@ try:
 except Exception:
     torchvision = None
 
+from set_attention.data import resolve_data_root
+
 from set_attention.sets.bank_builders import build_windowed_bank_from_ids
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
-from set_attention.sets.bank_utils import update_coverage_stats
+from set_attention.sets.bank_utils import pad_segments_from_ptrs, update_coverage_stats
 from set_attention.sets.banked import BankedSetBatch
 from set_attention.heads.banked_attention import SetBankAttention
 from set_attention.heads.token_router import TokenSetRouter
@@ -99,6 +101,67 @@ class IndexedDataset(torch.utils.data.Dataset):
         return base_idx, img, label
 
 
+def run_vit_benchmark(
+    args,
+    backbone,
+    set_attn,
+    router,
+    head,
+    adapter,
+    atom_emb,
+    phi_snapshot,
+    cache,
+    train_dataset,
+    optim,
+    device,
+):
+    bench_loader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=args.batch,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=False,
+    )
+    try:
+        idx_batch, xb, yb = next(iter(bench_loader))
+    except StopIteration:
+        print("[benchmark] empty dataset.")
+        return
+    batch_idx = idx_batch.to(device)
+    xb = xb.to(device, non_blocking=True)
+    yb = yb.to(device, non_blocking=True)
+
+    def step():
+        optim.zero_grad(set_to_none=True)
+        tokens = backbone(xb)
+        phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+        Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
+        Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
+        routed = router(tokens, Z, Phi, q_ptrs)
+        cls_repr = routed.mean(dim=1)
+        logits = head(cls_repr)
+        loss = F.cross_entropy(logits, yb)
+        loss.backward()
+        optim.step()
+
+    for _ in range(args.bench_warmup):
+        step()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    for _ in range(args.bench_iters):
+        step()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    elapsed = time.perf_counter() - t0
+    images = xb.size(0) * args.bench_iters
+    throughput = images / elapsed if elapsed > 0 else 0.0
+    print(
+        f"[benchmark][vit] backend={args.ska_backend} precision={args.precision} "
+        f"imgs/s={throughput:.1f} elapsed={elapsed:.3f}s"
+    )
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--attn", choices=["dot", "cosine", "rbf", "intersect", "ska_true"], default="dot")
@@ -119,8 +182,15 @@ def main():
     ap.add_argument("--num-classes", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--num-workers", type=int, default=2)
+    ap.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
+    ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    ap.add_argument("--benchmark", action="store_true")
+    ap.add_argument("--bench-warmup", type=int, default=5)
+    ap.add_argument("--bench-iters", type=int, default=20)
+    ap.add_argument("--data-root", type=str, default="")
     args = ap.parse_args()
 
+    data_root = resolve_data_root(args.data_root)
     device = torch.device(args.device)
     pin_memory = device.type == "cuda" and args.num_workers > 0
 
@@ -128,7 +198,9 @@ def main():
         if torchvision is None:
             raise RuntimeError("torchvision is required for CIFAR10 data mode. Install torchvision or use --data-mode synthetic.")
         transform = T.Compose([T.ToTensor()])
-        base_dataset = torchvision.datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
+        vision_root = data_root / "vision" / "cifar10"
+        vision_root.mkdir(parents=True, exist_ok=True)
+        base_dataset = torchvision.datasets.CIFAR10(root=str(vision_root), train=True, download=True, transform=transform)
         dataset_len = len(base_dataset)
     else:
         base_dataset = SyntheticVisionDataset(num_samples=args.demo_samples, img_size=32, num_classes=args.num_classes, seed=args.seed)
@@ -194,6 +266,8 @@ def main():
         beta=1.0,
         score_mode="delta_plus_dot",
         eta=1.0,
+        backend=args.ska_backend,
+        precision=args.precision,
     ).to(device)
     router = TokenSetRouter(d_model=128, num_heads=4, topk=args.router_topk).to(device)
     head = nn.Linear(128, 10).to(device)
@@ -202,6 +276,23 @@ def main():
     if adapter is not None:
         params += list(adapter.parameters())
     optim = torch.optim.AdamW(params, lr=3e-4)
+
+    if args.benchmark:
+        run_vit_benchmark(
+            args,
+            backbone,
+            set_attn,
+            router,
+            head,
+            adapter,
+            atom_emb,
+            phi_snapshot,
+            cache,
+            train_dataset,
+            optim,
+            device,
+        )
+        return
 
     modules = [backbone, set_attn, router, head]
     if adapter is not None:
@@ -228,9 +319,9 @@ def main():
                 yb = yb.to(device, non_blocking=True)
                 tokens = backbone(xb)
                 phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi, Sig, Size, mask = cache.gather_padded(batch_idx, phi_dynamic)
-                Z = set_attn(Phi, Sig, Size, mask, Phi, Sig, Size, mask)
-                routed = router(tokens, Z, Phi, mask)
+                Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
+                Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
+                routed = router(tokens, Z, Phi, q_ptrs)
                 cls_repr = routed.mean(dim=1)
                 logits = head(cls_repr)
                 loss = F.cross_entropy(logits, yb)
@@ -263,9 +354,9 @@ def main():
                 yb = yb.to(device, non_blocking=True)
                 tokens = backbone(xb)
                 phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi, Sig, Size, mask = cache.gather_padded(batch_idx, phi_dynamic)
-                Z = set_attn(Phi, Sig, Size, mask, Phi, Sig, Size, mask)
-                routed = router(tokens, Z, Phi, mask)
+                Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
+                Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
+                routed = router(tokens, Z, Phi, q_ptrs)
                 cls_repr = routed.mean(dim=1)
                 logits = head(cls_repr)
                 loss = F.cross_entropy(logits, yb)
@@ -277,6 +368,7 @@ def main():
                 batch_top5 = (topk == yb.unsqueeze(-1)).any(dim=-1).sum().item()
                 with torch.no_grad():
                     set_idx_batch, _ = cache.gather_sequence_sets(batch_idx)
+                    _, mask = pad_segments_from_ptrs(Phi.new_zeros(Phi.size(0), 1), q_ptrs)
                 batch_sets, batch_seqs, coverage_mask = update_coverage_stats(mask, set_idx_batch, coverage_mask)
                 sets_seen_total += float(batch_sets)
                 seq_seen_total += batch_seqs

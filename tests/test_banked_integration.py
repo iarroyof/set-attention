@@ -73,10 +73,10 @@ def _build_lm_components(batch_size=16):
 
 def _lm_loss(components):
     phi_dynamic = components["adapter"](components["atom_emb"].weight)
-    Phi, Sig, Size, mask = components["cache"].gather_padded(components["batch_idx"], phi_dynamic)
+    Phi, Sig, Size, q_ptrs = components["cache"].gather_flat(components["batch_idx"], phi_dynamic)
     tokens = components["backbone"](components["src_ids"])
-    Z = components["set_attn"](Phi, Sig, Size, mask, Phi, Sig, Size, mask)
-    routed = components["router"](tokens, Z, Phi, mask)
+    Z, q_ptrs = components["set_attn"](Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
+    routed = components["router"](tokens, Z, Phi, q_ptrs)
     logits = components["head"](routed)
     return F.cross_entropy(logits.reshape(-1, logits.size(-1)), components["tgt_ids"].reshape(-1))
 
@@ -192,11 +192,11 @@ def _build_seq2seq_components():
 
 def _seq_loss(components):
     phi_dynamic = components["adapter"](components["atom_emb"].weight)
-    Phi_q, Sig_q, Size_q, mask_q = components["cache_tgt"].gather_padded(components["batch_idx"], phi_dynamic)
-    Phi_k, Sig_k, Size_k, mask_k = components["cache_src"].gather_padded(components["batch_idx"], phi_dynamic)
+    Phi_q, Sig_q, Size_q, q_ptrs = components["cache_tgt"].gather_flat(components["batch_idx"], phi_dynamic)
+    Phi_k, Sig_k, Size_k, k_ptrs = components["cache_src"].gather_flat(components["batch_idx"], phi_dynamic)
     dec_h, _ = components["backbone"](components["src_ids"], components["tgt_in"])
-    Z_sets = components["set_attn"](Phi_q, Sig_q, Size_q, mask_q, Phi_k, Sig_k, Size_k, mask_k)
-    tok_out = components["router"](dec_h, Z_sets, Phi_q, mask_q)
+    Z_sets, q_ptrs = components["set_attn"](Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
+    tok_out = components["router"](dec_h, Z_sets, Phi_q, q_ptrs)
     logits = components["out_proj"](tok_out)
     return F.cross_entropy(logits.reshape(-1, logits.size(-1)), components["tgt_ids"].reshape(-1))
 
@@ -271,10 +271,10 @@ def _vit_loss(components):
     images = dataset.images
     labels = dataset.labels
     phi_dynamic = components["adapter"](components["atom_emb"].weight)
-    Phi, Sig, Size, mask = components["cache"].gather_padded(components["batch_idx"], phi_dynamic)
+    Phi, Sig, Size, q_ptrs = components["cache"].gather_flat(components["batch_idx"], phi_dynamic)
     tokens = components["backbone"](images)
-    Z_sets = components["set_attn"](Phi, Sig, Size, mask, Phi, Sig, Size, mask)
-    routed = components["router"](tokens, Z_sets, Phi, mask)
+    Z_sets, q_ptrs = components["set_attn"](Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
+    routed = components["router"](tokens, Z_sets, Phi, q_ptrs)
     cls_repr = routed.mean(dim=1)
     logits = components["head"](cls_repr)
     return F.cross_entropy(logits, labels)
@@ -308,8 +308,8 @@ def test_toy_diffusion_single_step_reduces_loss():
     def diffusion_loss():
         torch.manual_seed(1234)
         phi_dynamic = adapter(atom_emb.weight)
-        Phi, Sig, Size, mask = cache.gather_padded(batch_idx, phi_dynamic)
-        model.set_current_bank(Phi, Sig, Size, mask)
+        Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
+        model.set_current_bank(Phi, Sig, Size, q_ptrs)
         return ddpm.loss(model, X, lambda t, d: torch.zeros(t.size(0), d, device=X.device), d_model=16)
 
     with torch.no_grad():

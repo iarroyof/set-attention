@@ -40,8 +40,8 @@ def test_gather_bank_batch_shapes_last_batch():
     assert Sig.shape[:2] == mask.shape
     assert Sig.shape[-1] == 4
     assert Size.shape == mask.shape
-    # Last sequence had no sets → mask row is all False
-    assert mask[-1].sum().item() == 0
+    # Builder inserts an empty placeholder set for sequences without windows.
+    assert mask[-1].sum().item() == 1
 
 
 def test_set_feature_cache_adapter_grads_propagate():
@@ -57,7 +57,7 @@ def test_set_feature_cache_adapter_grads_propagate():
 
     phi_dynamic = adapter(emb.weight)
     batch_idx = torch.tensor([0, 1], dtype=torch.long)
-    Phi, _, _, _ = cache.gather_padded(batch_idx, phi_dynamic)
+    Phi, _, _, _ = cache.gather_flat(batch_idx, phi_dynamic)
     loss = Phi.sum()
 
     emb.zero_grad()
@@ -116,13 +116,14 @@ def test_router_topk_softmax_zeroes_inactive():
         router.out.bias.zero_()
 
     token_states = torch.tensor([[[3.0, 2.0, 1.0, 0.0]]])
-    desc = torch.eye(4).unsqueeze(0)
-    Z = torch.zeros(1, 4, 1, 4)
-    mask = torch.ones(1, 4, dtype=torch.bool)
+    desc = torch.eye(4)
+    Z = torch.zeros(4, 1, 4)
+    q_ptrs = torch.tensor([0, 4], dtype=torch.long)
 
-    _ = router(token_states, Z, desc, mask)
+    _ = router(token_states, Z, desc, q_ptrs)
     with torch.no_grad():
-        logits = torch.matmul(token_states, desc.transpose(1, 2))
+        desc_padded = desc.unsqueeze(0)
+        logits = torch.matmul(token_states, desc_padded.transpose(1, 2))
         topk_vals, topk_idx = torch.topk(logits, k=2, dim=-1)
         tmp = torch.full_like(logits, float("-inf"))
         tmp.scatter_(dim=-1, index=topk_idx, src=topk_vals)

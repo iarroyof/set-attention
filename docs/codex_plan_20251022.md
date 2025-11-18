@@ -1,254 +1,262 @@
-Here’s a **Codex Plan** that keeps the **correct project structure + code snippets** from our latest project version and **including details** (theory, learning behavior, guarantees, acceptance criteria, profiling targets, ablations, etc.) from the earlier write-up.
+Here’s a **self-contained plan** that includes the right context from this thread, so an agent can immediately continue the work, upgrade SKA to an **optimized, Flash-comparable** implementation, and add trainers for **LM / Diffusion / ViT**. If the agent hits missing files or names or information, it should ask for the specific snippet BEFORE START CODING. A new implementation should be completely generated 
 
 ---
 
-# AUSA Implementation Plan (LM, Diffusion, ViT) — **Merged Spec**
+# Codex Plan — Active-Universe Set Attention (AUSA)
 
-*(Updated 2025-10-22: synthetic integration tests landed; tokenizer registry + HF Unigram/BPE integration queued.)*
-
-## 0) Core idea (one paragraph)
-
-We **freeze atom discovery** inside training steps. A tokenizer (AUSA today; HuggingFace Unigram/BPE next) builds an **Active Universe** $U^*$ (atoms). We keep a **Universe Pool** with per-atom features $\phi(u)$ and MinHash signatures. Each sequence (or image/patch grid) is represented by a **bank of subsets** (multiple sets per sequence). The model runs **set-level attention** (tiny set×set per example block), then **routes tokens/patches** to those set outputs with light adapters—no “sets per token” replication. Optional **learned set prototypes** act as a global set basis so we can compare atom derivation strategies head-to-head.
+**Goal:** Implement and evaluate **optimized** Set-Kernel Attention (SKA) that’s fair to compare with dot-product attention (SDPA/Flash), across **language modeling**, **diffusion (text & images)**, and **ViT**. Keep the **banked set** representation (multiple sets per sequence), **no rediscovery in-step**, and **differentiable per-batch pooling** so adapters truly train.
 
 ---
 
-## 1) Repo layout (current modules / new scripts)
+## 0) Project context (what exists & what we’ve adopted)
+
+### Core concepts (adopted)
+
+* **Active Universe (U*)** built by a tokenizer; training never does per-step discovery.
+* **Banks of sets per sequence** (two-level ragged CSR: `values`, `set_offsets`, `seq_offsets`).
+* **MinHash signatures** + **cardinalities** cached **once**; **Φ (pooled atom features)** is **pooled per batch** from current atom features (embedding + optional low-rank adapter).
+* **SetBankAttention**: Δ-RBF from symmetric difference **plus** optional content term `(A Φ_q)(B Φ_k)^T`. Softmax is per sequence block.
+* **TokenSetRouter**: token→set routing (optional top-k) to mix set outputs back to tokens.
+* **Adapter**: low-rank residual over atom embedding; must receive gradients ⇒ Φ pooled inside forward.
+
+### Why we’re upgrading
+
+* Current SKA is **vectorized Python/Torch** (research-grade). Dot attention baselines use **highly optimized** kernels (SDPA/Flash). For fair comparison, we’ll:
+
+  * Keep a **Naïve vs Naïve** table (PyTorch vs PyTorch, fp32).
+  * Produce an **Optimized vs Optimized** table: **SKA (Triton/KeOps + online softmax + bf16/fp16)** vs **SDPA/Flash**.
+
+---
+
+## 1) Repository scaffold (current & expected)
 
 ```
 src/set_attention/
-  tokenizers/
-    active_tokenizer.py
-    hf_unigram.py        # HuggingFace Unigram wrapper (planned)
-    hf_bpe.py            # HuggingFace BPE wrapper (planned)
-    registry.py          # tokenizer selection (AUSA vs HF)
-  training/
-    text_utils.py            # encode_sentence, ids_to_tokens, TokenSetStore, text_batch_iterator
+  tokenizers/active_tokenizer.py
+  training/text_utils.py          # encode_sentence, ids_to_tokens, TokenSetStore, text_batch_iterator
   sets/
-    banked.py                # BankedSetBatch(values, set_offsets, seq_offsets)
-    bank_builders.py         # build_windowed_bank_from_texts, build_windowed_bank_from_ids
-    bank_cache.py            # SetBankCache (Sig/Size cache; per-batch Φ pooling)
-    bank_utils.py            # gather_bank_batch helper
-    atom_adapter.py          # low-rank adapter over atom embeddings
+    banked.py                     # BankedSetBatch(values, set_offsets, seq_offsets)
+    bank_builders.py              # build_windowed_bank_from_texts / _from_ids
+    bank_cache.py                 # SetBankCache (Sig/Size cached; Φ pooled per batch)
+    bank_utils.py                 # gather_bank_batch helper
+    atom_adapter.py               # low-rank adapter over atom embeddings
   kernels/
-    sketches.py              # MinHasher.sketch_vec (vectorized)
+    sketches.py                   # MinHasher.sketch_vec (vectorized)
+    delta_rbf_fast.py             # (add) Δ/Jaccard helpers
+    triton/
+      ska_sig_delta_tile.py       # (add) Triton: equality→Δ→exp tile
+      ska_online_softmax.py       # (add) Triton: online softmax + V contraction
+    keops/
+      ska_lazy.py                 # (add) KeOps fallback
   heads/
-    banked_attention.py      # SetBankAttention (multi-head Δ-RBF + content)
-    token_router.py          # TokenSetRouter (token→set gating)
-  utils/
-    profiling.py             # wall time, CPU%, VRAM, steps/s
+    banked_attention.py           # SetBankAttention (multi-head Δ-RBF + content)
+    token_router.py               # TokenSetRouter (token→set gating)
+  utils/profiling.py
 
 scripts/
-  train_seq2seq_text.py          # tokenizer-aware SKA
-  train_seq2seq_text_banked.py   # banked set attention (reference)
-  train_toy_seq2seq.py           # toy seq2seq (shared helpers)
-  train_toy_lm_banked.py         # draft banked LM
-  train_toy_diffusion_banked.py  # draft banked diffusion
-  train_tiny_vit_banked.py       # draft banked ViT
+  train_seq2seq_text.py
+  train_seq2seq_text_banked.py
+  train_toy_seq2seq.py
+  train_toy_lm_banked.py
+  train_toy_diffusion_banked.py
+  train_tiny_vit_banked.py
+
+tests/
+  test_banked_sets.py             # (exists)
+  test_ska_kernels.py             # (add)
+  test_pooling_grads.py           # (add)
 ```
+
+> If a file above is missing, Codex should create it with the API detailed below.
 
 ---
 
-## 2) Canonical data structures
+## 2) Non-negotiable invariants (keep these)
 
-### 2.1 Banked sets (two-level Compressed Sparse Row, CSR)
+* **Do not** cache Φ across batches with grads; **pool per batch** from `adapter(Embedding.weight)`.
+* **Precompute & cache on device:** `Sig_sets`, `Size_sets`, CSR pointers.
+* **No per-token set replication.** Compute set×set once per sequence; tokens route via gates.
+* **All hot paths** on GPU; no Python loops in forward/backward.
+* **Precision:** allow `bf16/fp16` for optimized path; keep MinHash in integer types (`uint16/uint32`).
+
+---
+
+## 3) APIs Codex must honor
+
+### 3.1 BankedSetBatch
 
 ```python
 @dataclass
 class BankedSetBatch:
-    values: torch.LongTensor      # (NNZ,) concatenated atom IDs
-    set_offsets: torch.LongTensor # (Nsets+1,) CSR over values
-    seq_offsets: torch.LongTensor # (B+1,)   CSR over sets
-
+    values: torch.LongTensor        # (NNZ,)
+    set_offsets: torch.LongTensor   # (Nsets+1,)
+    seq_offsets: torch.LongTensor   # (B+1,)
     def to(self, device): ...
-# Sets for sequence b: indices [seq_offsets[b], seq_offsets[b+1])
-# Atoms for set j: values[ set_offsets[j] : set_offsets[j+1] ]
 ```
 
-### 2.2 Set bank cache (what to cache vs. recompute)
-
-* **Cache once (no grad):** `sig_sets (Nsets,k)`, `size_sets (Nsets,)`, `values`, `set_offsets`, `seq_offsets`.
-* **Recompute per batch (with grad):** pooled set features `Φ_sets` via **differentiable** CSR sum from the **current** atom features.
+### 3.2 SetBankCache
 
 ```python
-phi_cur = adapter(atom_emb.weight)              # (V, D_atom), differentiable
-Phi = cache.pool_phi_for_sets(set_idx, phi_cur) # uses CSR index_add_, differentiable
+class SetBankCache:
+    # cached (no grad): values, set_offsets, seq_offsets, sig_sets(Nsets,k), size_sets(Nsets,)
+    def pool_phi_for_sets(self, set_idx: torch.LongTensor, phi_cur: torch.Tensor) -> torch.Tensor:
+        """CSR index_add_ sum-pool: returns Φ[set_idx] (|J|, D). Differentiable."""
 ```
 
-### 2.3 Token set store (seq2seq Set Kernel Attention, SKA)
+### 3.3 SetBankAttention (module boundary remains)
 
-`training/text_utils.py::TokenSetStore` wraps **precomputed token sets + signatures** per sequence; `.gather(batch_idx)` returns concatenated values/offsets/sigs for the batch.
+```python
+Z_sets, q_ptrs = set_bank_attn(
+    Phi_q, Sig_q, Size_q,    # (nq,D), (nq,k), (nq,)
+    Phi_k, Sig_k, Size_k,    # (nk,D), (nk,k), (nk,)
+    ptrs_q, ptrs_k,          # block pointers for per-sequence tiles
+    params                   # gamma, beta, tau, A, B, Vs
+)
+```
 
----
+### 3.4 TokenSetRouter
 
-## 3) Set-level attention and token routing
-
-### 3.1 SetBankAttention (multi-head)
-
-* Jaccard via MinHash: `J = mean(eq(Sig_q[:,None,:], Sig_k[None,:,:]))`.
-* Symmetric difference (closed form): (\Delta = |A| + |B| - 2|A\cap B|), with ( |A\cap B| \approx \frac{J}{1+J}(|A|+|B|) ).
-* Δ-RBF: `exp(-gamma * Δ)`.
-* Optional content term: `(A Φ_q) @ (B Φ_k).T`.
-* Softmax **per sequence block**.
-* Values: `V_s([Φ_k, ψ(|K|)]) → (nk,H,Dh)`; head output per query-set: `Z_sets = W @ V_s`.
-
-### 3.2 TokenSetRouter (no set replication)
-
-* Gates per token over **its sequence’s** query-set bank:
-  `G = softmax( tokens @ W_gate · descriptors^T )` with optional **top-k**.
-* Mix per-set head outputs to token level: `Σ_j G[ℓ,j] · Z_sets[j,:,:] → merge heads → linear out`.
-
----
-
-## 4) Low-rank atom feature adapter
-
-**AtomFeatureAdapter:** (\tilde{\phi}(u)=\phi(u)+\alpha W_2 W_1 \phi(u)).
-
-**Rule:** **Always** call the adapter in the forward pass and **pool Φ per batch**, not offline; otherwise the adapter won’t receive gradients.
+```python
+Y = token_router(
+    X_tokens,  # (B,L,d_model)
+    Z_sets,    # ragged per sequence: (Σ nq, H, Dh)
+    q_ptrs,    # block pointers
+    topk=K
+)
+```
 
 ---
 
-## 5) Reference training pattern (seq2seq, banked)
+## 4) Optimization roadmap (deliverables & order)
 
-1. Train/load tokenizer → build banks via `build_windowed_bank_from_texts`.
-2. `SetBankCache.precompute` **(Sig/Size only)**.
-3. Per batch:
+### Tier 1 — Triton kernels (primary deliverable)
 
-   * Token embedding/backbone.
-   * `gather_bank_batch` → set indices/pointers for blockwise attention.
-   * `phi_cur = adapter(Embedding.weight)`; `Φ_q/k = pool_phi_for_sets(...)`.
-   * Gather `Sig_q/k`, `Size_q/k`.
-   * `SetBankAttention` → `TokenSetRouter`.
-   * Linear head + CE loss.
+1. **`kernels/triton/ska_sig_delta_tile.py`**
 
----
+* **Goal:** Compute a tile of `exp(-γΔ)` without materializing `(nq×nk×k)` equality tensors.
+* **Inputs:** `Sig_q (nq,k:uint16/32)`, `Sig_k (nk,k:uint16/32)`, `Size_q (nq)`, `Size_k (nk)`, `gamma`.
+* **Tiling:** `(BQ × BK)` over `(nq, nk)`, stream `k` in chunks, accumulate equality count.
+* **Δ:** `J = eq/k`; `inter = (J/(1+J)) * (|A|+|B|)`; `Δ = |A|+|B| - 2*inter`; `S = exp(-γΔ)`.
+* **Dtype:** integer comparisons in registers; `bf16/fp16` for `S` if safe.
 
-## 6) Language modeling (LM generation)
+2. **`kernels/triton/ska_online_softmax.py`**
 
-* Use `train_toy_lm_banked.py` as prototype.
-* IDs ↔ text for logs; banks via `build_windowed_bank_from_ids`.
-* Metrics: loss, perplexity; optional BLEU on toy.
-* CLI: `--window/--stride`, `--adapter-rank`, `--router-topk`, `--minhash-k`.
-* Status: vocab alignment + profiling hooks landed; synthetic integration test asserts loss drops after optimisation step.
+* **Goal:** Flash-style streaming `Out = softmax(S) @ V` **without** storing `S` or `W`.
+* **State per query row:** `m` (running max), `l` (normalizer), `Out` (accumulator).
+* **Loop over K tiles:** compute tile scores (from 1), add content term if enabled, update online softmax state, contract with `V_tile`.
+* **Output:** `Out / l`.
+* **Multi-head:** broadcast `V_tile` over heads (or treat head in block dimension).
 
----
+3. **Content term fusion (optional in v1)**
 
-## 7) Diffusion
+* Precompute `Qc = A(Phi_q)`, `Kc = B(Phi_k)` once per step.
+* Add `Qc @ Kc^T` to the tile’s score **before** online softmax update.
 
-### 7.1 Text diffusion (`train_toy_diffusion_banked.py`)
+4. **Router segmented top-k (optional v2)**
 
-* Denoiser backbone with AUSA blocks; collect banks from token IDs.
-* Loss: ε-prediction (or v-prediction).
-* Eval: MMD/1-NN/qualitative samples.
-* Status: dataset split logging + deterministic loss checks in place; integration test covers one-step improvement.
+* Triton kernel for per-sequence block segmented top-k indices; fallback to dense softmax OK for v1.
 
-### 7.2 Image diffusion (UNet/DiT) — future
+### Tier 1.5 — KeOps fallback (fast to ship)
 
-* Patches → IDs (e.g., VQ codebook).
-* Banks from windows/superpixels; AUSA in attention blocks.
-* Eval: FID/sFID/Inception.
+* `kernels/keops/ska_lazy.py`: express Δ-RBF (+ content) with KeOps LazyTensor, compute `logsumexp` and matmul lazily. Use when Triton isn’t available (e.g., ROCm).
 
----
+### Tier 2 — Bitset Δ (exact, when bank universe is small)
 
-## 8) ViT (classification / SSL)
+* For small per-bank universes (≤4096 atoms), pack sets into 64-bit words; Δ via XOR + `popcount` (CUDA `__popcll`). This can replace MinHash in that regime (evaluation feature).
 
-* Patch tokens as usual; banks from windows or proposals.
-* AUSA blocks mix **region-level** set outputs into patch tokens (or CLS).
-* Loss: CE (supervised) or DINO/MoCo (SSL).
-* Status: bank coverage metrics and val logging wired; synthetic integration test ensures short-run loss drop without torchvision.
+### Tier 3 — System polish
+
+* AMP (bf16/fp16), channels-last where relevant, pinned memory, CUDA graphs for steady-state training, DDP support, `torch.compile` where it fuses.
 
 ---
 
-## 9) **Theory addendum & guarantees** (missing details restored)
+## 5) Integration targets (models/trainers)
 
-### 9.1 Embedding of unseen sets (stability)
+### 5.1 Language Modeling (`scripts/train_toy_lm_banked.py`)
 
-For any two sets (S,T\subseteq U^*),
-[
-\Phi(S)-\Phi(T)=!!\sum_{u\in S\triangle T}!!\sigma(u),\phi(u),\quad
-|\Phi(S)-\Phi(T)|\le M,|S\triangle T| ;(\text{if }|\phi(u)|\le M).
-]
-Thus (S\mapsto\Phi(S)) is **Lipschitz** in symmetric-difference; unseen sets close to seen ones map nearby.
+* Decoder-only Transformer + **AUSA blocks** (replace some self-attn).
+* Build banks via `build_windowed_bank_from_ids`.
+* **Per-batch**: `phi_cur = adapter(Emb.weight)` → `pool_phi_for_sets` → Triton SKA → Router.
+* CLI flags: `--window --stride --adapter-rank --router-topk --minhash-k --sdpa-baseline`.
+* Metrics: CE loss, perplexity (tiny overfit + small corpus run).
 
-### 9.2 PSD and characteristic properties
+### 5.2 Diffusion (text: `train_toy_diffusion_banked.py`; image: `train_diffusion_image.py`)
 
-* The **Δ-RBF** kernel (k_\Delta(S,T)=\exp(-\gamma |S\triangle T|)) is **positive definite** on finite sets when (\gamma>0) (via Schoenberg: negative-type metric (|S\triangle T|\Rightarrow) Gaussian of negative type is PD).
-* Adding a content inner product (\langle A\Phi(S),B\Phi(T)\rangle) preserves PD when (A,B) are linear.
-* With sufficiently rich (\phi) (e.g., universal RKHS features) the combined kernel is **characteristic**; Nyström/RFF approximations introduce an (\varepsilon) distortion controlled by rank/features.
+* Add **AUSA blocks** in UNet/DiT attention positions.
+* Text: banks from ID sequences. Image: VQ/VQGAN patch IDs, banks from windows/superpixels.
+* Loss: ε/v-prediction; Eval: MMD/1-NN (text), FID/sFID/Inception (image).
 
-### 9.3 Learning “attention sets”
+### 5.3 ViT (`train_tiny_vit_banked.py`)
 
-* **Observed banks:** learn scoring params (\theta={\gamma,\beta,\tau,A,B}), value MLP, and token routing. Attention weights (W_\theta) are **fully learned** (as in dot attention) but over set geometry.
-* **Prototype bank (optional):** learn Bernoulli membership vectors (p_j\in[0,1]^{|U^*|}).
-  (\Phi(P_j)=\Phi_Z^\top p_j,;\mathbb{E}[\Delta(S,p_j)]=|S|+|p_j|*1-2\sum*{u\in S}p_{j,u}).
-  Differentiable; regularize with (\ell_1) or entropy.
+* Patch tokens; build banks from patch IDs; AUSA block mixes region-level outputs to tokens (or CLS).
+* Metric: accuracy on small dataset; throughput vs dense attention.
 
 ---
 
-## 10) Engineering invariants (must-keep)
+## 6) Benchmark protocol (publishable)
 
-* **No AUT in step time.** Tokenizer growth only at epoch boundaries (if at all).
-* **Cache Sig/Size only.** **Never** cache Φ with grads across batches.
-* **Vectorize** MinHash (`sketch_vec`) and pooling (CSR `index_add_`).
-* **Blockwise ops** per sequence via `seq_offsets`—no cross-sequence matmuls.
-* **Keep tensors on one device**; avoid CPU loops in the hot path.
+Report **both**:
 
----
+* **Naïve vs Naïve:**
 
-## 11) Acceptance criteria & profiling targets
+  * Dot: plain PyTorch matmuls + softmax (fp32).
+  * SKA: current vectorized PyTorch (fp32).
 
-* **Tiny overfits** (seq2seq, LM, diffusion, ViT) in < N steps; loss ↓ monotonically.
-* **GPU util** ≥ 60% at medium batch size; **VRAM** stable with longer sequences (banks small).
-* **Throughput:** banked AUSA faster than dense token×token attention for long sequences (report steps/s).
-* **Ablations improve understanding:** router top-k, adapter rank, MinHash-k, bank size.
+* **Optimized vs Optimized:**
 
----
+  * Dot: **SDPA/Flash** (bf16/fp16).
+  * SKA: **Triton online-softmax kernel** (bf16/fp16).
 
-## 12) CLI & flags (consistency)
+**Log:**
 
-* `--window`, `--stride` (bank construction)
-* `--adapter-rank` (0 = frozen; >0 = trainable)
-* `--router-topk` (0 = dense; >0 = sparse per token)
-* `--minhash-k` (default 128; 32/64 for speed ablations)
-* `--tokenizer PATH` (log **Loading** vs **Training**)
-* `--tokenizer-mode {ausa,hf_unigram,hf_bpe}` (planned) to switch atom derivation scheme.
-* `--prof` (enable profiling summary)
+* HW/versions (GPU, CUDA, PyTorch, Triton/KeOps).
+* Shapes: `B, Lq, Lk, h, d`, bank stats `S̄_q, S̄_k`, signature `k`.
+* Wall-clock fwd+bwd (median N=100, warmup 20), **cuda.synchronize()**.
+* Max VRAM (nvml), GPU util %, tokens/s or examples/s.
+* Asymptotics: L from 512→8k; bank sizes 8→64; k from 32→256.
+* Correctness: Δ via MinHash vs **exact bitset Δ** (small universe) ⇒ error histograms.
+* Quality sanity: small LM task parity (PPL within tolerance).
 
 ---
 
-## 13) Tests (unit & integration)
+## 7) Tests (must pass)
 
-* **Bank slicing:** `gather_bank_batch` shapes; last batch handling.
-* **Pooling grads:** `pool_phi_for_sets` propagates grads to adapter (gradcheck on toy).
-* **MinHash vs Jaccard:** equality fraction ≈ true Jaccard on small sets.
-* **Router top-k:** indices stable; renormalized softmax correct.
-* **Synthetic integration suites:** `tests/test_banked_integration.py` covers toy LM/diffusion/seq2seq/tiny ViT loss drops after one optimizer step.
-* **End-to-end tiny tasks:** copy/reverse seq2seq (CE ↓), toy LM (PPL ↓), toy diffusion (ε-MSE ↓), tiny ViT (acc ↑ vs random) — now exercised via fast CPU tests.
-
----
-
-## 14) Failure modes & fixes
-
-* **“Backward through graph twice”:** you cached Φ with grads → **fix**: pool Φ per batch inside forward.
-* **Low GPU util:** Python loops or per-step tokenization → **fix**: precompute Sig/Size/banks; keep on device; vectorize pooling.
-* **Router collapse:** add entropy regularizer on gates; enable `--router-topk`.
-* **OOB vocab indices:** ensure `<pad>, <s>, </s>, <unk>` are present and embedding sized to `stoi`.
-* **Poor Δ accuracy:** increase `--minhash-k` (start at 128; drop only after validation).
+* **Pooling grads:** Autograd gradcheck on a toy batch: adapter params receive gradients through `pool_phi_for_sets`.
+* **MinHash vectorized:** `sketch_vec` equality-fraction ≈ true Jaccard on small synthetic sets (tolerance configurable).
+* **Bank slicing:** `gather_bank_batch` shapes/ptrs correct; last batch OK.
+* **Kernel parity:** Triton vs Python reference on small tiles (numerical tolerance).
+* **Tiny overfits:** seq2seq copy/reverse, LM toy, diffusion toy, ViT toy.
 
 ---
 
-## 15) Immediate TODOs (next agent)
+## 8) Deliverables & milestones
 
-* Integrate HuggingFace tokenizers (Unigram + BPE) alongside AUSA in a modular interface.
-* Refactor bank builders/text loaders so tokenizer choice is pluggable (text + vision captions).
-* Expose tokenizer selection flags in `train_*` scripts and ensure cache serialization.
-* Extend tests in §13 to cover tokenizer swaps + atom universe diffs.
-* Wire W&B (optional) logging hooks in trainers for sweep readiness.
+1. **KeOps fallback path** (days): `ska_lazy.py` + wiring flag `--ska-backend {python,keops}`.
+2. **Triton kernels v1**: `sig_delta_tile` + `online_softmax` (Δ-RBF only), integrated into `banked_attention.py`.
+3. **Optimized SKA → LM toy** end-to-end; benchmarks vs SDPA/Flash.
+4. **Content term fusion** in Triton; ablation on β.
+5. **Diffusion & ViT** AUSA blocks + toy runs.
+6. **Bitset Δ** (exact) kernel (optional showcase).
+7. **Final benchmark suite** + ablation plots + doc.
 
 ---
 
-## 16) Reference snippets (kept)
+## 9) Flags & config (consistent across trainers)
 
-### 16.1 Pooling with grads
+* `--ska-backend {python,triton,keops}`
+* `--precision {fp32,fp16,bf16}`
+* `--window --stride`
+* `--adapter-rank` (0 = freeze)
+* `--router-topk` (0 = dense)
+* `--minhash-k` (default 128)
+* `--tokenizer PATH` (log **[Tokenizer] Loading** vs **Training**)
+* `--prof` (enable profiling log)
+
+---
+
+## 10) Reference snippets (to reuse)
+
+### 10.1 Pool Φ with grads (CSR)
 
 ```python
 def pool_phi_for_sets(values, set_offsets, set_idx, phi_cur):
@@ -265,7 +273,7 @@ def pool_phi_for_sets(values, set_offsets, set_idx, phi_cur):
     return Phi
 ```
 
-### 16.2 Set scores
+### 10.2 Set scores (Python reference; kernels must match numerics)
 
 ```python
 def set_scores(Phi_q, Sig_q, Size_q, Phi_k, Sig_k, Size_k, A, B, gamma, beta, tau):
@@ -281,172 +289,39 @@ def set_scores(Phi_q, Sig_q, Size_q, Phi_k, Sig_k, Size_k, A, B, gamma, beta, ta
 
 ---
 
-## 17) One-line handoff
+## 11) Workflow & PR checklist
 
-**Leverage the bank builders/cache/router already live to finish LM, Diffusion, and ViT trainers, then plug in the tokenizer registry (AUSA + HuggingFace) before scaling sweeps.** Cache Sig/Size only; **pool Φ per batch with the adapter** so it truly trains; run blockwise set×set attention and token routing; profile and ablate (`top-k`, adapter rank, minhash-k, bank size, tokenizer mode) on tiny tasks before scaling.
----
-
-# Current Status Snapshot (2025-10-21)
-
-- Unified all banked trainers on the shared UniversePool + SetFeatureCache flow (scripts/train_seq2seq_text_banked.py, 	rain_toy_lm_banked.py, 	rain_toy_diffusion_banked.py, 	rain_tiny_vit_banked.py).
-- Added src/set_attention/universe/ module providing reusable pooling/gather helpers (UniversePool, SetFeatureCache.gather_padded).
-- Added regression coverage 	ests/test_set_feature_cache.py (MinHash precondition + differentiable pooling) — passes on the 	orch conda env.
-- Smoke commands (CPU-friendly):
-
-The repo is at commit Refactor banked trainers around UniversePool cache (main branch).
-
-# Modularization Priorities (Next Steps)
-
-1. **Bank + Tokenizer Registry** — build a `set_attention.training.registry` that couples tokenizer adapters (AUSA, HF Unigram, HF BPE) with bank construction helpers (text/ids/patch) and returns `(UniversePool, SetFeatureCache, stats)` with minimal script glue.
-2. **Tokenizer Abstraction Layer** — introduce a pluggable tokenizer interface so scripts can choose AUSA vs HuggingFace (`--tokenizer-mode=ausa|hf_bpe|hf_unigram`), including caching, vocab export, and atom universe diff reporting.
-3. **Trainer Harness** — factor shared training loops into reusable utilities with callbacks for model build / forward / metrics; scripts should only register components.
-4. **Dataset Adapters** — move ad-hoc dataset prep into `set_attention.data.*` modules with typed configs (text corpora, CIFAR patches, toy diffusion sequences, vision caption tokenization).
-5. **Model Factories** — expose `set_attention.models.ausa_*` modules that assemble backbones + banked heads, so scripts simply configure them.
-6. **Configuration Layer** — adopt YAML/dataclass experiment configs parsed by scripts, making publication experiments reproducible without copying argparse blocks; include tokenizer + bank settings.
-7. **Testing & CI** — extend unit tests / synthetic integration suites to cover tokenizer swaps, ensure fast CPU coverage, and spec out CI instructions.
-
-## Additional information
-
-- Centralize the universe/bank wiring in a reusable helper, e.g. `set_attention.training.registry`, that exposes `build_text_bank(tokenizer_mode=...)`, `build_id_bank`, `build_patch_bank`, so scripts like `scripts/train_seq2seq_text_banked.py:183` and `scripts/train_toy_diffusion_banked.py:129` stop duplicating MinHash/SetFeatureCache ceremony.
-- Factor a common trainer harness (`set_attention.training.runner`) with callbacks for model build, loss, metrics, and W&B logging; current loops in `scripts/train_toy_lm_banked.py:134`, `scripts/train_toy_diffusion_banked.py:151`, and `scripts/train_seq2seq_text_banked.py:236` share the same skeleton (profiling, adapter wiring, cache gathers).
-- Extract dataset adapters into a dedicated `set_attention.data.*` module so text/vision/diffusion corpora can be declared declaratively; include caption/token pipelines that reuse HuggingFace tokenizers when selected.
-- Move the “build backbone + banked head” logic into model factories under `set_attention.models`, giving you `ausa_lm`, `ausa_seq2seq`, `ausa_diffusion`, `ausa_vit` modules that scripts simply import and configure.
-- Adopt a config layer (YAML + OmegaConf or simple dataclasses) to define experiments; scripts would parse a config path, freeing you to add new experiments without copying argparse blocks (e.g. the long option lists at `scripts/train_seq2seq_text_banked.py:75` and `scripts/train_tiny_vit_banked.py:106`). Include tokenizer registry entries + logging toggles.
-- Expand unit coverage for SetFeatureCache integration—including tokenizer swap smoke tests—so future refactors don’t regress the gather logic.
-- Document the new architecture in docs/ (a quick “how to add a new banked script” + “tokenizer swap checklist”) once the modules exist, keeping publication-facing experiments reproducible.
+* **Branching:** `feat/triton-ska`, `feat/keops-ska`, `feat/lm-banked`, `feat/diffusion-banked`, `feat/vit-banked`.
+* **Small, testable PRs**: kernel + unit test; then integration + benchmark notebook/scripts.
+* **CI hooks (if available):** run `tests/test_*` on GPU runner; otherwise provide a lightweight CPU ref check and mark GPU tests as optional.
+* **Docs:** update a `docs/ausa_kernels.md` with kernel assumptions, tiling sizes, numerics, dtype choices.
 
 ---
 
-# Current Status Snapshot (2025-10-21)
+## 12) What *not* to change
 
-- Unified all banked trainers on the shared `UniversePool` + `SetFeatureCache` flow (`scripts/train_seq2seq_text_banked.py`, `train_toy_lm_banked.py`, `train_toy_diffusion_banked.py`, `train_tiny_vit_banked.py`).
-- Added `src/set_attention/universe/` module providing reusable pooling/gather helpers (`UniversePool`, `SetFeatureCache.gather_padded`).
-- Added regression coverage `tests/test_set_feature_cache.py` (MinHash precondition + differentiable pooling) — passes on the `torch` conda env.
-- Smoke commands (CPU-friendly):
-  * `python scripts/train_seq2seq_text_banked.py --demo --epochs 1 --batch 4 --device cpu`
-  * `python scripts/train_toy_lm_banked.py --epochs 1 --batch 32 --device cpu --window 4 --stride 2 --minhash-k 16`
-  * `python scripts/train_toy_diffusion_banked.py --epochs 1 --steps 10 --device cpu --window 4 --stride 2 --minhash-k 16 --config configs/diffusion_toy.yaml`
-  * `python scripts/train_tiny_vit_banked.py --epochs 1 --batch 64 --device cpu --patch 4 --limit 128 --window 4 --stride 2 --minhash-k 16`
+* Don’t re-introduce **sets per token**.
+* Don’t train tokenizer or grow U* **inside** forward/backward.
+* Don’t cache Φ with grads across batches (causes “backward through graph twice”).
 
-The repo is at commit `Refactor banked trainers around UniversePool cache` (main branch).
-
-# Modularization Priorities (Next Steps)
-
-1. **Bank Construction API** — create a central helper (e.g. `set_attention.training.bank_registry`) that returns `(SetFeatureCache, stats)` for text, id, and patch banks, eliminating manual MinHash wiring in scripts.
-2. **Trainer Harness** — factor shared training loops into reusable utilities with callbacks for model build / forward / metrics; scripts should only register components.
-3. **Dataset Adapters** — move ad-hoc dataset prep into `set_attention.data.*` modules with typed configs (text corpora, CIFAR patches, toy diffusion sequences).
-4. **Model Factories** — expose `set_attention.models.ausa_*` modules that assemble backbones + banked heads, so scripts simply configure them.
-5. **Configuration Layer** — adopt YAML/dataclass experiment configs parsed by scripts, making publication experiments reproducible without copying argparse blocks.
-6. **Testing & CI** — extend unit tests to cover router + set-attention integration, ensure fast CPU coverage, and spec out CI instructions.
-7. **Documentation** — add a "How to add a banked experiment" guide plus MinHash/adapter tuning notes for the paper supplement.
 ---
 
-# Current Status Snapshot (2025-10-21, Detailed)
+## 13) Ready-to-start tasks (for Codex)
 
-## Repository Structure (key paths)
-```
-.
-├── docs/
-│   ├── codex_plan.md
-│   ├── codex_plan_20251021.md
-│   └── codex_plan_diffucion_vision.md
-├── scripts/
-│   ├── train_seq2seq_text_banked.py
-│   ├── train_seq2seq_text.py
-│   ├── train_toy_lm_banked.py
-│   ├── train_toy_diffusion_banked.py
-│   ├── train_tiny_vit_banked.py
-│   └── (toy + baseline trainers)
-├── src/set_attention/
-│   ├── universe/
-│   │   ├── __init__.py
-│   │   ├── pool.py
-│   │   └── feature_cache.py
-│   ├── sets/
-│   │   ├── banked.py
-│   │   ├── bank_builders.py
-│   │   ├── bank_cache.py
-│   │   ├── bank_utils.py
-│   │   └── atom_adapter.py
-│   ├── heads/
-│   │   ├── banked_attention.py
-│   │   └── token_router.py
-│   ├── kernels/sketches.py
-│   ├── training/text_utils.py
-│   └── utils/profiling.py
-├── tests/
-│   └── test_set_feature_cache.py
-└── configs/
-    └── diffusion_toy.yaml
-```
+* [ ] Create `kernels/keops/ska_lazy.py` and integrate a `--ska-backend keops` switch in `heads/banked_attention.py`.
+* [ ] Create `kernels/triton/ska_sig_delta_tile.py` and `ska_online_softmax.py`; add a minimal wrapper `ska_triton.py`.
+* [ ] Wire Triton backend via `--ska-backend triton`; preserve Python backend as `python`.
+* [ ] Add `--precision` and set autocast; keep signatures in integer tensors.
+* [ ] Refactor `banked_attention.py` to accept **precomputed** `Qc,Kc` if β!=0.
+* [ ] Ensure `SetBankCache.pool_phi_for_sets` is used in all trainers; remove any lingering per-step tokenization.
+* [ ] Add tests in `tests/test_ska_kernels.py` and `tests/test_pooling_grads.py`.
+* [ ] Implement Naïve vs Naïve & Optimized vs Optimized benchmark scripts (LM toy), log CSV.
+* [ ] Integrate AUSA blocks into `train_toy_diffusion_banked.py` and `train_tiny_vit_banked.py`; run tiny overfits.
 
-## Key Modules & Snippets
+---
 
-```python
-# src/set_attention/universe/pool.py
-class UniversePool:
-    def __init__(self, U_ids, phi_bank=None, mh_sigs=None, metadata=None):
-        self.U_ids = U_ids.clone().long()
-        self.phi_bank = phi_bank.clone() if phi_bank is not None else None
-        self.mh_sigs = mh_sigs.clone() if mh_sigs is not None else None
-        self.metadata = metadata.copy() if metadata else {}
-        self._build_lookup()  # ensures id→position searchsorted helpers
-```
+### One-line summary for the agent
 
-```python
-# src/set_attention/universe/feature_cache.py
-def gather_padded(self, batch_indices: torch.Tensor, phi_cur: torch.Tensor):
-    if self.seq_offsets is None or self.sig_sets is None:
-        raise RuntimeError("seq_offsets and MinHash signatures required")
-    set_idx, ptrs = self.gather_sequence_sets(batch_indices.to(self.seq_offsets.device))
-    ...  # builds padded Φ/σ/|S|/mask tensors per sequence, using compute_phi_for_indices
-    return Phi_pad, Sig_pad, Size_pad, mask
-```
+> Implement Triton (and KeOps fallback) **fused, streaming SKA kernels** with online softmax; keep Φ **pooled per batch** so adapters train; integrate into banked attention + token router across LM/Diffusion/ViT; benchmark **Naïve vs Naïve** and **Optimized vs Optimized** against SDPA/Flash with consistent shapes/precision; add unit tests and tiny overfits.
 
-```python
-# src/set_attention/heads/banked_attention.py
-class SetBankAttention(nn.Module):
-    def forward(self, phi_q, sig_q, size_q, mask_q, phi_k, sig_k, size_k, mask_k):
-        jacc = (sig_q.unsqueeze(2) == sig_k.unsqueeze(1)).float().mean(-1)
-        delta = ...  # symmetric difference via MinHash
-        scores = torch.exp(-self.gamma * delta)
-        ...
-        return Z  # (batch, n_q, num_heads, head_dim)
-```
-
-```python
-# src/set_attention/heads/token_router.py
-class TokenSetRouter(nn.Module):
-    def forward(self, tokens, set_values, phi_sets, mask):
-        gates = self._compute_gates(tokens, phi_sets, mask)
-        mixed = torch.einsum('bqh,bqhd->bhd', gates, set_values)
-        return self.out_proj(mixed.reshape(tokens.size(0), tokens.size(1), -1))
-```
-
-```python
-# scripts/train_seq2seq_text_banked.py (excerpt)
-universe = UniversePool(torch.arange(V, device=device), metadata={"tokenizer": args.tokenizer or "inline"})
-cache_src = SetFeatureCache(universe, src_bank.values, src_bank.set_offsets, src_bank.seq_offsets, minhash=train_mh).to(device)
-...
-Phi_q, Sig_q, Size_q, mask_q = cache_tgt.gather_padded(batch_idx_tensor, phi_dynamic)
-Phi_k, Sig_k, Size_k, mask_k = cache_src.gather_padded(batch_idx_tensor, phi_dynamic)
-Z_sets = set_attn(Phi_q, Sig_q, Size_q, mask_q, Phi_k, Sig_k, Size_k, mask_k)
-```
-
-```python
-# tests/test_set_feature_cache.py
-universe = UniversePool(torch.tensor([10, 20, 30, 40]))
-cache = SetFeatureCache(universe, values, set_offsets, seq_offsets, minhash=MinHasher(k=8))
-phi_cur = torch.tensor([[1,0],[0,1],[1,1],[2,0]], dtype=torch.float32)
-Phi, Sig, Size, mask = cache.gather_padded(torch.tensor([0, 1]), phi_cur)
-assert torch.allclose(Phi[0, 0], torch.tensor([1.0, 1.0]))
-```
-
-## Where to Hook New Experiments
-- **Shared universe helpers:** `src/set_attention/universe/` (import `UniversePool`, `SetFeatureCache`).
-- **Bank construction:** `src/set_attention/sets/bank_builders.py` (windowed banks for text/ID/patch sequences).
-- **Adapters & routing:** `src/set_attention/sets/atom_adapter.py`, `src/set_attention/heads/token_router.py`.
-- **Reference training loop:** `scripts/train_seq2seq_text_banked.py` shows end-to-end usage (argparse → data → SetFeatureCache → SetBankAttention → TokenSetRouter → metrics).
-- **Evaluation utilities:** `set_attention.experiments.nlp_eval`, `set_attention.utils.profiling` for consistent metrics and profiling output.
-
-Use the commands listed in the snapshot to verify environments; all paths above are relative to the repo root (`set-attention/`).
+If you want, I can also draft skeletons for the Triton kernels (tile loops, indexing, masks) in a follow-up.

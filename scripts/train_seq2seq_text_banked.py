@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import random
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, Tuple
 
@@ -82,6 +83,75 @@ class TinySeq2SeqBackbone(nn.Module):
 
 
 
+def run_seq2seq_benchmark(
+    args,
+    model,
+    set_attn,
+    router,
+    out_proj,
+    adapter,
+    atom_emb,
+    phi_snapshot,
+    cache_src,
+    cache_tgt,
+    train_pairs,
+    train_src_stoi,
+    train_tgt_stoi,
+    train_ref_tokens,
+    max_len,
+    opt,
+    device,
+):
+    iterator = text_batch_iterator(
+        train_pairs,
+        train_src_stoi,
+        train_tgt_stoi,
+        train_ref_tokens,
+        max_len,
+        args.batch,
+        shuffle=False,
+    )
+    try:
+        batch_idx_tensor, src_ids, tgt_ids, _ = next(iterator)
+    except StopIteration:
+        print("[benchmark] insufficient data for benchmark batch.")
+        return
+    batch_idx_tensor = batch_idx_tensor.to(device)
+    src_ids = src_ids.to(device, non_blocking=True)
+    tgt_ids = tgt_ids.to(device, non_blocking=True)
+    tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
+
+    def step():
+        opt.zero_grad(set_to_none=True)
+        phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+        Phi_q, Sig_q, Size_q, q_ptrs = cache_tgt.gather_flat(batch_idx_tensor, phi_dynamic)
+        Phi_k, Sig_k, Size_k, k_ptrs = cache_src.gather_flat(batch_idx_tensor, phi_dynamic)
+        dec_h, _ = model(src_ids, tgt_in)
+        Z_sets, q_ptrs = set_attn(Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
+        tok_out = router(dec_h, Z_sets, Phi_q, q_ptrs)
+        logits = out_proj(tok_out)
+        loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
+        loss.backward()
+        opt.step()
+
+    for _ in range(args.bench_warmup):
+        step()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    for _ in range(args.bench_iters):
+        step()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    elapsed = time.perf_counter() - t0
+    tokens = tgt_ids.size(0) * max_len * args.bench_iters
+    throughput = tokens / elapsed if elapsed > 0 else 0.0
+    print(
+        f"[benchmark][seq2seq] backend={args.ska_backend} precision={args.precision} "
+        f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
+    )
+
+
 def main():
     torch.backends.cudnn.benchmark = True
     parser = argparse.ArgumentParser()
@@ -126,6 +196,11 @@ def main():
     parser.add_argument("--tau", type=float, default=1.0)
     parser.add_argument("--beta", type=float, default=1.0)
     parser.add_argument("--eta", type=float, default=1.0)
+    parser.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
+    parser.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    parser.add_argument("--benchmark", action="store_true")
+    parser.add_argument("--bench-warmup", type=int, default=5)
+    parser.add_argument("--bench-iters", type=int, default=20)
     args = parser.parse_args()
 
     train_ds, val_ds = get_seq2seq_datasets(
@@ -232,6 +307,8 @@ def main():
         beta=args.beta,
         score_mode=args.set_kernel,
         eta=args.eta,
+        backend=args.ska_backend,
+        precision=args.precision,
     ).to(device)
     router = TokenSetRouter(d_model=args.atom_dim, num_heads=args.heads, topk=args.router_topk).to(device)
     out_proj = nn.Linear(args.atom_dim, len(train_tgt_stoi)).to(device)
@@ -242,6 +319,28 @@ def main():
     else:
         params += list(atom_emb.parameters())
     opt = torch.optim.AdamW(params, lr=3e-4)
+
+    if args.benchmark:
+        run_seq2seq_benchmark(
+            args,
+            model,
+            set_attn,
+            router,
+            out_proj,
+            adapter,
+            atom_emb,
+            phi_snapshot,
+            cache_src,
+            cache_tgt,
+            train_pairs,
+            train_src_stoi,
+            train_tgt_stoi,
+            train_ref_tokens,
+            max_len,
+            opt,
+            device,
+        )
+        return
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -267,12 +366,12 @@ def main():
                 tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
 
                 phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi_q, Sig_q, Size_q, mask_q = cache_tgt.gather_padded(batch_idx_tensor, phi_dynamic)
-                Phi_k, Sig_k, Size_k, mask_k = cache_src.gather_padded(batch_idx_tensor, phi_dynamic)
+                Phi_q, Sig_q, Size_q, q_ptrs = cache_tgt.gather_flat(batch_idx_tensor, phi_dynamic)
+                Phi_k, Sig_k, Size_k, k_ptrs = cache_src.gather_flat(batch_idx_tensor, phi_dynamic)
 
                 dec_h, _ = model(src_ids, tgt_in)
-                Z_sets = set_attn(Phi_q, Sig_q, Size_q, mask_q, Phi_k, Sig_k, Size_k, mask_k)
-                tok_out = router(dec_h, Z_sets, Phi_q, mask_q)
+                Z_sets, q_ptrs = set_attn(Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
+                tok_out = router(dec_h, Z_sets, Phi_q, q_ptrs)
                 logits = out_proj(tok_out)
 
                 loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
@@ -322,12 +421,12 @@ def main():
                     tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
 
                     phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                    Phi_q, Sig_q, Size_q, mask_q = val_cache_tgt.gather_padded(batch_idx_tensor, phi_dynamic)
-                    Phi_k, Sig_k, Size_k, mask_k = val_cache_src.gather_padded(batch_idx_tensor, phi_dynamic)
+                    Phi_q, Sig_q, Size_q, q_ptrs = val_cache_tgt.gather_flat(batch_idx_tensor, phi_dynamic)
+                    Phi_k, Sig_k, Size_k, k_ptrs = val_cache_src.gather_flat(batch_idx_tensor, phi_dynamic)
 
                     dec_h, _ = model(src_ids, tgt_in)
-                    Z_sets = set_attn(Phi_q, Sig_q, Size_q, mask_q, Phi_k, Sig_k, Size_k, mask_k)
-                    tok_out = router(dec_h, Z_sets, Phi_q, mask_q)
+                    Z_sets, q_ptrs = set_attn(Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
+                    tok_out = router(dec_h, Z_sets, Phi_q, q_ptrs)
                     logits = out_proj(tok_out)
                     preds = logits.argmax(dim=-1)
                     val_refs.extend(ref_tokens)

@@ -4,23 +4,16 @@ from typing import Tuple
 import torch
 import torch.nn as nn
 
+from set_attention.sets.bank_utils import pad_segments_from_ptrs
+
 
 class TokenSetRouter(nn.Module):
-    """Route token states to a bank of set outputs per sequence via learned gates.
-
-    Inputs:
-      - token_states: (B, L, D)
-      - Z_sets: (Nq, H, Dh) concatenated set outputs across batch
-      - desc_q: (Nq, Dd) set descriptors (e.g., Phi_q @ W_d)
-      - q_ptrs: (B+1,) delimiters for Z_sets/desc_q per sequence
-
-    The router computes gates g_{b,l} over the sets of sequence b, then mixes
-    Z_sets to token outputs and merges heads.
-    """
+    """Route token states to concatenated set outputs via learned gates."""
 
     def __init__(self, d_model: int, num_heads: int, topk: int = 0):
         super().__init__()
-        assert d_model % num_heads == 0
+        if d_model % num_heads != 0:
+            raise ValueError("d_model must be divisible by num_heads.")
         self.d_model = d_model
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
@@ -32,25 +25,24 @@ class TokenSetRouter(nn.Module):
     def forward(
         self,
         token_states: torch.Tensor,   # (B,L,D)
-        Z_sets: torch.Tensor,         # (B,Sq,H,Dh)
-        desc_q: torch.Tensor,         # (B,Sq,D)
-        mask_q: torch.Tensor,         # (B,Sq) bool
+        Z_sets: torch.Tensor,         # (Nq,H,Dh)
+        desc_q: torch.Tensor,         # (Nq,D)
+        q_ptrs: torch.Tensor,         # (B+1,)
     ) -> torch.Tensor:
         B, L, D = token_states.shape
-        H = self.num_heads
-        Dh = self.head_dim
+        desc_pad, mask = pad_segments_from_ptrs(desc_q, q_ptrs, fill_value=0.0)
+        z_pad, _ = pad_segments_from_ptrs(Z_sets, q_ptrs, fill_value=0.0)
         Tproj = self.Wg(token_states)         # (B,L,D)
-        Dproj = self.Wd(desc_q)               # (B,Sq,D)
-        logits = torch.matmul(Tproj, Dproj.transpose(1, 2))  # (B,L,Sq)
-        # mask invalid sets
-        mask = ~mask_q.unsqueeze(1).expand_as(logits)
-        logits = logits.masked_fill(mask, float("-inf"))
+        Dproj = self.Wd(desc_pad)             # (B,S,D)
+        logits = torch.matmul(Tproj, Dproj.transpose(1, 2))  # (B,L,S)
+        mask_scores = ~mask.unsqueeze(1).expand_as(logits)
+        logits = logits.masked_fill(mask_scores, float("-inf"))
         if self.topk > 0 and logits.size(2) > self.topk:
             topk_vals, topk_idx = torch.topk(logits, k=self.topk, dim=-1)
             tmp = torch.full_like(logits, float("-inf"))
             tmp.scatter_(dim=-1, index=topk_idx, src=topk_vals)
-            G = torch.softmax(tmp, dim=-1)
+            gates = torch.softmax(tmp, dim=-1)
         else:
-            G = torch.softmax(logits, dim=-1)
-        mix = torch.einsum('bls,bshd->blhd', G, Z_sets)  # (B,L,H,Dh)
+            gates = torch.softmax(logits, dim=-1)
+        mix = torch.einsum("bls,bshd->blhd", gates, z_pad)
         return self.out(mix.reshape(B, L, D))

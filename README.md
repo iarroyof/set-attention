@@ -12,6 +12,13 @@ Install
 -------
 - Editable install: `pip install -e .` (optionally `.[wandb]`)
 
+Datasets
+--------
+- All scripts accept `--data-root` (default `~/.cache/set-attention`) so downloads are reused across experiments.
+- Hugging Face assets default to `~/.cache/set-attention/hf_datasets`; override via `--hf-cache-dir`.
+- Language modeling script now supports `--dataset {wikitext2,wikitext103}` with configurable `--seq-len`/`--seq-stride`.
+- Vision scripts download CIFAR-10 into `data_root/vision/cifar10`.
+
 Quickstart
 ----------
 1) Replace attention in a Transformer encoder layer:
@@ -76,6 +83,18 @@ You can pass `--config` paths to scripts and override with CLI args (e.g., `--d-
 Profiling
 ---------
 - Add `--profile` to print per-epoch wall time and peak VRAM. W&B can also capture system metrics if enabled.
+- For repeatable timing, most scripts now accept `--benchmark` (with `--bench-warmup`/`--bench-iters`) to run fixed-shape fwd/bwd loops and report throughput.
+
+Benchmarks
+----------
+- Microbenchmark fused SKA kernels with `python scripts/bench_ska.py --backends python --precision fp32 --seqs 16 --sets-q 32 --sets-k 32 --steps 20`.
+- Compare full trainers via `--ska-backend {python,triton,keops}` and `--precision {fp32,fp16,bf16}` plus `--benchmark`. Example:
+```
+python scripts/train_seq2seq_text_banked.py --demo --demo-samples 64 --batch 32 --ska-backend python --benchmark
+python scripts/train_toy_diffusion_banked.py --device cuda --ska-backend python --benchmark
+python scripts/train_tiny_vit_banked.py --data-mode synthetic --demo-samples 128 --ska-backend python --benchmark
+```
+These modes fix the batch, run warmup iterations, then log tokens/images per second and elapsed wall time for Naïve vs Optimized comparisons.
 
 More tasks
 ----------

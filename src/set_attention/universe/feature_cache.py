@@ -103,6 +103,35 @@ class SetFeatureCache:
         ptr_tensor = torch.tensor(ptrs, dtype=torch.long, device=device)
         return set_idx, ptr_tensor
 
+    def gather_flat(
+        self,
+        batch_indices: torch.LongTensor,
+        phi_cur: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Gather concatenated set features and signatures with CSR pointers."""
+        if self.seq_offsets is None:
+            raise RuntimeError("seq_offsets required to gather per-sequence banks.")
+        if self.sig_sets is None:
+            raise RuntimeError("MinHash signatures not built; call build_minhash() first.")
+
+        seq_device = self.seq_offsets.device
+        batch_indices_seq = batch_indices.to(seq_device)
+        set_idx, ptrs = self.gather_sequence_sets(batch_indices_seq)
+        ptrs = ptrs.to(phi_cur.device)
+        if set_idx.numel() == 0:
+            atom_dim = phi_cur.shape[1]
+            k = int(self.sig_sets.shape[1])
+            empty_phi = torch.zeros(0, atom_dim, device=phi_cur.device, dtype=phi_cur.dtype)
+            empty_sig = torch.zeros(0, k, dtype=self.sig_sets.dtype, device=phi_cur.device)
+            empty_size = torch.zeros(0, dtype=self.size_sets.dtype, device=phi_cur.device)
+            return empty_phi, empty_sig, empty_size, ptrs
+
+        set_idx_dev = set_idx.to(phi_cur.device)
+        phi_sets = self.compute_phi_for_indices(set_idx_dev, phi_cur)
+        sig_sets = self.sig_sets.index_select(0, set_idx).to(phi_cur.device)
+        size_sets = self.size_sets.index_select(0, set_idx).to(phi_cur.device)
+        return phi_sets, sig_sets, size_sets, ptrs
+
     def compute_phi_for_indices(self, set_idx: torch.LongTensor, phi_cur: torch.Tensor) -> torch.Tensor:
         nsel = set_idx.numel()
         if nsel == 0:
