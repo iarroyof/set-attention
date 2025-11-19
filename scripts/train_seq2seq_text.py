@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -28,6 +29,7 @@ from set_attention.training.text_utils import (
 )
 from set_attention.experiments.nlp_eval import corpus_bleu, rouge_l
 from set_attention.utils.profiling import profiler
+from set_attention.utils.wandb import init_wandb
 
 
 def _parse_tokenizer_config_arg(value: str) -> Dict[str, Any]:
@@ -121,6 +123,78 @@ class TinySeq2SeqSKATok(nn.Module):
         return self.out(h)
 
 
+def run_seq2seq_benchmark(
+    args,
+    model,
+    optimizer,
+    tokenizer,
+    src_store,
+    tgt_store,
+    train_pairs,
+    train_src_stoi,
+    train_tgt_stoi,
+    train_refs,
+    max_len,
+    device,
+    wandb_run,
+):
+    iterator = text_batch_iterator(
+        train_pairs,
+        train_src_stoi,
+        train_tgt_stoi,
+        train_refs,
+        max_len,
+        args.batch,
+        shuffle=False,
+    )
+    try:
+        batch_idx, src_ids, tgt_ids, refs = next(iterator)
+    except StopIteration:
+        print("[benchmark] insufficient data for benchmark batch.")
+        return
+    batch_idx = batch_idx.to(device)
+    src_ids = src_ids.to(device, non_blocking=True)
+    tgt_ids = tgt_ids.to(device, non_blocking=True)
+    tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
+
+    def step():
+        optimizer.zero_grad(set_to_none=True)
+        if args.attn == "ska_tok" and src_store is not None and tgt_store is not None:
+            src_vals, src_offs, src_sigs = src_store.gather(batch_idx, device)
+            tgt_vals, tgt_offs, tgt_sigs = tgt_store.gather(batch_idx, device)
+            logits = model(src_ids, tgt_in, src_vals, src_offs, tgt_vals, tgt_offs, src_sigs, tgt_sigs)
+        else:
+            logits = model(src_ids, tgt_in)
+        loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
+        loss.backward()
+        optimizer.step()
+
+    for _ in range(args.bench_warmup):
+        step()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    for _ in range(args.bench_iters):
+        step()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    elapsed = time.perf_counter() - t0
+    tokens = tgt_ids.size(0) * max_len * args.bench_iters
+    throughput = tokens / elapsed if elapsed > 0 else 0.0
+    print(
+        f"[benchmark][seq2seq-baseline] backend={args.attn} precision={args.precision if hasattr(args,'precision') else 'fp32'} "
+        f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
+    )
+    if wandb_run.enabled:
+        wandb_run.log(
+            {
+                "benchmark/tokens_per_s": throughput,
+                "benchmark/elapsed_s": elapsed,
+                "benchmark/batch_tokens": tokens,
+            }
+        )
+
+
 def main():
     torch.backends.cudnn.benchmark = True
     parser = argparse.ArgumentParser()
@@ -160,7 +234,36 @@ def main():
         help="JSON string or path with tokenizer config overrides.",
     )
     parser.add_argument("--token-set-k", type=int, default=64)
+    parser.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    parser.add_argument("--wandb", action="store_true")
+    parser.add_argument("--wandb-project", type=str, default="")
+    parser.add_argument("--wandb-run-name", type=str, default="")
+    parser.add_argument("--wandb-tags", type=str, default="")
+    parser.add_argument("--benchmark", action="store_true")
+    parser.add_argument("--bench-warmup", type=int, default=5)
+    parser.add_argument("--bench-iters", type=int, default=20)
     args = parser.parse_args()
+
+    wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
+    wandb_config = {
+        "script": "train_seq2seq_text",
+        "dataset": args.dataset or "custom",
+        "attn": args.attn,
+        "precision": args.precision,
+        "tokenizer_type": args.tokenizer_type,
+        "token_set_k": args.token_set_k,
+        "batch": args.batch,
+        "d_model": args.d_model,
+        "nhead": args.nhead,
+        "layers": args.layers,
+    }
+    wandb_run = init_wandb(
+        args.wandb,
+        args.wandb_project or None,
+        args.wandb_run_name or None,
+        wandb_config,
+        wandb_tags,
+    )
 
     train_ds, val_ds = get_seq2seq_datasets(
         dataset=args.dataset,
@@ -254,6 +357,25 @@ def main():
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 
+    if args.benchmark:
+        run_seq2seq_benchmark(
+            args,
+            model,
+            optimizer,
+            tokenizer,
+            src_store,
+            tgt_store,
+            train_pairs,
+            train_src_stoi,
+            train_tgt_stoi,
+            train_refs,
+            max_len,
+            device,
+            wandb_run,
+        )
+        wandb_run.finish()
+        return
+
     for epoch in range(1, args.epochs + 1):
         model.train()
         train_refs_epoch, train_hyps_epoch = [], []
@@ -296,6 +418,15 @@ def main():
             if prof.get("gpu_active_s") is not None:
                 msg += f" | GPU-ACT {prof['gpu_active_s']:.2f}s"
         print(msg)
+        if wandb_run.enabled:
+            payload = {
+                "train/bleu": tr_bleu,
+                "train/rougeL": tr_rouge,
+                "train/time_s": prof["time_s"],
+            }
+            if torch.cuda.is_available():
+                payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
+            wandb_run.log(payload, step=epoch)
 
         if has_val:
             model.eval()
@@ -323,6 +454,16 @@ def main():
             v_bleu = corpus_bleu(val_refs_epoch, val_hyps_epoch)
             v_rouge = rouge_l(val_refs_epoch, val_hyps_epoch)
             print(f"[Seq2Seq][{args.attn}] epoch {epoch:02d} val BLEU {v_bleu:.3f} | ROUGE-L {v_rouge:.3f}")
+            if wandb_run.enabled:
+                wandb_run.log(
+                    {
+                        "val/bleu": v_bleu,
+                        "val/rougeL": v_rouge,
+                    },
+                    step=epoch,
+                )
+
+    wandb_run.finish()
 
 
 if __name__ == "__main__":

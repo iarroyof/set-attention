@@ -172,6 +172,7 @@ def main():
     ap.add_argument("--data-val-frac", type=float, default=None, help="Override validation fraction.")
     ap.add_argument("--data-modes", type=int, default=None, help="Override number of mixture modes.")
     ap.add_argument("--data-seed", type=int, default=None, help="Override synthetic data seed.")
+    ap.add_argument("--data-mode", choices=["continuous", "synthetic"], default="continuous")
     ap.add_argument("--wandb", action="store_true")
     ap.add_argument("--wandb-project", type=str, default="")
     ap.add_argument("--wandb-run-name", type=str, default="")
@@ -249,6 +250,8 @@ def main():
     if args.data_modes is not None:
         data_cfg.n_modes = int(args.data_modes)
     data_cfg.seed = seed
+    if args.data_mode == "synthetic":
+        print("[Data] Using synthetic continuous sequences (toy diffusion).")
     train_loader, val_loader = make_toy_continuous_sequences(data_cfg)
 
     def subset_tensor(loader):
