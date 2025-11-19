@@ -23,7 +23,8 @@ desktop.ini
 
 # Data (ignore datasets entirely; keep an empty dir placeholder)
 data/
-!data/.gitkeep
+!src/set_attention/data/
+!src/set_attention/data/**
 
 # Artifacts / experiments / logs
 runs/
