@@ -14,6 +14,7 @@ except Exception:
     torchvision = None
 
 from set_attention.data import resolve_data_root
+from set_attention.utils.wandb import init_wandb
 
 from set_attention.sets.bank_builders import build_windowed_bank_from_ids
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
@@ -114,6 +115,7 @@ def run_vit_benchmark(
     train_dataset,
     optim,
     device,
+    wandb_run,
 ):
     bench_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -160,6 +162,13 @@ def run_vit_benchmark(
         f"[benchmark][vit] backend={args.ska_backend} precision={args.precision} "
         f"imgs/s={throughput:.1f} elapsed={elapsed:.3f}s"
     )
+    if wandb_run.enabled:
+        wandb_run.log(
+            {
+                "benchmark/images_per_s": throughput,
+                "benchmark/elapsed_s": elapsed,
+            }
+        )
 
 
 def main():
@@ -188,7 +197,32 @@ def main():
     ap.add_argument("--bench-warmup", type=int, default=5)
     ap.add_argument("--bench-iters", type=int, default=20)
     ap.add_argument("--data-root", type=str, default="")
+    ap.add_argument("--wandb", action="store_true")
+    ap.add_argument("--wandb-project", type=str, default="")
+    ap.add_argument("--wandb-run-name", type=str, default="")
+    ap.add_argument("--wandb-tags", type=str, default="")
     args = ap.parse_args()
+
+    wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
+    wandb_config = {
+        "script": "train_tiny_vit_banked",
+        "data_mode": args.data_mode,
+        "ska_backend": args.ska_backend,
+        "precision": args.precision,
+        "window": args.window,
+        "stride": args.stride,
+        "minhash_k": args.minhash_k,
+        "router_topk": args.router_topk,
+        "adapter_rank": args.adapter_rank,
+        "batch": args.batch,
+    }
+    wandb_run = init_wandb(
+        args.wandb,
+        args.wandb_project or None,
+        args.wandb_run_name or None,
+        wandb_config,
+        wandb_tags,
+    )
 
     data_root = resolve_data_root(args.data_root)
     device = torch.device(args.device)
@@ -291,7 +325,9 @@ def main():
             train_dataset,
             optim,
             device,
+            wandb_run,
         )
+        wandb_run.finish()
         return
 
     modules = [backbone, set_attn, router, head]
@@ -398,6 +434,29 @@ def main():
             if torch.cuda.is_available():
                 msg += f" | peak VRAM {prof['gpu_peak_mem_mib']:.1f} MiB"
         print(msg)
+        if wandb_run.enabled:
+            payload = {
+                "train/loss": avg_loss,
+                "train/acc": avg_acc,
+                "train/top5": avg_top5,
+                "train/sets_per_seq": avg_sets_per_seq,
+                "train/coverage": coverage_ratio,
+            }
+            if val_metrics is not None:
+                payload.update(
+                    {
+                        "val/loss": val_metrics["loss"],
+                        "val/acc": val_metrics["acc"],
+                        "val/top5": val_metrics["top5"],
+                    }
+                )
+            if args.profile:
+                payload["train/time_s"] = prof["time_s"]
+                if torch.cuda.is_available():
+                    payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
+            wandb_run.log(payload, step=ep)
+
+    wandb_run.finish()
 
 
 if __name__ == "__main__":

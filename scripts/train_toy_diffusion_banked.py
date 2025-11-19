@@ -14,6 +14,7 @@ from set_attention.experiments.models import PositionalEncoding, timestep_embedd
 from set_attention.eval.mmd_simple import mmd2_unbiased_from_feats
 from set_attention.utils.metrics import chamfer_l2, one_nn_two_sample
 from set_attention.utils.profiling import profiler
+from set_attention.utils.wandb import init_wandb
 from set_attention.sets.bank_builders import build_windowed_bank_from_ids
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
 from set_attention.heads.banked_attention import SetBankAttention
@@ -89,6 +90,7 @@ def run_diffusion_benchmark(
     train_data,
     optimizer,
     device,
+    wandb_run,
 ):
     bench_batch = min(args.batch, train_data.size(0))
     if bench_batch == 0:
@@ -122,6 +124,13 @@ def run_diffusion_benchmark(
         f"[benchmark][diffusion] backend={args.ska_backend} precision={args.precision} "
         f"seq/s={throughput:.1f} elapsed={elapsed:.3f}s"
     )
+    if wandb_run.enabled:
+        wandb_run.log(
+            {
+                "benchmark/sequences_per_s": throughput,
+                "benchmark/elapsed_s": elapsed,
+            }
+        )
 
 
 def tensor_batch_iterator(
@@ -163,11 +172,36 @@ def main():
     ap.add_argument("--data-val-frac", type=float, default=None, help="Override validation fraction.")
     ap.add_argument("--data-modes", type=int, default=None, help="Override number of mixture modes.")
     ap.add_argument("--data-seed", type=int, default=None, help="Override synthetic data seed.")
+    ap.add_argument("--wandb", action="store_true")
+    ap.add_argument("--wandb-project", type=str, default="")
+    ap.add_argument("--wandb-run-name", type=str, default="")
+    ap.add_argument("--wandb-tags", type=str, default="")
     ap.add_argument("--benchmark", action="store_true")
     ap.add_argument("--bench-warmup", type=int, default=5)
     ap.add_argument("--bench-iters", type=int, default=20)
     defaults = ap.parse_args([])
     args = ap.parse_args()
+
+    wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
+    wandb_config = {
+        "script": "train_toy_diffusion_banked",
+        "ska_backend": args.ska_backend,
+        "precision": args.precision,
+        "window": args.window,
+        "stride": args.stride,
+        "minhash_k": args.minhash_k,
+        "router_topk": args.router_topk,
+        "adapter_rank": args.adapter_rank,
+        "steps": args.steps,
+        "dataset": args.config,
+    }
+    wandb_run = init_wandb(
+        args.wandb,
+        args.wandb_project or None,
+        args.wandb_run_name or None,
+        wandb_config,
+        wandb_tags,
+    )
 
     cfg_yaml = {}
     yaml_path = args.config
@@ -285,7 +319,9 @@ def main():
             train_data,
             optimizer,
             device,
+            wandb_run,
         )
+        wandb_run.finish()
         return
 
     for epoch in range(1, args.epochs + 1):
@@ -337,6 +373,18 @@ def main():
             if torch.cuda.is_available():
                 msg += f" | peak VRAM {prof['gpu_peak_mem_mib']:.1f} MiB"
         print(msg)
+        if wandb_run.enabled:
+            wandb_payload = {
+                "train/loss": train_loss,
+                "val/mmd": val_mmd_mean,
+                "val/chamfer": val_chamfer_mean,
+                "val/1nn": val_nn1_mean,
+            }
+            if args.profile:
+                wandb_payload["train/time_s"] = prof["time_s"]
+            wandb_run.log(wandb_payload, step=epoch)
+
+    wandb_run.finish()
 
 
 def eval_suite(ddpm: SimpleDDPM, model: BankedDenoiser, X: torch.Tensor, d_model: int):

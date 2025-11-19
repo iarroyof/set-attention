@@ -14,6 +14,7 @@ from set_attention.heads.token_router import TokenSetRouter
 from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.profiling import profiler
+from set_attention.utils.wandb import init_wandb
 from set_attention.experiments.nlp_eval import corpus_bleu
 from set_attention.training.text_utils import (
     ids_to_tokens,
@@ -109,6 +110,7 @@ def run_lm_benchmark(
     train_Y,
     max_len,
     device,
+    wandb_run,
 ):
     bench_batch = min(args.batch, train_X.size(0))
     if bench_batch == 0:
@@ -147,6 +149,14 @@ def run_lm_benchmark(
         f"[benchmark][lm] backend={args.ska_backend} precision={args.precision} "
         f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
     )
+    if wandb_run.enabled:
+        wandb_run.log(
+            {
+                "benchmark/tokens_per_s": throughput,
+                "benchmark/elapsed_s": elapsed,
+                "benchmark/batch_tokens": tokens,
+            }
+        )
 
 
 def main():
@@ -175,7 +185,34 @@ def main():
     ap.add_argument("--seq-stride", type=int, default=128)
     ap.add_argument("--data-root", type=str, default="")
     ap.add_argument("--hf-cache-dir", type=str, default="")
+    ap.add_argument("--wandb", action="store_true")
+    ap.add_argument("--wandb-project", type=str, default="")
+    ap.add_argument("--wandb-run-name", type=str, default="")
+    ap.add_argument("--wandb-tags", type=str, default="")
     args = ap.parse_args()
+
+    wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
+    wandb_config = {
+        "script": "train_toy_lm_banked",
+        "dataset": args.dataset or "char",
+        "seq_len": args.seq_len,
+        "seq_stride": args.seq_stride,
+        "window": args.window,
+        "stride": args.stride,
+        "minhash_k": args.minhash_k,
+        "router_topk": args.router_topk,
+        "adapter_rank": args.adapter_rank,
+        "ska_backend": args.ska_backend,
+        "precision": args.precision,
+        "batch": args.batch,
+    }
+    wandb_run = init_wandb(
+        args.wandb,
+        args.wandb_project or None,
+        args.wandb_run_name or None,
+        wandb_config,
+        wandb_tags,
+    )
 
     data_root = resolve_data_root(args.data_root)
     hf_cache = configure_hf_cache(data_root, args.hf_cache_dir)
@@ -258,6 +295,7 @@ def main():
             train_Y,
             max_len,
             device,
+            wandb_run,
         )
         return
 
@@ -320,5 +358,19 @@ def main():
             if torch.cuda.is_available():
                 msg += f" | peak VRAM {prof['gpu_peak_mem_mib']:.1f} MiB"
         print(msg)
+        if wandb_run.enabled:
+            payload = {
+                "train/loss": train_loss,
+                "train/bleu": train_bleu,
+                "val/loss": val_loss,
+                "val/bleu": val_bleu,
+            }
+            if args.profile:
+                payload["train/time_s"] = prof["time_s"]
+                if torch.cuda.is_available():
+                    payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
+            wandb_run.log(payload, step=epoch)
+
+    wandb_run.finish()
 if __name__ == "__main__":
     main()

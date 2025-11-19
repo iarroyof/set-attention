@@ -96,6 +96,14 @@ python scripts/train_tiny_vit_banked.py --data-mode synthetic --demo-samples 128
 ```
 These modes fix the batch, run warmup iterations, then log tokens/images per second and elapsed wall time for Naïve vs Optimized comparisons.
 
+Weights & Biases Logging
+------------------------
+- Install the optional extra: `pip install -e .[wandb]`.
+- Set your project/entity (defaults to `ska-naive-ablation`):  
+  `export WANDB_PROJECT=ska-naive-ablation`  
+  `export WANDB_ENTITY=your-team`
+- Append `--wandb` (plus optional `--wandb-run-name`, `--wandb-tags`) to any trainer or benchmark command to record loss/accuracy/BLEU, throughput, and VRAM statistics in W&B.
+
 More tasks
 ----------
 - Seq2Seq (toy reverse+shift): `python scripts/train_toy_seq2seq.py --attn rbf`

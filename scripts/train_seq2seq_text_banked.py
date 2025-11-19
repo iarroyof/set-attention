@@ -33,6 +33,7 @@ from set_attention.training.text_utils import (
 from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.profiling import profiler
+from set_attention.utils.wandb import init_wandb
 from set_attention.experiments.nlp_eval import corpus_bleu, rouge_l
 
 
@@ -101,6 +102,7 @@ def run_seq2seq_benchmark(
     max_len,
     opt,
     device,
+    wandb_run,
 ):
     iterator = text_batch_iterator(
         train_pairs,
@@ -150,6 +152,14 @@ def run_seq2seq_benchmark(
         f"[benchmark][seq2seq] backend={args.ska_backend} precision={args.precision} "
         f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
     )
+    if wandb_run.enabled:
+        wandb_run.log(
+            {
+                "benchmark/tokens_per_s": throughput,
+                "benchmark/elapsed_s": elapsed,
+                "benchmark/batch_tokens": tokens,
+            }
+        )
 
 
 def main():
@@ -198,10 +208,37 @@ def main():
     parser.add_argument("--eta", type=float, default=1.0)
     parser.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
     parser.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    parser.add_argument("--wandb", action="store_true")
+    parser.add_argument("--wandb-project", type=str, default="")
+    parser.add_argument("--wandb-run-name", type=str, default="")
+    parser.add_argument("--wandb-tags", type=str, default="")
     parser.add_argument("--benchmark", action="store_true")
     parser.add_argument("--bench-warmup", type=int, default=5)
     parser.add_argument("--bench-iters", type=int, default=20)
     args = parser.parse_args()
+
+    wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
+    wandb_config = {
+        "script": "train_seq2seq_text_banked",
+        "dataset": args.dataset or "custom",
+        "tokenizer_type": args.tokenizer_type,
+        "ska_backend": args.ska_backend,
+        "precision": args.precision,
+        "window": args.window,
+        "stride": args.stride,
+        "minhash_k": args.minhash_k,
+        "router_topk": args.router_topk,
+        "adapter_rank": args.adapter_rank,
+        "set_kernel": args.set_kernel,
+        "batch": args.batch,
+    }
+    wandb_run = init_wandb(
+        args.wandb,
+        args.wandb_project or None,
+        args.wandb_run_name or None,
+        wandb_config,
+        wandb_tags,
+    )
 
     train_ds, val_ds = get_seq2seq_datasets(
         dataset=args.dataset,
@@ -339,7 +376,9 @@ def main():
             max_len,
             opt,
             device,
+            wandb_run,
         )
+        wandb_run.finish()
         return
 
     for epoch in range(1, args.epochs + 1):
@@ -397,6 +436,15 @@ def main():
             if prof.get("gpu_active_s") is not None:
                 msg += f" | GPU-ACT {prof['gpu_active_s']:.2f}s"
         print(msg)
+        if wandb_run.enabled:
+            wandb_payload = {
+                "train/bleu": tr_bleu,
+                "train/rougeL": tr_rouge,
+                "train/time_s": prof["time_s"],
+            }
+            if prof.get("gpu_peak_mem_mib") is not None:
+                wandb_payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
+            wandb_run.log(wandb_payload, step=epoch)
 
         if has_val:
             model.eval()
@@ -435,6 +483,16 @@ def main():
             v_bleu = corpus_bleu(val_refs, val_hyps)
             v_rouge = rouge_l(val_refs, val_hyps)
             print(f"[Seq2Seq-Text-Banked] epoch {epoch:02d} VAL BLEU {v_bleu:.3f} | ROUGE-L {v_rouge:.3f}")
+            if wandb_run.enabled:
+                wandb_run.log(
+                    {
+                        "val/bleu": v_bleu,
+                        "val/rougeL": v_rouge,
+                    },
+                    step=epoch,
+                )
+
+    wandb_run.finish()
 
 
 if __name__ == "__main__":
