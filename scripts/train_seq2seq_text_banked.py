@@ -389,6 +389,8 @@ def main():
             adapter.train()
 
         train_refs, train_hyps = [], []
+        train_loss_total = 0.0
+        train_token_total = 0
         with profiler(True) as prof:
             for batch_idx_tensor, src_ids, tgt_ids, ref_tokens in text_batch_iterator(
                 train_pairs,
@@ -418,13 +420,20 @@ def main():
                 loss.backward()
                 opt.step()
 
+                train_loss_total += float(loss.detach()) * tgt_ids.numel()
+                train_token_total += tgt_ids.numel()
                 preds = logits.argmax(dim=-1)
                 train_refs.extend(ref_tokens)
                 train_hyps.extend([ids_to_tokens(row, train_tgt_itos) for row in preds.detach().cpu()])
 
+        tr_loss = train_loss_total / max(1, train_token_total)
+        tr_ppl = math.exp(min(tr_loss, 20.0))
         tr_bleu = corpus_bleu(train_refs, train_hyps)
         tr_rouge = rouge_l(train_refs, train_hyps)
-        msg = f"[Seq2Seq-Text-Banked] epoch {epoch:02d} BLEU {tr_bleu:.3f} | ROUGE-L {tr_rouge:.3f} | time {prof['time_s']:.2f}s"
+        msg = (
+            f"[Seq2Seq-Text-Banked] epoch {epoch:02d} "
+            f"train loss {tr_loss:.4f} ppl {tr_ppl:.2f} BLEU {tr_bleu:.3f} | ROUGE-L {tr_rouge:.3f} | time {prof['time_s']:.2f}s"
+        )
         if prof.get("cpu_pct") is not None:
             msg += f" | CPU {prof['cpu_pct']:.1f}%"
         if torch.cuda.is_available():
@@ -453,6 +462,8 @@ def main():
             if adapter is not None:
                 adapter.eval()
             val_refs, val_hyps = [], []
+            val_loss_total = 0.0
+            val_token_total = 0
             with torch.no_grad():
                 for batch_idx_tensor, src_ids, tgt_ids, ref_tokens in text_batch_iterator(
                     val_pairs,
@@ -476,13 +487,48 @@ def main():
                     Z_sets, q_ptrs = set_attn(Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
                     tok_out = router(dec_h, Z_sets, Phi_q, q_ptrs)
                     logits = out_proj(tok_out)
+                    loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
+                    val_loss_total += float(loss.detach()) * tgt_ids.numel()
+                    val_token_total += tgt_ids.numel()
                     preds = logits.argmax(dim=-1)
                     val_refs.extend(ref_tokens)
                     val_hyps.extend([ids_to_tokens(row, train_tgt_itos) for row in preds.detach().cpu()])
 
+            v_loss = val_loss_total / max(1, val_token_total)
+            v_ppl = math.exp(min(v_loss, 20.0))
             v_bleu = corpus_bleu(val_refs, val_hyps)
             v_rouge = rouge_l(val_refs, val_hyps)
-            print(f"[Seq2Seq-Text-Banked] epoch {epoch:02d} VAL BLEU {v_bleu:.3f} | ROUGE-L {v_rouge:.3f}")
+            print(
+                f"[Seq2Seq-Text-Banked] epoch {epoch:02d} VAL loss {v_loss:.4f} ppl {v_ppl:.2f} "
+                f"BLEU {v_bleu:.3f} | ROUGE-L {v_rouge:.3f}"
+            )
+        else:
+            v_loss = v_ppl = v_bleu = v_rouge = None
+            val_refs = val_hyps = []
+
+        if wandb_run.enabled:
+            payload = {
+                "train/loss": tr_loss,
+                "train/ppl": tr_ppl,
+                "train/bleu": tr_bleu,
+                "train/rougeL": tr_rouge,
+            }
+            if v_loss is not None:
+                payload.update(
+                    {
+                        "val/loss": v_loss,
+                        "val/ppl": v_ppl,
+                        "val/bleu": v_bleu,
+                        "val/rougeL": v_rouge,
+                    }
+                )
+            if val_refs and val_hyps:
+                ref_sample = " ".join(val_refs[0])
+                pred_sample = " ".join(val_hyps[0])
+                payload["samples/val_text"] = f"REF: {ref_sample}\nPRED: {pred_sample}"
+            wandb_run.log(payload, step=epoch)
+
+    wandb_run.finish()
             if wandb_run.enabled:
                 wandb_run.log(
                     {

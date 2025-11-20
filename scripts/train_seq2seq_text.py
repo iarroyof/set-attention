@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -383,6 +384,8 @@ def main():
     for epoch in range(1, args.epochs + 1):
         model.train()
         train_refs_epoch, train_hyps_epoch = [], []
+        train_loss_total = 0.0
+        train_token_total = 0
         with profiler(True) as prof:
             for batch_idx, src_ids, tgt_ids, refs in text_batch_iterator(
                 train_pairs, train_src_stoi, train_tgt_stoi, train_refs, max_len, args.batch, shuffle=True
@@ -404,13 +407,20 @@ def main():
                 loss.backward()
                 optimizer.step()
 
+                train_loss_total += float(loss.detach()) * tgt_ids.numel()
+                train_token_total += tgt_ids.numel()
                 preds = logits.argmax(dim=-1)
                 train_refs_epoch.extend(refs)
                 train_hyps_epoch.extend([ids_to_tokens(row, train_tgt_itos) for row in preds.detach().cpu()])
 
+        tr_loss = train_loss_total / max(1, train_token_total)
+        tr_ppl = math.exp(min(tr_loss, 20.0))
         tr_bleu = corpus_bleu(train_refs_epoch, train_hyps_epoch)
         tr_rouge = rouge_l(train_refs_epoch, train_hyps_epoch)
-        msg = f"[Seq2Seq][{args.attn}] epoch {epoch:02d} train BLEU {tr_bleu:.3f} | ROUGE-L {tr_rouge:.3f} | time {prof['time_s']:.2f}s"
+        msg = (
+            f"[Seq2Seq][{args.attn}] epoch {epoch:02d} "
+            f"train loss {tr_loss:.4f} ppl {tr_ppl:.2f} BLEU {tr_bleu:.3f} | ROUGE-L {tr_rouge:.3f} | time {prof['time_s']:.2f}s"
+        )
         if prof.get("cpu_pct") is not None:
             msg += f" | CPU {prof['cpu_pct']:.1f}%"
         if torch.cuda.is_available():
@@ -421,20 +431,14 @@ def main():
                 msg += f" | GPU-MEM {prof['gpu_mem_util_pct']:.1f}%"
             if prof.get("gpu_active_s") is not None:
                 msg += f" | GPU-ACT {prof['gpu_active_s']:.2f}s"
-        print(msg)
-        if wandb_run.enabled:
-            payload = {
-                "train/bleu": tr_bleu,
-                "train/rougeL": tr_rouge,
-                "train/time_s": prof["time_s"],
-            }
-            if torch.cuda.is_available():
-                payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
-            wandb_run.log(payload, step=epoch)
 
+        v_loss = v_ppl = v_bleu = v_rouge = None
+        val_sample_preview = None
         if has_val:
             model.eval()
             val_refs_epoch, val_hyps_epoch = [], []
+            val_loss_total = 0.0
+            val_token_total = 0
             with torch.no_grad():
                 for batch_idx, src_ids, tgt_ids, refs in text_batch_iterator(
                     val_pairs, train_src_stoi, train_tgt_stoi, val_refs, max_len, args.batch, shuffle=False
@@ -451,21 +455,53 @@ def main():
                     else:
                         logits = model(src_ids, tgt_in)
 
+                    loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
+                    val_loss_total += float(loss.detach()) * tgt_ids.numel()
+                    val_token_total += tgt_ids.numel()
                     preds = logits.argmax(dim=-1)
                     val_refs_epoch.extend(refs)
                     val_hyps_epoch.extend([ids_to_tokens(row, train_tgt_itos) for row in preds.detach().cpu()])
+                    if (
+                        val_sample_preview is None
+                        and batch_idx.numel() > 0
+                        and len(refs) > 0
+                        and preds.size(0) > 0
+                    ):
+                        src_text = val_pairs[int(batch_idx[0])][0]
+                        ref_text = " ".join(refs[0])
+                        pred_text = " ".join(ids_to_tokens(preds[0], train_tgt_itos))
+                        val_sample_preview = (src_text, ref_text, pred_text)
 
+            v_loss = val_loss_total / max(1, val_token_total)
+            v_ppl = math.exp(min(v_loss, 20.0))
             v_bleu = corpus_bleu(val_refs_epoch, val_hyps_epoch)
             v_rouge = rouge_l(val_refs_epoch, val_hyps_epoch)
-            print(f"[Seq2Seq][{args.attn}] epoch {epoch:02d} val BLEU {v_bleu:.3f} | ROUGE-L {v_rouge:.3f}")
-            if wandb_run.enabled:
-                wandb_run.log(
+            msg += f" | val loss {v_loss:.4f} ppl {v_ppl:.2f} BLEU {v_bleu:.3f} | ROUGE-L {v_rouge:.3f}"
+        print(msg)
+
+        if wandb_run.enabled:
+            payload = {
+                "train/loss": tr_loss,
+                "train/ppl": tr_ppl,
+                "train/bleu": tr_bleu,
+                "train/rougeL": tr_rouge,
+                "train/time_s": prof["time_s"],
+            }
+            if torch.cuda.is_available():
+                payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
+            if v_loss is not None:
+                payload.update(
                     {
+                        "val/loss": v_loss,
+                        "val/ppl": v_ppl,
                         "val/bleu": v_bleu,
                         "val/rougeL": v_rouge,
-                    },
-                    step=epoch,
+                    }
                 )
+                if val_sample_preview is not None:
+                    src_text, ref_text, pred_text = val_sample_preview
+                    payload["samples/val_text"] = f"SRC: {src_text}\nREF: {ref_text}\nPRED: {pred_text}"
+            wandb_run.log(payload, step=epoch)
 
     wandb_run.finish()
 

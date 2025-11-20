@@ -1,4 +1,5 @@
 import argparse
+import math
 import time
 
 import torch
@@ -307,7 +308,7 @@ def main():
             m.train(train)
         refs_epoch, hyps_epoch = [], []
         total_loss = 0.0
-        count = 0
+        total_tokens = 0
         iterator = text_batch_iterator(
             train_text_pairs if train else val_text_pairs,
             stoi,
@@ -337,13 +338,13 @@ def main():
                 loss.backward()
                 optimizer.step()
 
-            total_loss += float(loss.detach()) * src_ids.size(0)
-            count += src_ids.size(0)
+            total_loss += float(loss.detach()) * tgt_ids.numel()
+            total_tokens += tgt_ids.numel()
             preds = logits.argmax(dim=-1)
             refs_epoch.extend(ref_tokens)
             hyps_epoch.extend([ids_to_tokens(row, itos) for row in preds.detach().cpu()])
 
-        return total_loss / max(1, count), refs_epoch, hyps_epoch
+        return total_loss / max(1, total_tokens), refs_epoch, hyps_epoch
 
     for epoch in range(1, args.epochs + 1):
         with profiler(args.profile) as prof:
@@ -352,7 +353,13 @@ def main():
 
         train_bleu = corpus_bleu(train_refs_epoch, train_hyps_epoch)
         val_bleu = corpus_bleu(val_refs_epoch, val_hyps_epoch)
-        msg = f"[LM-Banked][{args.attn}] epoch {epoch:02d} train loss {train_loss:.4f} BLEU {train_bleu:.3f} | val loss {val_loss:.4f} BLEU {val_bleu:.3f}"
+        train_ppl = math.exp(min(train_loss, 20.0))
+        val_ppl = math.exp(min(val_loss, 20.0))
+        msg = (
+            f"[LM-Banked][{args.attn}] epoch {epoch:02d} "
+            f"train loss {train_loss:.4f} ppl {train_ppl:.2f} BLEU {train_bleu:.3f} | "
+            f"val loss {val_loss:.4f} ppl {val_ppl:.2f} BLEU {val_bleu:.3f}"
+        )
         if args.profile:
             msg += f" | time {prof['time_s']:.2f}s"
             if torch.cuda.is_available():
@@ -361,14 +368,20 @@ def main():
         if wandb_run.enabled:
             payload = {
                 "train/loss": train_loss,
+                "train/ppl": train_ppl,
                 "train/bleu": train_bleu,
                 "val/loss": val_loss,
+                "val/ppl": val_ppl,
                 "val/bleu": val_bleu,
             }
             if args.profile:
                 payload["train/time_s"] = prof["time_s"]
                 if torch.cuda.is_available():
                     payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
+            if val_refs_epoch and val_hyps_epoch:
+                ref_sample = " ".join(val_refs_epoch[0])
+                pred_sample = " ".join(val_hyps_epoch[0])
+                payload["samples/val_text"] = f"REF: {ref_sample}\nPRED: {pred_sample}"
             wandb_run.log(payload, step=epoch)
 
     wandb_run.finish()
