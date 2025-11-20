@@ -244,6 +244,10 @@ def main():
     parser.add_argument("--bench-iters", type=int, default=20)
     args = parser.parse_args()
 
+    if not args.dataset and not args.demo and not args.src and args.benchmark:
+        print("[Info] No dataset provided for benchmark; enabling --demo mode.")
+        args.demo = True
+
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {
         "script": "train_seq2seq_text",

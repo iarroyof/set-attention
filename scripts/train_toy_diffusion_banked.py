@@ -165,6 +165,7 @@ def main():
     ap.add_argument("--config", type=str, default="configs/diffusion_toy.yaml")
     ap.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
     ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--samples", type=int, default=None, help="Override number of synthetic sequences.")
     ap.add_argument("--data-seq-len", type=int, default=None, help="Override synthetic sequence length.")
     ap.add_argument("--data-dim", type=int, default=None, help="Override synthetic feature dimensionality.")
@@ -194,6 +195,7 @@ def main():
         "router_topk": args.router_topk,
         "adapter_rank": args.adapter_rank,
         "steps": args.steps,
+        "batch": args.batch,
         "dataset": args.config,
     }
     wandb_run = init_wandb(
@@ -243,8 +245,8 @@ def main():
         data_cfg.seq_len = int(args.data_seq_len)
     if args.data_dim is not None:
         data_cfg.dim = int(args.data_dim)
-    if args.data_batch_size is not None:
-        data_cfg.batch_size = int(args.data_batch_size)
+    batch_override = args.data_batch_size if args.data_batch_size is not None else args.batch
+    data_cfg.batch_size = int(batch_override)
     if args.data_val_frac is not None:
         data_cfg.val_frac = float(args.data_val_frac)
     if args.data_modes is not None:
