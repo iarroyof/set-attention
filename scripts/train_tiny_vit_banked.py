@@ -24,6 +24,7 @@ from set_attention.heads.banked_attention import SetBankAttention
 from set_attention.heads.token_router import TokenSetRouter
 from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
+from set_attention.utils.sample_logging import select_sample_indices
 from set_attention.utils.profiling import profiler
 
 
@@ -201,6 +202,8 @@ def main():
     ap.add_argument("--wandb-project", type=str, default="")
     ap.add_argument("--wandb-run-name", type=str, default="")
     ap.add_argument("--wandb-tags", type=str, default="")
+    ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
+    ap.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     args = ap.parse_args()
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
@@ -215,6 +218,7 @@ def main():
         "router_topk": args.router_topk,
         "adapter_rank": args.adapter_rank,
         "batch": args.batch,
+        "sample_count": args.sample_count,
     }
     wandb_run = init_wandb(
         args.wandb,
@@ -340,7 +344,7 @@ def main():
 
     coverage_size = cache.num_sets()
 
-    def evaluate(loader):
+    def evaluate(loader, sample_indices=None):
         if loader is None or len(loader.dataset) == 0:
             return None
         set_mode(False)
@@ -348,7 +352,10 @@ def main():
         total_acc = 0.0
         total_top5 = 0.0
         total_n = 0
-        sample_preview = None
+        sample_lookup = {}
+        sample_records = {}
+        if sample_indices:
+            sample_lookup = {idx: order for order, idx in enumerate(sample_indices)}
         with torch.no_grad():
             for idx_batch, xb, yb in loader:
                 batch_idx = idx_batch.to(device)
@@ -368,12 +375,18 @@ def main():
                 total_acc += float((pred == yb).sum().item())
                 total_top5 += float((topk == yb.unsqueeze(-1)).any(dim=-1).sum().item())
                 total_n += xb.size(0)
-                if sample_preview is None and xb.size(0) > 0:
-                    sample_preview = {
-                        "image": xb[0].detach().cpu(),
-                        "target": int(yb[0]),
-                        "pred": int(pred[0]),
-                    }
+                if sample_lookup:
+                    idx_list = batch_idx.detach().cpu().tolist()
+                    for local_pos, global_idx in enumerate(idx_list):
+                        order = sample_lookup.get(int(global_idx))
+                        if order is None or order in sample_records:
+                            continue
+                        sample_records[order] = {
+                            "idx": int(global_idx),
+                            "image": xb[local_pos].detach().cpu(),
+                            "target": int(yb[local_pos]),
+                            "pred": int(pred[local_pos]),
+                        }
         set_mode(True)
         denom = max(1, total_n)
         metrics = {
@@ -381,8 +394,9 @@ def main():
             "acc": total_acc / denom,
             "top5": total_top5 / denom,
         }
-        if sample_preview is not None:
-            metrics["sample"] = sample_preview
+        if sample_records:
+            ordered = [sample_records[i] for i in sorted(sample_records)]
+            metrics["samples"] = ordered
         return metrics
 
     for ep in range(1, args.epochs + 1):
@@ -428,11 +442,15 @@ def main():
         avg_top5 = total_top5 / denom
         avg_sets_per_seq = sets_seen_total / max(1, seq_seen_total)
         coverage_ratio = (coverage_mask.float().mean().item() if coverage_mask.numel() > 0 else 0.0)
-        val_metrics = evaluate(val_loader)
-        val_sample = None
-        if val_metrics is not None and "sample" in val_metrics:
-            val_sample = val_metrics["sample"]
-            del val_metrics["sample"]
+        if val_loader is not None:
+            sample_indices = select_sample_indices(len(val_loader.dataset), args.sample_count, args.sample_seed + ep)
+        else:
+            sample_indices = None
+        val_metrics = evaluate(val_loader, sample_indices)
+        val_samples = None
+        if val_metrics is not None and "samples" in val_metrics:
+            val_samples = val_metrics["samples"]
+            del val_metrics["samples"]
         msg = (
             f"[ViT-Banked][{args.attn}] epoch {ep:02d} "
             f"train loss {avg_loss:.4f} acc {avg_acc:.3f} top5 {avg_top5:.3f} "
@@ -464,15 +482,22 @@ def main():
                         "val/top5": val_metrics["top5"],
                     }
                 )
-                if val_sample is not None:
-                    sample_caption = f"target={val_sample['target']} pred={val_sample['pred']}"
-                    payload["samples/val_pred"] = sample_caption
+            if val_samples:
+                preview_lines = []
+                wandb_images = []
+                for order, sample in enumerate(val_samples):
+                    caption = f"[{order}] idx={sample['idx']} target={sample['target']} pred={sample['pred']}"
+                    preview_lines.append(caption)
                     try:
                         import wandb  # type: ignore
 
-                        payload["samples/val_image"] = wandb.Image(val_sample["image"], caption=sample_caption)
+                        wandb_images.append(wandb.Image(sample["image"], caption=caption))
                     except Exception:
                         pass
+                if preview_lines:
+                    payload["samples/val_preview"] = "\n".join(preview_lines)
+                if wandb_images:
+                    payload["samples/val_images"] = wandb_images
             if args.profile:
                 payload["train/time_s"] = prof["time_s"]
                 if torch.cuda.is_available():

@@ -14,6 +14,7 @@ from set_attention.experiments.models import PositionalEncoding, timestep_embedd
 from set_attention.eval.mmd_simple import mmd2_unbiased_from_feats
 from set_attention.utils.metrics import chamfer_l2, one_nn_two_sample
 from set_attention.utils.profiling import profiler
+from set_attention.utils.sample_logging import select_sample_indices
 from set_attention.utils.wandb import init_wandb
 from set_attention.sets.bank_builders import build_windowed_bank_from_ids
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
@@ -191,6 +192,8 @@ def main():
     ap.add_argument("--benchmark", action="store_true")
     ap.add_argument("--bench-warmup", type=int, default=5)
     ap.add_argument("--bench-iters", type=int, default=20)
+    ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
+    ap.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     defaults = ap.parse_args([])
     args = ap.parse_args()
 
@@ -207,6 +210,7 @@ def main():
         "steps": args.steps,
         "batch": args.batch,
         "dataset": args.config,
+        "sample_count": args.sample_count,
     }
     wandb_run = init_wandb(
         args.wandb,
@@ -359,23 +363,34 @@ def main():
         train_loss = total_loss / max(1, count)
 
         model.eval()
-        sample_preview = None
+        sample_indices = select_sample_indices(val_data.size(0), args.sample_count, args.sample_seed + epoch)
+        sample_lookup = {idx: order for order, idx in enumerate(sample_indices)}
+        captured_samples = {}
         with torch.no_grad():
             mmds, chamfers, nn1s = [], [], []
             for batch_idx, xb in tensor_batch_iterator(val_data, data_cfg.batch_size, shuffle=False):
-                xb = xb.to(device)
+                xb_cpu = xb
+                xb = xb_cpu.to(device)
                 phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
                 Phi, Sig, Size, q_ptrs = val_cache.gather_flat(batch_idx.to(device), phi_dynamic)
                 model.set_current_bank(Phi, Sig, Size, q_ptrs)
-                capture_sample = sample_preview is None
-                val_mmd, val_chamfer, val_nn1, sample_pair = eval_suite(
-                    ddpm, model, xb, args.d_model, capture_sample=capture_sample
+                batch_indices = batch_idx.detach().cpu().tolist()
+                need_samples = any(idx in sample_lookup for idx in batch_indices)
+                val_mmd, val_chamfer, val_nn1, gen_batch = eval_suite(
+                    ddpm, model, xb, args.d_model, return_generated=need_samples
                 )
-                if capture_sample and sample_pair is not None:
-                    sample_preview = sample_pair
                 mmds.append(val_mmd)
                 chamfers.append(val_chamfer)
                 nn1s.append(val_nn1)
+                if need_samples and gen_batch is not None:
+                    for local_pos, global_idx in enumerate(batch_indices):
+                        order = sample_lookup.get(int(global_idx))
+                        if order is None or order in captured_samples:
+                            continue
+                        captured_samples[order] = (
+                            xb_cpu[local_pos].detach().cpu(),
+                            gen_batch[local_pos].detach().cpu(),
+                        )
 
         def safe_mean(values):
             return float(sum(values) / len(values)) if values else float("nan")
@@ -395,12 +410,20 @@ def main():
                 msg += f" | peak VRAM {prof['gpu_peak_mem_mib']:.1f} MiB"
         print(msg)
         sample_text = None
-        if sample_preview is not None:
-            ref_sample, gen_sample = sample_preview
-            sample_text = (
-                f"TGT {summarize_tensor(ref_sample)}\n"
-                f"GEN {summarize_tensor(gen_sample)}"
-            )
+        if captured_samples:
+            blocks = []
+            for order, idx in enumerate(sample_indices):
+                pair = captured_samples.get(order)
+                if pair is None:
+                    continue
+                ref_sample, gen_sample = pair
+                blocks.append(
+                    f"[{order}] idx={idx}\n"
+                    f"TGT {summarize_tensor(ref_sample)}\n"
+                    f"GEN {summarize_tensor(gen_sample)}"
+                )
+            if blocks:
+                sample_text = "\n\n".join(blocks)
         if wandb_run.enabled:
             wandb_payload = {
                 "train/loss": train_loss,
@@ -422,7 +445,7 @@ def eval_suite(
     model: BankedDenoiser,
     X: torch.Tensor,
     d_model: int,
-    capture_sample: bool = False,
+    return_generated: bool = False,
 ):
     shape = X.shape
     x_gen = ddpm.sample(model, shape, lambda t, dim: timestep_embedding(t, d_model), d_model)
@@ -435,10 +458,8 @@ def eval_suite(
     mmd = float(mmd2_unbiased_from_feats(x_flat, g_flat, gamma=0.5).detach().cpu())
     chamfer = chamfer_l2(X, x_gen)
     nn1 = one_nn_two_sample(x_flat, g_flat)
-    sample_pair = None
-    if capture_sample and X.size(0) > 0:
-        sample_pair = (X[0].detach().cpu(), x_gen[0].detach().cpu())
-    return mmd, chamfer, nn1, sample_pair
+    generated = x_gen.detach().cpu() if return_generated else None
+    return mmd, chamfer, nn1, generated
 
 
 if __name__ == "__main__":

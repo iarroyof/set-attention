@@ -15,6 +15,7 @@ from set_attention.heads.token_router import TokenSetRouter
 from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.profiling import profiler
+from set_attention.utils.sample_logging import format_text_samples
 from set_attention.utils.wandb import init_wandb
 from set_attention.experiments.nlp_eval import corpus_bleu
 from set_attention.training.text_utils import (
@@ -190,6 +191,8 @@ def main():
     ap.add_argument("--wandb-project", type=str, default="")
     ap.add_argument("--wandb-run-name", type=str, default="")
     ap.add_argument("--wandb-tags", type=str, default="")
+    ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log per epoch.")
+    ap.add_argument("--sample-seed", type=int, default=1337, help="Seed controlling which samples are logged.")
     args = ap.parse_args()
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
@@ -206,6 +209,7 @@ def main():
         "ska_backend": args.ska_backend,
         "precision": args.precision,
         "batch": args.batch,
+        "sample_count": args.sample_count,
     }
     wandb_run = init_wandb(
         args.wandb,
@@ -378,10 +382,14 @@ def main():
                 payload["train/time_s"] = prof["time_s"]
                 if torch.cuda.is_available():
                     payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
-            if val_refs_epoch and val_hyps_epoch:
-                ref_sample = " ".join(val_refs_epoch[0])
-                pred_sample = " ".join(val_hyps_epoch[0])
-                payload["samples/val_text"] = f"REF: {ref_sample}\nPRED: {pred_sample}"
+            sample_text = format_text_samples(
+                val_refs_epoch,
+                val_hyps_epoch,
+                args.sample_count,
+                args.sample_seed + epoch,
+            )
+            if sample_text:
+                payload["samples/val_text"] = sample_text
             wandb_run.log(payload, step=epoch)
 
     wandb_run.finish()

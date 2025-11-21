@@ -30,6 +30,7 @@ from set_attention.training.text_utils import (
 )
 from set_attention.experiments.nlp_eval import corpus_bleu, rouge_l
 from set_attention.utils.profiling import profiler
+from set_attention.utils.sample_logging import format_text_samples
 from set_attention.utils.wandb import init_wandb
 
 
@@ -243,6 +244,8 @@ def main():
     parser.add_argument("--benchmark", action="store_true")
     parser.add_argument("--bench-warmup", type=int, default=5)
     parser.add_argument("--bench-iters", type=int, default=20)
+    parser.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
+    parser.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     args = parser.parse_args()
 
     if not args.dataset and not args.demo and not args.src and args.benchmark:
@@ -432,11 +435,12 @@ def main():
             if prof.get("gpu_active_s") is not None:
                 msg += f" | GPU-ACT {prof['gpu_active_s']:.2f}s"
 
+        val_refs_epoch: List[List[str]] = []
+        val_hyps_epoch: List[List[str]] = []
+        val_src_epoch: List[str] = []
         v_loss = v_ppl = v_bleu = v_rouge = None
-        val_sample_preview = None
         if has_val:
             model.eval()
-            val_refs_epoch, val_hyps_epoch = [], []
             val_loss_total = 0.0
             val_token_total = 0
             with torch.no_grad():
@@ -461,16 +465,8 @@ def main():
                     preds = logits.argmax(dim=-1)
                     val_refs_epoch.extend(refs)
                     val_hyps_epoch.extend([ids_to_tokens(row, train_tgt_itos) for row in preds.detach().cpu()])
-                    if (
-                        val_sample_preview is None
-                        and batch_idx.numel() > 0
-                        and len(refs) > 0
-                        and preds.size(0) > 0
-                    ):
-                        src_text = val_pairs[int(batch_idx[0])][0]
-                        ref_text = " ".join(refs[0])
-                        pred_text = " ".join(ids_to_tokens(preds[0], train_tgt_itos))
-                        val_sample_preview = (src_text, ref_text, pred_text)
+                    batch_indices = batch_idx.detach().cpu().tolist()
+                    val_src_epoch.extend(val_pairs[i][0] for i in batch_indices)
 
             v_loss = val_loss_total / max(1, val_token_total)
             v_ppl = math.exp(min(v_loss, 20.0))
@@ -498,9 +494,15 @@ def main():
                         "val/rougeL": v_rouge,
                     }
                 )
-                if val_sample_preview is not None:
-                    src_text, ref_text, pred_text = val_sample_preview
-                    payload["samples/val_text"] = f"SRC: {src_text}\nREF: {ref_text}\nPRED: {pred_text}"
+                sample_text = format_text_samples(
+                    val_refs_epoch,
+                    val_hyps_epoch,
+                    args.sample_count,
+                    args.sample_seed + epoch,
+                    sources=val_src_epoch,
+                )
+                if sample_text:
+                    payload["samples/val_text"] = sample_text
             wandb_run.log(payload, step=epoch)
 
     wandb_run.finish()

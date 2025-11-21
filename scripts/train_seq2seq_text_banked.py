@@ -4,7 +4,7 @@ import os
 import random
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 import torch
 import torch.nn as nn
@@ -30,6 +30,7 @@ from set_attention.training.text_utils import (
     text_batch_iterator,
     SPECIAL_TOKENS,
 )
+from set_attention.utils.sample_logging import format_text_samples
 from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.profiling import profiler
@@ -215,6 +216,8 @@ def main():
     parser.add_argument("--benchmark", action="store_true")
     parser.add_argument("--bench-warmup", type=int, default=5)
     parser.add_argument("--bench-iters", type=int, default=20)
+    parser.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
+    parser.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     args = parser.parse_args()
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
@@ -231,6 +234,7 @@ def main():
         "adapter_rank": args.adapter_rank,
         "set_kernel": args.set_kernel,
         "batch": args.batch,
+        "sample_count": args.sample_count,
     }
     wandb_run = init_wandb(
         args.wandb,
@@ -455,13 +459,13 @@ def main():
                 wandb_payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
             wandb_run.log(wandb_payload, step=epoch)
 
+        val_refs, val_hyps, val_src = [], [], []
         if has_val:
             model.eval()
             set_attn.eval()
             router.eval()
             if adapter is not None:
                 adapter.eval()
-            val_refs, val_hyps = [], []
             val_loss_total = 0.0
             val_token_total = 0
             with torch.no_grad():
@@ -493,6 +497,8 @@ def main():
                     preds = logits.argmax(dim=-1)
                     val_refs.extend(ref_tokens)
                     val_hyps.extend([ids_to_tokens(row, train_tgt_itos) for row in preds.detach().cpu()])
+                    batch_indices = batch_idx_tensor.detach().cpu().tolist()
+                    val_src.extend(val_pairs[i][0] for i in batch_indices)
 
             v_loss = val_loss_total / max(1, val_token_total)
             v_ppl = math.exp(min(v_loss, 20.0))
@@ -504,7 +510,7 @@ def main():
             )
         else:
             v_loss = v_ppl = v_bleu = v_rouge = None
-            val_refs = val_hyps = []
+            val_refs = val_hyps = val_src = []
 
         if wandb_run.enabled:
             payload = {
@@ -522,10 +528,15 @@ def main():
                         "val/rougeL": v_rouge,
                     }
                 )
-            if val_refs and val_hyps:
-                ref_sample = " ".join(val_refs[0])
-                pred_sample = " ".join(val_hyps[0])
-                payload["samples/val_text"] = f"REF: {ref_sample}\nPRED: {pred_sample}"
+            sample_text = format_text_samples(
+                val_refs,
+                val_hyps,
+                args.sample_count,
+                args.sample_seed + epoch,
+                sources=val_src,
+            )
+            if sample_text:
+                payload["samples/val_text"] = sample_text
             wandb_run.log(payload, step=epoch)
 
     wandb_run.finish()
