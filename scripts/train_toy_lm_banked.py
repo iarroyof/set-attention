@@ -363,9 +363,7 @@ def main():
         return
 
     def run_epoch(train: bool):
-        model_list = [backbone, router, head]
-        if adapter is not None:
-            model_list.append(adapter)
+        model_list = [m for m in (backbone, router, head, adapter) if m is not None]
         for m in model_list:
             m.train(train)
         refs_epoch, hyps_epoch = [], []
