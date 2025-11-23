@@ -177,6 +177,7 @@ def main():
     ap.add_argument("--router-topk", type=int, default=0)
     ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
     ap.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
+    ap.add_argument("--sdpa-baseline", action="store_true", help="Use standard SDPA instead of banked attention.")
     ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
     ap.add_argument("--benchmark", action="store_true")
     ap.add_argument("--bench-warmup", type=int, default=5)
@@ -210,6 +211,7 @@ def main():
         "precision": args.precision,
         "batch": args.batch,
         "sample_count": args.sample_count,
+        "sdpa_baseline": args.sdpa_baseline,
     }
     wandb_run = init_wandb(
         args.wandb,
@@ -243,65 +245,121 @@ def main():
     vocab_size = len(stoi)
     device = torch.device(args.device)
 
-    sequences_train = [row.clone() for row in train_X]
-    sequences_val = [row.clone() for row in val_X] if val_X.numel() > 0 else []
-    train_bank = build_windowed_bank_from_ids(sequences_train, window=args.window, stride=args.stride).to(device)
-    val_bank = build_windowed_bank_from_ids(sequences_val, window=args.window, stride=args.stride).to(device)
+    if not args.sdpa_baseline:
+        sequences_train = [row.clone() for row in train_X]
+        sequences_val = [row.clone() for row in val_X] if val_X.numel() > 0 else []
+        train_bank = build_windowed_bank_from_ids(sequences_train, window=args.window, stride=args.stride).to(device)
+        val_bank = build_windowed_bank_from_ids(sequences_val, window=args.window, stride=args.stride).to(device)
 
-    atom_emb = nn.Embedding(vocab_size, args.d_model).to(device)
-    adapter = None
-    if args.adapter_rank > 0:
-        adapter = AtomFeatureAdapter(args.d_model, rank=args.adapter_rank).to(device)
-        with torch.no_grad():
-            phi_snapshot = adapter(atom_emb.weight).detach()
+        atom_emb = nn.Embedding(vocab_size, args.d_model).to(device)
+        adapter = None
+        if args.adapter_rank > 0:
+            adapter = AtomFeatureAdapter(args.d_model, rank=args.adapter_rank).to(device)
+            with torch.no_grad():
+                phi_snapshot = adapter(atom_emb.weight).detach()
+        else:
+            phi_snapshot = atom_emb.weight
+
+        universe_ids = torch.arange(vocab_size, device=device, dtype=torch.long)
+        universe = UniversePool(universe_ids, metadata={"task": "toy_lm"}).to(device)
+        train_minhash = MinHasher(k=args.minhash_k, device=train_bank.values.device)
+        val_minhash = MinHasher(k=args.minhash_k, device=val_bank.values.device)
+        train_cache = SetFeatureCache(universe, train_bank.values, train_bank.set_offsets, train_bank.seq_offsets, minhash=train_minhash).to(device)
+        val_cache = SetFeatureCache(universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=val_minhash).to(device)
     else:
-        phi_snapshot = atom_emb.weight
-
-    universe_ids = torch.arange(vocab_size, device=device, dtype=torch.long)
-    universe = UniversePool(universe_ids, metadata={"task": "toy_lm"}).to(device)
-    train_minhash = MinHasher(k=args.minhash_k, device=train_bank.values.device)
-    val_minhash = MinHasher(k=args.minhash_k, device=val_bank.values.device)
-    train_cache = SetFeatureCache(universe, train_bank.values, train_bank.set_offsets, train_bank.seq_offsets, minhash=train_minhash).to(device)
-    val_cache = SetFeatureCache(universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=val_minhash).to(device)
+        train_cache = val_cache = None
+        atom_emb = adapter = None
+        phi_snapshot = None
 
     backbone = TinyLMBackbone(vocab_size, args.d_model, args.nhead, args.layers).to(device)
-    set_attn = SetBankAttention(
-        d_model=args.d_model,
-        num_heads=args.nhead,
-        tau=1.0,
-        gamma=0.3,
-        beta=1.0,
-        score_mode="delta_plus_dot",
-        eta=1.0,
-        backend=args.ska_backend,
-        precision=args.precision,
-    ).to(device)
-    router = TokenSetRouter(d_model=args.d_model, num_heads=args.nhead, topk=args.router_topk).to(device)
+    if not args.sdpa_baseline:
+        set_attn = SetBankAttention(
+            d_model=args.d_model,
+            num_heads=args.nhead,
+            tau=1.0,
+            gamma=0.3,
+            beta=1.0,
+            score_mode="delta_plus_dot",
+            eta=1.0,
+            backend=args.ska_backend,
+            precision=args.precision,
+        ).to(device)
+        router = TokenSetRouter(d_model=args.d_model, num_heads=args.nhead, topk=args.router_topk).to(device)
+    else:
+        set_attn = None
+        router = None
     head = nn.Linear(args.d_model, vocab_size).to(device)
 
-    params = list(backbone.parameters()) + list(set_attn.parameters()) + list(router.parameters()) + list(head.parameters()) + list(atom_emb.parameters())
+    params = list(backbone.parameters()) + list(head.parameters())
+    if set_attn is not None:
+        params += list(set_attn.parameters()) + list(router.parameters())
+    if atom_emb is not None:
+        params += list(atom_emb.parameters())
     if adapter is not None:
         params += list(adapter.parameters())
     optimizer = torch.optim.AdamW(params, lr=3e-4)
 
     if args.benchmark:
-        run_lm_benchmark(
-            args,
-            backbone,
-            set_attn,
-            router,
-            head,
-            adapter,
-            atom_emb,
-            phi_snapshot,
-            train_cache,
-            optimizer,
-            train_X,
-            train_Y,
-            max_len,
-            device,
-            wandb_run,
-        )
+        if args.sdpa_baseline:
+            bench_batch = min(args.batch, train_X.size(0))
+            if bench_batch == 0:
+                print("[benchmark] no data available.")
+                return
+            batch_idx = torch.arange(bench_batch, dtype=torch.long, device=device)
+            src_ids = train_X[:bench_batch].to(device)
+            tgt_ids = train_Y[:bench_batch].to(device)
+            tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
+
+            def step():
+                optimizer.zero_grad(set_to_none=True)
+                token_states = backbone(src_ids)
+                logits = head(token_states)
+                loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
+                loss.backward()
+                optimizer.step()
+
+            for _ in range(args.bench_warmup):
+                step()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            for _ in range(args.bench_iters):
+                step()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            elapsed = time.perf_counter() - t0
+            tokens = bench_batch * tgt_ids.size(1) * args.bench_iters
+            throughput = tokens / elapsed if elapsed > 0 else 0.0
+            print(
+                f"[benchmark][lm] backend=sdpa precision={args.precision} "
+                f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
+            )
+            if wandb_run.enabled:
+                wandb_run.log(
+                    {
+                        "benchmark/tokens_per_s": throughput,
+                        "benchmark/elapsed_s": elapsed,
+                        "benchmark/batch_tokens": tokens,
+                    }
+                )
+        else:
+            run_lm_benchmark(
+                args,
+                backbone,
+                set_attn,
+                router,
+                head,
+                adapter,
+                atom_emb,
+                phi_snapshot,
+                train_cache,
+                optimizer,
+                train_X,
+                train_Y,
+                max_len,
+                device,
+                wandb_run,
+            )
         return
 
     def run_epoch(train: bool):
@@ -328,12 +386,16 @@ def main():
             tgt_ids = tgt_ids.to(device, non_blocking=True)
             tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
 
-            phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-            cache = train_cache if train else val_cache
-            Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
-            token_states = backbone(src_ids)
-            Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
-            routed = router(token_states, Z, Phi, q_ptrs)
+            if not args.sdpa_baseline:
+                phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+                cache = train_cache if train else val_cache
+                Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
+                token_states = backbone(src_ids)
+                Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
+                routed = router(token_states, Z, Phi, q_ptrs)
+            else:
+                token_states = backbone(src_ids)
+                routed = token_states
             logits = head(routed)
 
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
