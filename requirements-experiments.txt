@@ -12,7 +12,7 @@ pyarrow==22.0.0
 pillow==11.3.0
 
 # Hugging Face + related utilities
-huggingface-hub==1.1.4
+huggingface-hub==0.26.1
 hf-xet==1.2.0
 requests==2.32.5
 pyyaml==6.0.3
