@@ -7,6 +7,8 @@ from itertools import islice
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
+import multiprocessing as mp
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -79,17 +81,54 @@ def tensors_to_text_pairs(X, Y, itos):
     return pairs, refs
 
 
-def build_vocab_from_stream(line_iter):
+def _chunk_lines(line_iter: Iterator[str], chunk_size: int):
+    batch: List[str] = []
+    for line in line_iter:
+        batch.append(line)
+        if len(batch) >= chunk_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+def _unique_tokens_from_lines(lines: List[str]) -> List[str]:
+    seen = set()
+    ordered: List[str] = []
+    for line in lines:
+        for tok in line.split():
+            if tok in seen:
+                continue
+            seen.add(tok)
+            ordered.append(tok)
+    return ordered
+
+
+def build_vocab_from_stream(line_iter, num_workers: int = 1, chunk_size: int = 2048):
     vocab = list(SPECIAL_TOKENS)
     stoi = {tok: idx for idx, tok in enumerate(vocab)}
     itos = {idx: tok for tok, idx in stoi.items()}
-    for line in line_iter:
-        for tok in line.split():
-            if tok in stoi:
-                continue
-            idx = len(stoi)
-            stoi[tok] = idx
-            itos[idx] = tok
+    workers = max(1, int(num_workers))
+    if workers == 1:
+        for line in line_iter:
+            for tok in line.split():
+                if tok in stoi:
+                    continue
+                idx = len(stoi)
+                stoi[tok] = idx
+                itos[idx] = tok
+        return stoi, itos
+
+    chunk_iter = _chunk_lines(line_iter, chunk_size)
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(processes=workers) as pool:
+        for chunk_tokens in pool.imap(_unique_tokens_from_lines, chunk_iter):
+            for tok in chunk_tokens:
+                if tok in stoi:
+                    continue
+                idx = len(stoi)
+                stoi[tok] = idx
+                itos[idx] = tok
     return stoi, itos
 
 
@@ -302,6 +341,7 @@ def main():
     ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
     ap.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
     ap.add_argument("--vocab-path", type=str, default="", help="Optional path to persist the streaming vocabulary JSON.")
+    ap.add_argument("--vocab-workers", type=int, default=0, help="Worker processes to build streaming vocabularies (0=auto).")
     ap.add_argument("--reuse-vocab", dest="reuse_vocab", action="store_true", help="Reuse/save streaming vocab files to skip re-tokenization.")
     ap.add_argument("--no-reuse-vocab", dest="reuse_vocab", action="store_false", help="Disable vocab caching for streaming datasets.")
     ap.set_defaults(reuse_vocab=True)
@@ -353,6 +393,7 @@ def main():
         "precompute_bank": args.precompute_bank,
         "reuse_vocab": args.reuse_vocab,
         "vocab_path": args.vocab_path or "",
+        "vocab_workers": args.vocab_workers,
     }
     wandb_run = init_wandb(
         args.wandb,
@@ -381,10 +422,16 @@ def main():
                 vocab_file_path = Path(args.vocab_path)
             else:
                 vocab_file_path = Path(hf_cache) / f"{args.dataset}_vocab.json"
+            if args.vocab_workers > 0:
+                vocab_workers = args.vocab_workers
+            else:
+                cpu_count = os.cpu_count() or 1
+                vocab_workers = max(1, min(32, cpu_count))
             if args.reuse_vocab and vocab_file_path.exists():
                 stoi, itos = load_vocab_file(vocab_file_path)
                 print(f"[Data] Reusing streaming vocab at {vocab_file_path}")
             else:
+                print(f"[Data] Building streaming vocab with {vocab_workers} workers")
                 stoi, itos = build_vocab_from_stream(
                     iter_wikitext_lines(
                         args.dataset,
@@ -392,7 +439,8 @@ def main():
                         hf_cache,
                         line_limit,
                         dataset_obj=hf_dataset,
-                    )
+                    ),
+                    num_workers=vocab_workers,
                 )
                 if args.reuse_vocab:
                     save_vocab_file(vocab_file_path, itos)
