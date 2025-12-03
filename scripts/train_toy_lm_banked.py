@@ -5,7 +5,7 @@ import time
 from collections import deque
 from itertools import islice
 from pathlib import Path
-from typing import Iterator, List, Optional, Tuple
+from typing import Callable, Iterator, List, Optional, Tuple
 
 import multiprocessing as mp
 import os
@@ -132,6 +132,44 @@ def build_vocab_from_stream(line_iter, num_workers: int = 1, chunk_size: int = 2
     return stoi, itos
 
 
+def make_basic_line_encoder(stoi, unk_id: int):
+    def encode(line: str) -> List[int]:
+        tokens = line.split()
+        if not tokens:
+            return []
+        return [stoi.get(tok, unk_id) for tok in tokens]
+
+    return encode
+
+
+def make_basic_decoder(itos):
+    def decode(ids_tensor: torch.Tensor) -> List[str]:
+        return ids_to_tokens(ids_tensor, itos)
+
+    return decode
+
+
+def load_hf_tokenizer(name: str):
+    try:
+        from transformers import AutoTokenizer  # type: ignore
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise ImportError(
+            "The 'transformers' package is required for --hf-tokenizer-name."
+        ) from exc
+
+    tokenizer = AutoTokenizer.from_pretrained(name)
+    additions = {}
+    if tokenizer.pad_token is None:
+        additions["pad_token"] = "<pad>"
+    if tokenizer.bos_token is None:
+        additions["bos_token"] = "<s>"
+    if tokenizer.eos_token is None:
+        additions["eos_token"] = "</s>"
+    if additions:
+        tokenizer.add_special_tokens(additions)
+    return tokenizer
+
+
 class WikitextStreamingData:
     def __init__(
         self,
@@ -139,8 +177,8 @@ class WikitextStreamingData:
         cache_dir: Path,
         seq_len: int,
         seq_stride: int,
-        stoi,
-        itos,
+        line_encoder: Callable[[str], List[int]],
+        decode_tokens_fn: Callable[[torch.Tensor], List[str]],
         *,
         line_limit: Optional[int] = None,
         dataset_obj=None,
@@ -149,10 +187,9 @@ class WikitextStreamingData:
         self.cache_dir = Path(cache_dir)
         self.seq_len = int(seq_len)
         self.stride = int(seq_stride) if seq_stride > 0 else int(seq_len)
-        self.stoi = stoi
-        self.itos = itos
         self.line_limit = line_limit
-        self.unk_id = stoi.get("<unk>", 0)
+        self.line_encoder = line_encoder
+        self.decode_tokens_fn = decode_tokens_fn
         self._dataset_obj = dataset_obj or load_wikitext_hf_dataset(dataset, self.cache_dir)
 
     def _line_iter(self, split: str):
@@ -165,12 +202,12 @@ class WikitextStreamingData:
         )
 
     def _chunk_iter(self, split: str):
-        buffer: deque[str] = deque()
+        buffer: deque[int] = deque()
         for line in self._line_iter(split):
-            tokens = line.split()
-            if not tokens:
+            encoded = self.line_encoder(line)
+            if not encoded:
                 continue
-            buffer.extend(tokens)
+            buffer.extend(encoded)
             while len(buffer) >= self.seq_len:
                 chunk = list(islice(buffer, 0, self.seq_len))
                 yield chunk
@@ -183,7 +220,7 @@ class WikitextStreamingData:
         for idx, chunk in enumerate(self._chunk_iter(split)):
             if not chunk:
                 continue
-            ids = torch.tensor([self.stoi.get(tok, self.unk_id) for tok in chunk], dtype=torch.long)
+            ids = torch.tensor(chunk, dtype=torch.long)
             yield idx, ids
 
     def batch_iterator(self, split: str, batch_size: int):
@@ -202,7 +239,7 @@ class WikitextStreamingData:
     def _build_batch(self, indices, seqs):
         src = torch.stack(seqs, dim=0)
         tgt = torch.roll(src, shifts=-1, dims=1)
-        refs = [ids_to_tokens(row, self.itos) for row in tgt]
+        refs = [self.decode_tokens_fn(row) for row in tgt]
         return torch.tensor(indices, dtype=torch.long), src, tgt, refs
 
     def sequences_for_bank(self, split: str):
@@ -356,6 +393,12 @@ def main():
     ap.add_argument("--bench-iters", type=int, default=20)
     ap.add_argument("--dataset", choices=["", "wikitext2", "wikitext103"], default="")
     ap.add_argument("--dataset-lines", type=int, default=0, help="Limit number of text lines per split (0 = all).")
+    ap.add_argument(
+        "--hf-tokenizer-name",
+        type=str,
+        default="",
+        help="Optional HuggingFace tokenizer name to replace the default whitespace tokenizer (requires transformers).",
+    )
     ap.add_argument("--seq-len", type=int, default=128)
     ap.add_argument("--seq-stride", type=int, default=128)
     ap.add_argument("--data-root", type=str, default="")
@@ -372,6 +415,11 @@ def main():
         args.streaming = bool(args.dataset == "wikitext103")
     if not args.dataset:
         args.streaming = False
+    use_hf_tokenizer = bool(args.hf_tokenizer_name)
+    if use_hf_tokenizer and not args.dataset:
+        raise ValueError("--hf-tokenizer-name requires --dataset to be set.")
+    if use_hf_tokenizer and not args.streaming:
+        raise ValueError("--hf-tokenizer-name currently requires --streaming.")
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {
@@ -394,6 +442,7 @@ def main():
         "reuse_vocab": args.reuse_vocab,
         "vocab_path": args.vocab_path or "",
         "vocab_workers": args.vocab_workers,
+        "hf_tokenizer_name": args.hf_tokenizer_name or "",
     }
     wandb_run = init_wandb(
         args.wandb,
@@ -414,44 +463,68 @@ def main():
     train_X = train_Y = val_X = val_Y = None
     vocab_file_path: Optional[Path] = None
 
+    hf_tokenizer = None
+    hf_special_ids: Optional[set[int]] = None
+
     if args.dataset:
         line_limit = args.dataset_lines if args.dataset_lines > 0 else None
         if args.streaming:
             hf_dataset = load_wikitext_hf_dataset(args.dataset, hf_cache)
-            if args.vocab_path:
-                vocab_file_path = Path(args.vocab_path)
+            if use_hf_tokenizer:
+                hf_tokenizer = load_hf_tokenizer(args.hf_tokenizer_name)
+                stoi = hf_tokenizer.get_vocab()
+                itos = {idx: tok for tok, idx in stoi.items()}
+                hf_special_ids = {int(tid) for tid in hf_tokenizer.all_special_ids if tid is not None}
+
+                def hf_line_encoder(text: str) -> List[int]:
+                    return list(hf_tokenizer.encode(text, add_special_tokens=False))
+
+                def hf_decode(tokens: torch.Tensor) -> List[str]:
+                    ids = tokens.tolist()
+                    toks = hf_tokenizer.convert_ids_to_tokens(ids)
+                    skip_ids = hf_special_ids or set()
+                    return [tok for tok, idx in zip(toks, ids) if idx not in skip_ids]
+
+                line_encoder = hf_line_encoder
+                decode_tokens_fn = hf_decode
             else:
-                vocab_file_path = Path(hf_cache) / f"{args.dataset}_vocab.json"
-            if args.vocab_workers > 0:
-                vocab_workers = args.vocab_workers
-            else:
-                cpu_count = os.cpu_count() or 1
-                vocab_workers = max(1, min(32, cpu_count))
-            if args.reuse_vocab and vocab_file_path.exists():
-                stoi, itos = load_vocab_file(vocab_file_path)
-                print(f"[Data] Reusing streaming vocab at {vocab_file_path}")
-            else:
-                print(f"[Data] Building streaming vocab with {vocab_workers} workers")
-                stoi, itos = build_vocab_from_stream(
-                    iter_wikitext_lines(
-                        args.dataset,
-                        "train",
-                        hf_cache,
-                        line_limit,
-                        dataset_obj=hf_dataset,
-                    ),
-                    num_workers=vocab_workers,
-                )
-                if args.reuse_vocab:
-                    save_vocab_file(vocab_file_path, itos)
-                    print(f"[Data] Saved streaming vocab to {vocab_file_path}")
+                if args.vocab_path:
+                    vocab_file_path = Path(args.vocab_path)
+                else:
+                    vocab_file_path = Path(hf_cache) / f"{args.dataset}_vocab.json"
+                if args.vocab_workers > 0:
+                    vocab_workers = args.vocab_workers
+                else:
+                    cpu_count = os.cpu_count() or 1
+                    vocab_workers = max(1, min(32, cpu_count))
+                if args.reuse_vocab and vocab_file_path.exists():
+                    stoi, itos = load_vocab_file(vocab_file_path)
+                    print(f"[Data] Reusing streaming vocab at {vocab_file_path}")
+                else:
+                    print(f"[Data] Building streaming vocab with {vocab_workers} workers")
+                    stoi, itos = build_vocab_from_stream(
+                        iter_wikitext_lines(
+                            args.dataset,
+                            "train",
+                            hf_cache,
+                            line_limit,
+                            dataset_obj=hf_dataset,
+                        ),
+                        num_workers=vocab_workers,
+                    )
+                    if args.reuse_vocab:
+                        save_vocab_file(vocab_file_path, itos)
+                        print(f"[Data] Saved streaming vocab to {vocab_file_path}")
+                unk_id = stoi.get("<unk>", 0)
+                line_encoder = make_basic_line_encoder(stoi, unk_id)
+                decode_tokens_fn = make_basic_decoder(itos)
             streaming_data = WikitextStreamingData(
                 args.dataset,
                 hf_cache,
                 args.seq_len,
                 args.seq_stride,
-                stoi,
-                itos,
+                line_encoder,
+                decode_tokens_fn,
                 line_limit=line_limit,
                 dataset_obj=hf_dataset,
             )
