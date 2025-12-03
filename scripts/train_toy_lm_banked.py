@@ -1,4 +1,5 @@
 import argparse
+import json
 import math
 import time
 from collections import deque
@@ -177,6 +178,21 @@ class WikitextStreamingData:
             return None
 
 
+def save_vocab_file(path: Path, itos: dict) -> None:
+    ordered = [itos[i] for i in range(len(itos))]
+    payload = {"itos": ordered}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload))
+
+
+def load_vocab_file(path: Path):
+    payload = json.loads(path.read_text())
+    tokens = payload.get("itos", [])
+    stoi = {tok: idx for idx, tok in enumerate(tokens)}
+    itos = {idx: tok for idx, tok in enumerate(tokens)}
+    return stoi, itos
+
+
 def load_wikitext_dataset(args, cache_dir):
     line_limit = args.dataset_lines if args.dataset_lines > 0 else None
     train_lines = load_wikitext_lines(args.dataset, "train", cache_dir, line_limit)
@@ -285,6 +301,10 @@ def main():
     ap.add_argument("--router-topk", type=int, default=0)
     ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
     ap.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
+    ap.add_argument("--vocab-path", type=str, default="", help="Optional path to persist the streaming vocabulary JSON.")
+    ap.add_argument("--reuse-vocab", dest="reuse_vocab", action="store_true", help="Reuse/save streaming vocab files to skip re-tokenization.")
+    ap.add_argument("--no-reuse-vocab", dest="reuse_vocab", action="store_false", help="Disable vocab caching for streaming datasets.")
+    ap.set_defaults(reuse_vocab=True)
     ap.add_argument("--sdpa-baseline", action="store_true", help="Use standard SDPA instead of banked attention.")
     ap.add_argument("--streaming", dest="streaming", action="store_true", help="Stream datasets instead of materializing tensors.")
     ap.add_argument("--no-streaming", dest="streaming", action="store_false", help="Disable streaming data loaders.")
@@ -331,6 +351,8 @@ def main():
         "sdpa_baseline": args.sdpa_baseline,
         "streaming": bool(args.streaming),
         "precompute_bank": args.precompute_bank,
+        "reuse_vocab": args.reuse_vocab,
+        "vocab_path": args.vocab_path or "",
     }
     wandb_run = init_wandb(
         args.wandb,
@@ -349,20 +371,32 @@ def main():
     train_refs = []
     val_refs = []
     train_X = train_Y = val_X = val_Y = None
+    vocab_file_path: Optional[Path] = None
 
     if args.dataset:
         line_limit = args.dataset_lines if args.dataset_lines > 0 else None
         if args.streaming:
             hf_dataset = load_wikitext_hf_dataset(args.dataset, hf_cache)
-            stoi, itos = build_vocab_from_stream(
-                iter_wikitext_lines(
-                    args.dataset,
-                    "train",
-                    hf_cache,
-                    line_limit,
-                    dataset_obj=hf_dataset,
+            if args.vocab_path:
+                vocab_file_path = Path(args.vocab_path)
+            else:
+                vocab_file_path = Path(hf_cache) / f"{args.dataset}_vocab.json"
+            if args.reuse_vocab and vocab_file_path.exists():
+                stoi, itos = load_vocab_file(vocab_file_path)
+                print(f"[Data] Reusing streaming vocab at {vocab_file_path}")
+            else:
+                stoi, itos = build_vocab_from_stream(
+                    iter_wikitext_lines(
+                        args.dataset,
+                        "train",
+                        hf_cache,
+                        line_limit,
+                        dataset_obj=hf_dataset,
+                    )
                 )
-            )
+                if args.reuse_vocab:
+                    save_vocab_file(vocab_file_path, itos)
+                    print(f"[Data] Saved streaming vocab to {vocab_file_path}")
             streaming_data = WikitextStreamingData(
                 args.dataset,
                 hf_cache,
