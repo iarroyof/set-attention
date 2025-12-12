@@ -619,13 +619,22 @@ def main():
 
     backbone = TinyLMBackbone(vocab_size, args.d_model, args.nhead, args.layers).to(device)
     if not args.sdpa_baseline:
+        ska_score_mode = "delta_plus_dot"
+        ska_gamma = 0.3
+        if args.attn == "dot":
+            ska_score_mode = "dot"
+            ska_gamma = 0.0
+        elif args.attn == "rbf":
+            ska_score_mode = "delta_rbf"
+        elif args.attn == "intersect":
+            ska_score_mode = "intersect_plus_dot"
         set_attn = SetBankAttention(
             d_model=args.d_model,
             num_heads=args.nhead,
             tau=1.0,
-            gamma=0.3,
+            gamma=ska_gamma,
             beta=1.0,
-            score_mode="delta_plus_dot",
+            score_mode=ska_score_mode,
             eta=1.0,
             backend=args.ska_backend,
             precision=args.precision,

@@ -154,6 +154,13 @@ class SetFeatureCache:
             row_ids = local_rows[mask]
             atom_rows = atom_pos[mask]
             out.index_add_(0, row_ids, phi_cur.index_select(0, atom_rows))
+        # Normalize by set size to keep magnitudes comparable across windows.
+        size_device = self.size_sets.device
+        sizes = self.size_sets.index_select(0, set_idx.to(size_device)).to(
+            phi_cur.device, dtype=phi_cur.dtype
+        )
+        sizes = sizes.clamp_min(1).unsqueeze(1)
+        out = out / sizes
         return out
 
     def gather_padded(

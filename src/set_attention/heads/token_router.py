@@ -10,7 +10,7 @@ from set_attention.sets.bank_utils import pad_segments_from_ptrs
 class TokenSetRouter(nn.Module):
     """Route token states to concatenated set outputs via learned gates."""
 
-    def __init__(self, d_model: int, num_heads: int, topk: int = 0):
+    def __init__(self, d_model: int, num_heads: int, topk: int = 0, residual: bool = True, residual_init: float = -3.0):
         super().__init__()
         if d_model % num_heads != 0:
             raise ValueError("d_model must be divisible by num_heads.")
@@ -21,6 +21,9 @@ class TokenSetRouter(nn.Module):
         self.Wd = nn.Linear(d_model, d_model)
         self.out = nn.Linear(d_model, d_model)
         self.topk = int(topk)
+        self.use_residual = residual
+        if residual:
+            self.res_gate = nn.Parameter(torch.tensor(float(residual_init)))
 
     def forward(
         self,
@@ -45,4 +48,8 @@ class TokenSetRouter(nn.Module):
         else:
             gates = torch.softmax(logits, dim=-1)
         mix = torch.einsum("bls,bshd->blhd", gates, z_pad)
-        return self.out(mix.reshape(B, L, D))
+        routed = self.out(mix.reshape(B, L, D))
+        if self.use_residual:
+            gate = torch.sigmoid(self.res_gate).type_as(routed)
+            routed = token_states + gate * routed
+        return routed

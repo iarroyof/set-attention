@@ -6,6 +6,7 @@ import contextlib
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from set_attention.kernels.ska_backends import get_backend
 from set_attention.sets.bank_utils import pad_segments_from_ptrs
@@ -25,6 +26,7 @@ class SetBankAttention(nn.Module):
         eta: float = 1.0,
         backend: str = "python",
         precision: str = "fp32",
+        normalize_phi: bool = True,
     ):
         super().__init__()
         if d_model % num_heads != 0:
@@ -42,6 +44,7 @@ class SetBankAttention(nn.Module):
         self.score_mode = score_mode
         self.precision = precision
         self.backend_name = backend
+        self.normalize_phi = normalize_phi
 
         self.proj_A = nn.Linear(d_model, d_model, bias=False)
         self.proj_B = nn.Linear(d_model, d_model, bias=False)
@@ -71,6 +74,9 @@ class SetBankAttention(nn.Module):
         with self._autocast(phi_q.device):
             phi_q_cast = phi_q
             phi_k_cast = phi_k
+            if self.normalize_phi:
+                phi_q_cast = F.normalize(phi_q_cast, dim=-1)
+                phi_k_cast = F.normalize(phi_k_cast, dim=-1)
             proj_q = self.proj_A(phi_q_cast) if self.beta != 0 else None
             proj_k = self.proj_B(phi_k_cast) if self.beta != 0 else None
             value_heads = self.value_proj(phi_k_cast).view(-1, self.num_heads, self.head_dim)
