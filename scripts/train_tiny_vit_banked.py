@@ -499,7 +499,8 @@ def main():
         avg_acc = total_acc / denom
         avg_top5 = total_top5 / denom
         avg_sets_per_seq = sets_seen_total / max(1, seq_seen_total)
-        coverage_ratio = (coverage_mask.float().mean().item() if coverage_mask.numel() > 0 else 0.0)
+        coverage_ratio = coverage_mask.float().mean().item() if coverage_mask.numel() > 0 else 0.0
+        coverage_display = "NA" if args.sdpa_baseline else f"{coverage_ratio * 100:.1f}%"
         if val_loader is not None:
             sample_indices = select_sample_indices(len(val_loader.dataset), args.sample_count, args.sample_seed + ep)
         else:
@@ -513,7 +514,7 @@ def main():
         msg = (
             f"[ViT-Banked][{mode_tag}][{args.attn}] epoch {ep:02d} "
             f"train loss {avg_loss:.4f} acc {avg_acc:.3f} top5 {avg_top5:.3f} "
-            f"| sets/seq {avg_sets_per_seq:.2f} | coverage {coverage_ratio*100:.1f}%"
+            f"| sets/seq {avg_sets_per_seq:.2f} | coverage {coverage_display}"
         )
         if val_metrics is not None:
             msg += (
@@ -531,8 +532,9 @@ def main():
                 "train/acc": avg_acc,
                 "train/top5": avg_top5,
                 "train/sets_per_seq": avg_sets_per_seq,
-                "train/coverage": coverage_ratio,
             }
+            if not args.sdpa_baseline:
+                payload["train/coverage"] = coverage_ratio
             if val_metrics is not None:
                 payload.update(
                     {

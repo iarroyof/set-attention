@@ -490,8 +490,9 @@ def main():
         tr_bleu = corpus_bleu(train_refs, train_hyps)
         tr_rouge = rouge_l(train_refs, train_hyps)
         mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
+        kernel_tag = "sdpa" if args.sdpa_baseline else args.set_kernel
         msg = (
-            f"[Seq2Seq-Text-Banked][{mode_tag}][{args.set_kernel}] epoch {epoch:02d} "
+            f"[Seq2Seq-Text-Banked][{mode_tag}][{kernel_tag}] epoch {epoch:02d} "
             f"train loss {tr_loss:.4f} ppl {tr_ppl:.2f} BLEU {tr_bleu:.3f} | ROUGE-L {tr_rouge:.3f} | time {prof['time_s']:.2f}s"
         )
         if prof.get("cpu_pct") is not None:
@@ -565,7 +566,7 @@ def main():
             v_bleu = corpus_bleu(val_refs, val_hyps)
             v_rouge = rouge_l(val_refs, val_hyps)
             print(
-                f"[Seq2Seq-Text-Banked][{mode_tag}][{args.set_kernel}] epoch {epoch:02d} "
+                f"[Seq2Seq-Text-Banked][{mode_tag}][{kernel_tag}] epoch {epoch:02d} "
                 f"VAL loss {v_loss:.4f} ppl {v_ppl:.2f} BLEU {v_bleu:.3f} | ROUGE-L {v_rouge:.3f}"
             )
         else:
