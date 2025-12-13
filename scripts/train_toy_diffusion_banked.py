@@ -52,39 +52,47 @@ class BankedDenoiser(nn.Module):
         router_topk: int,
         ska_backend: str = "python",
         precision: str = "fp32",
+        use_ska: bool = True,
     ):
         super().__init__()
         self.proj_in = nn.Linear(in_dim, d_model)
         self.pos_enc = PositionalEncoding(d_model)
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
         self.enc = nn.TransformerEncoder(encoder_layer, num_layers=layers)
-        self.router = TokenSetRouter(d_model=d_model, num_heads=nhead, topk=router_topk)
-        self.set_attn = SetBankAttention(
-            d_model=d_model,
-            num_heads=nhead,
-            tau=1.0,
-            gamma=0.3,
-            beta=1.0,
-            score_mode="delta_plus_dot",
-            eta=1.0,
-            backend=ska_backend,
-            precision=precision,
-        )
+        self.use_ska = use_ska
+        self.router = None
+        self.set_attn = None
+        if use_ska:
+            self.router = TokenSetRouter(d_model=d_model, num_heads=nhead, topk=router_topk)
+            self.set_attn = SetBankAttention(
+                d_model=d_model,
+                num_heads=nhead,
+                tau=1.0,
+                gamma=0.3,
+                beta=1.0,
+                score_mode="delta_plus_dot",
+                eta=1.0,
+                backend=ska_backend,
+                precision=precision,
+            )
         self.proj_out = nn.Linear(d_model, in_dim)
         self._bank = None
 
     def set_current_bank(self, Phi, Sig, Size, q_ptrs):
-        self._bank = (Phi, Sig, Size, q_ptrs)
+        if self.use_ska:
+            self._bank = (Phi, Sig, Size, q_ptrs)
 
     def forward(self, x_t: torch.Tensor, t_embed: torch.Tensor) -> torch.Tensor:
-        assert self._bank is not None, "bank not set"
-        Phi, Sig, Size, q_ptrs = self._bank
         h = self.proj_in(x_t)
         h = self.pos_enc(h)
         if t_embed.dim() == 2:
             t_embed = t_embed.unsqueeze(1)
         h = h + t_embed
         h = self.enc(h)
+        if not self.use_ska:
+            return self.proj_out(h)
+        assert self._bank is not None, "bank not set"
+        Phi, Sig, Size, q_ptrs = self._bank
         Z, q_ptrs = self.set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
         routed = self.router(h, Z, Phi, q_ptrs)
         return self.proj_out(routed)
@@ -110,14 +118,26 @@ def run_diffusion_benchmark(
     batch_idx = torch.arange(bench_batch, dtype=torch.long, device=device)
     xb = train_data[:bench_batch].to(device)
 
-    def step():
-        optimizer.zero_grad(set_to_none=True)
-        phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-        Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
-        model.set_current_bank(Phi, Sig, Size, q_ptrs)
-        loss = ddpm.loss(model, xb, lambda t, dim: timestep_embedding(t, args.d_model), args.d_model)
-        loss.backward()
-        optimizer.step()
+    if args.sdpa_baseline:
+        backend_label = "sdpa"
+
+        def step():
+            optimizer.zero_grad(set_to_none=True)
+            loss = ddpm.loss(model, xb, lambda t, dim: timestep_embedding(t, args.d_model), args.d_model)
+            loss.backward()
+            optimizer.step()
+
+    else:
+        backend_label = f"{args.ska_backend}/{args.precision}"
+
+        def step():
+            optimizer.zero_grad(set_to_none=True)
+            phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+            Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
+            model.set_current_bank(Phi, Sig, Size, q_ptrs)
+            loss = ddpm.loss(model, xb, lambda t, dim: timestep_embedding(t, args.d_model), args.d_model)
+            loss.backward()
+            optimizer.step()
 
     for _ in range(args.bench_warmup):
         step()
@@ -131,10 +151,7 @@ def run_diffusion_benchmark(
     elapsed = time.perf_counter() - t0
     sequences = bench_batch * args.bench_iters
     throughput = sequences / elapsed if elapsed > 0 else 0.0
-    print(
-        f"[benchmark][diffusion] backend={args.ska_backend} precision={args.precision} "
-        f"seq/s={throughput:.1f} elapsed={elapsed:.3f}s"
-    )
+    print(f"[benchmark][diffusion] backend={backend_label} seq/s={throughput:.1f} elapsed={elapsed:.3f}s")
     if wandb_run.enabled:
         wandb_run.log(
             {
@@ -189,6 +206,16 @@ def main():
     ap.add_argument("--wandb-project", type=str, default="")
     ap.add_argument("--wandb-run-name", type=str, default="")
     ap.add_argument("--wandb-tags", type=str, default="")
+    ap.add_argument(
+        "--sdpa-baseline",
+        action="store_true",
+        help="Run without set-attention banks (plain Transformer encoder).",
+    )
+    ap.add_argument(
+        "--precompute-bank",
+        action="store_true",
+        help="Move banks/caches to the training device (default keeps them on CPU).",
+    )
     ap.add_argument("--benchmark", action="store_true")
     ap.add_argument("--bench-warmup", type=int, default=5)
     ap.add_argument("--bench-iters", type=int, default=20)
@@ -210,6 +237,8 @@ def main():
         "steps": args.steps,
         "batch": args.batch,
         "dataset": args.config,
+        "sdpa_baseline": args.sdpa_baseline,
+        "precompute_bank": args.precompute_bank,
         "sample_count": args.sample_count,
     }
     wandb_run = init_wandb(
@@ -289,27 +318,42 @@ def main():
         f"val sequences {val_data.size(0)} | seq len {seq_len} | dim {feat_dim}"
     )
 
-    train_ids = [make_id_sequence(x) for x in train_data]
-    val_ids = [make_id_sequence(x) for x in val_data]
-    train_bank = build_windowed_bank_from_ids(train_ids, window=args.window, stride=args.stride).to(device)
-    val_bank = build_windowed_bank_from_ids(val_ids, window=args.window, stride=args.stride).to(device)
+    train_cache = val_cache = None
+    atom_emb = adapter = phi_snapshot = None
+    universe = None
+    if not args.sdpa_baseline:
+        train_ids = [make_id_sequence(x) for x in train_data]
+        val_ids = [make_id_sequence(x) for x in val_data]
+        train_bank = build_windowed_bank_from_ids(train_ids, window=args.window, stride=args.stride)
+        val_bank = build_windowed_bank_from_ids(val_ids, window=args.window, stride=args.stride)
 
-    vocab_size = int(max(train_bank.values.max(), val_bank.values.max()).item() + 1) if train_bank.values.numel() > 0 else data_cfg.seq_len * 2
-    atom_emb = nn.Embedding(vocab_size, args.d_model).to(device)
-    adapter = None
-    if args.adapter_rank > 0:
-        adapter = AtomFeatureAdapter(args.d_model, rank=args.adapter_rank).to(device)
-        with torch.no_grad():
-            phi_snapshot = adapter(atom_emb.weight).detach()
-    else:
-        phi_snapshot = atom_emb.weight
+        vocab_size = (
+            int(max(train_bank.values.max(), val_bank.values.max()).item() + 1)
+            if train_bank.values.numel() > 0
+            else data_cfg.seq_len * 2
+        )
+        atom_emb = nn.Embedding(vocab_size, args.d_model).to(device)
+        if args.adapter_rank > 0:
+            adapter = AtomFeatureAdapter(args.d_model, rank=args.adapter_rank).to(device)
+            with torch.no_grad():
+                phi_snapshot = adapter(atom_emb.weight).detach()
+        else:
+            phi_snapshot = atom_emb.weight
 
-    universe_ids = torch.arange(vocab_size, device=device, dtype=torch.long)
-    universe = UniversePool(universe_ids, metadata={"task": "toy_diffusion"}).to(device)
-    train_minhash = MinHasher(k=args.minhash_k, device=train_bank.values.device)
-    val_minhash = MinHasher(k=args.minhash_k, device=val_bank.values.device)
-    train_cache = SetFeatureCache(universe, train_bank.values, train_bank.set_offsets, train_bank.seq_offsets, minhash=train_minhash).to(device)
-    val_cache = SetFeatureCache(universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=val_minhash).to(device)
+        universe_ids = torch.arange(vocab_size, dtype=torch.long)
+        universe = UniversePool(universe_ids, metadata={"task": "toy_diffusion"})
+        train_minhash = MinHasher(k=args.minhash_k, device=train_bank.values.device)
+        val_minhash = MinHasher(k=args.minhash_k, device=val_bank.values.device)
+        train_cache = SetFeatureCache(
+            universe, train_bank.values, train_bank.set_offsets, train_bank.seq_offsets, minhash=train_minhash
+        )
+        val_cache = SetFeatureCache(
+            universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=val_minhash
+        )
+        if args.precompute_bank:
+            universe = universe.to(device)
+            train_cache = train_cache.to(device)
+            val_cache = val_cache.to(device)
 
     model = BankedDenoiser(
         in_dim=data_cfg.dim,
@@ -319,9 +363,12 @@ def main():
         router_topk=args.router_topk,
         ska_backend=args.ska_backend,
         precision=args.precision,
+        use_ska=not args.sdpa_baseline,
     ).to(device)
     ddpm = SimpleDDPM(T=args.steps, device=device)
-    params = list(model.parameters()) + list(atom_emb.parameters())
+    params = list(model.parameters())
+    if not args.sdpa_baseline and atom_emb is not None:
+        params += list(atom_emb.parameters())
     if adapter is not None:
         params += list(adapter.parameters())
     optimizer = torch.optim.AdamW(params, lr=3e-4)
@@ -349,11 +396,14 @@ def main():
         count = 0
         train_gen = torch.Generator().manual_seed(seed + epoch)
         with profiler(args.profile) as prof:
-            for batch_idx, xb in tensor_batch_iterator(train_data, data_cfg.batch_size, shuffle=True, generator=train_gen):
+            for batch_idx, xb in tensor_batch_iterator(
+                train_data, data_cfg.batch_size, shuffle=True, generator=train_gen
+            ):
                 xb = xb.to(device)
-                phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi, Sig, Size, q_ptrs = train_cache.gather_flat(batch_idx.to(device), phi_dynamic)
-                model.set_current_bank(Phi, Sig, Size, q_ptrs)
+                if not args.sdpa_baseline:
+                    phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+                    Phi, Sig, Size, q_ptrs = train_cache.gather_flat(batch_idx.to(device), phi_dynamic)
+                    model.set_current_bank(Phi, Sig, Size, q_ptrs)
                 loss = ddpm.loss(model, xb, lambda t, dim: timestep_embedding(t, args.d_model), args.d_model)
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -371,9 +421,10 @@ def main():
             for batch_idx, xb in tensor_batch_iterator(val_data, data_cfg.batch_size, shuffle=False):
                 xb_cpu = xb
                 xb = xb_cpu.to(device)
-                phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi, Sig, Size, q_ptrs = val_cache.gather_flat(batch_idx.to(device), phi_dynamic)
-                model.set_current_bank(Phi, Sig, Size, q_ptrs)
+                if not args.sdpa_baseline:
+                    phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+                    Phi, Sig, Size, q_ptrs = val_cache.gather_flat(batch_idx.to(device), phi_dynamic)
+                    model.set_current_bank(Phi, Sig, Size, q_ptrs)
                 batch_indices = batch_idx.detach().cpu().tolist()
                 need_samples = any(idx in sample_lookup for idx in batch_indices)
                 val_mmd, val_chamfer, val_nn1, gen_batch = eval_suite(
@@ -399,8 +450,9 @@ def main():
         val_chamfer_mean = safe_mean(chamfers)
         val_nn1_mean = safe_mean(nn1s)
 
+        mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
         msg = (
-            f"[Diffusion-Banked] epoch {epoch:02d} "
+            f"[Diffusion-Banked][{mode_tag}] epoch {epoch:02d} "
             f"train loss {train_loss:.4f} | val MMD {val_mmd_mean:.4f} | "
             f"Chamfer {val_chamfer_mean:.4f} | 1NN {val_nn1_mean:.3f}"
         )

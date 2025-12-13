@@ -778,8 +778,9 @@ def main():
         val_bleu = corpus_bleu(val_refs_epoch, val_hyps_epoch) if val_refs_epoch else 0.0
         train_ppl = math.exp(min(train_loss, 20.0))
         val_ppl = math.exp(min(val_loss, 20.0))
+        mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
         msg = (
-            f"[LM-Banked][{args.attn}] epoch {epoch:02d} "
+            f"[LM-Banked][{mode_tag}][{args.attn}] epoch {epoch:02d} "
             f"train loss {train_loss:.4f} ppl {train_ppl:.2f} BLEU {train_bleu:.3f} | "
             f"val loss {val_loss:.4f} ppl {val_ppl:.2f} BLEU {val_bleu:.3f}"
         )

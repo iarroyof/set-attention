@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import random
 import time
@@ -124,18 +125,29 @@ def run_seq2seq_benchmark(
     tgt_ids = tgt_ids.to(device, non_blocking=True)
     tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
 
-    def step():
-        opt.zero_grad(set_to_none=True)
-        phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-        Phi_q, Sig_q, Size_q, q_ptrs = cache_tgt.gather_flat(batch_idx_tensor, phi_dynamic)
-        Phi_k, Sig_k, Size_k, k_ptrs = cache_src.gather_flat(batch_idx_tensor, phi_dynamic)
-        dec_h, _ = model(src_ids, tgt_in)
-        Z_sets, q_ptrs = set_attn(Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
-        tok_out = router(dec_h, Z_sets, Phi_q, q_ptrs)
-        logits = out_proj(tok_out)
-        loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
-        loss.backward()
-        opt.step()
+    if args.sdpa_baseline:
+        def step():
+            opt.zero_grad(set_to_none=True)
+            dec_h, _ = model(src_ids, tgt_in)
+            logits = out_proj(dec_h)
+            loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
+            loss.backward()
+            opt.step()
+        backend_label = "sdpa"
+    else:
+        def step():
+            opt.zero_grad(set_to_none=True)
+            phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+            Phi_q, Sig_q, Size_q, q_ptrs = cache_tgt.gather_flat(batch_idx_tensor, phi_dynamic)
+            Phi_k, Sig_k, Size_k, k_ptrs = cache_src.gather_flat(batch_idx_tensor, phi_dynamic)
+            dec_h, _ = model(src_ids, tgt_in)
+            Z_sets, q_ptrs = set_attn(Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
+            tok_out = router(dec_h, Z_sets, Phi_q, q_ptrs)
+            logits = out_proj(tok_out)
+            loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
+            loss.backward()
+            opt.step()
+        backend_label = f"{args.ska_backend}/{args.precision}"
 
     for _ in range(args.bench_warmup):
         step()
@@ -150,7 +162,7 @@ def run_seq2seq_benchmark(
     tokens = tgt_ids.size(0) * max_len * args.bench_iters
     throughput = tokens / elapsed if elapsed > 0 else 0.0
     print(
-        f"[benchmark][seq2seq] backend={args.ska_backend} precision={args.precision} "
+        f"[benchmark][seq2seq] backend={backend_label} "
         f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
     )
     if wandb_run.enabled:
@@ -209,6 +221,12 @@ def main():
     parser.add_argument("--eta", type=float, default=1.0)
     parser.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
     parser.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    parser.add_argument("--sdpa-baseline", action="store_true", help="Skip set attention/router and run plain Transformer decoder.")
+    parser.add_argument(
+        "--precompute-bank",
+        action="store_true",
+        help="Move banks/universe to the training device (default: keep on CPU).",
+    )
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--wandb-project", type=str, default="")
     parser.add_argument("--wandb-run-name", type=str, default="")
@@ -233,6 +251,8 @@ def main():
         "router_topk": args.router_topk,
         "adapter_rank": args.adapter_rank,
         "set_kernel": args.set_kernel,
+        "sdpa_baseline": args.sdpa_baseline,
+        "precompute_bank": args.precompute_bank,
         "batch": args.batch,
         "sample_count": args.sample_count,
     }
@@ -284,8 +304,8 @@ def main():
             save_tokenizer(tokenizer, tokenizer_dir)
             print(f"[Tokenizer] Saved to {tokenizer_dir}")
 
-    src_bank = build_windowed_bank_from_texts(tokenizer, src_texts, window=args.window, stride=args.stride).to(args.device)
-    tgt_bank = build_windowed_bank_from_texts(tokenizer, tgt_texts, window=args.window, stride=args.stride).to(args.device)
+    src_bank = tgt_bank = None
+    val_src_bank = val_tgt_bank = None
 
     has_val = val_ds is not None
     if has_val:
@@ -293,45 +313,72 @@ def main():
         val_src_texts = [s for (s, _) in val_pairs]
         val_tgt_texts = [t for (_, t) in val_pairs]
         val_ref_tokens = [t.split() for _, t in val_pairs]
-        val_src_bank = build_windowed_bank_from_texts(tokenizer, val_src_texts, window=args.window, stride=args.stride).to(args.device)
-        val_tgt_bank = build_windowed_bank_from_texts(tokenizer, val_tgt_texts, window=args.window, stride=args.stride).to(args.device)
     else:
         val_pairs = []
         val_ref_tokens = []
 
+    if not args.sdpa_baseline:
+        src_bank = build_windowed_bank_from_texts(tokenizer, src_texts, window=args.window, stride=args.stride)
+        tgt_bank = build_windowed_bank_from_texts(tokenizer, tgt_texts, window=args.window, stride=args.stride)
+        if has_val:
+            val_src_bank = build_windowed_bank_from_texts(tokenizer, val_src_texts, window=args.window, stride=args.stride)
+            val_tgt_bank = build_windowed_bank_from_texts(tokenizer, val_tgt_texts, window=args.window, stride=args.stride)
+
     device = torch.device(args.device)
     V = tokenizer.vocab_size()
-    atom_emb = nn.Embedding(V, args.atom_dim).to(device)
-    adapter = None
-    if args.adapter_rank > 0:
-        adapter = AtomFeatureAdapter(args.atom_dim, rank=args.adapter_rank).to(device)
-        print("[Adapter] enabled (low-rank adapter trainable; Φ pooled per-batch with autograd)")
-        with torch.no_grad():
-            phi_snapshot = adapter(atom_emb.weight).detach()
-    else:
-        for p in atom_emb.parameters():
-            p.requires_grad = False
-        phi_snapshot = atom_emb.weight
-        print("[Adapter] disabled (atom pool frozen; Φ pooled from fixed atom_emb)")
 
-    universe_ids = torch.arange(V, device=device, dtype=torch.long)
-    universe = UniversePool(
-        universe_ids,
-        metadata={
-            "tokenizer_type": args.tokenizer_type,
-            "tokenizer_path": tokenizer_dir or "inline",
-        },
-    ).to(device)
-    print(universe.log_summary(prefix="[Universe]"))
+    atom_emb = adapter = phi_snapshot = None
+    universe = None
+    cache_src = cache_tgt = None
+    val_cache_src = val_cache_tgt = None
 
-    train_minhash = MinHasher(k=args.minhash_k, device=src_bank.values.device)
-    cache_src = SetFeatureCache(universe, src_bank.values, src_bank.set_offsets, src_bank.seq_offsets, minhash=train_minhash).to(device)
-    cache_tgt = SetFeatureCache(universe, tgt_bank.values, tgt_bank.set_offsets, tgt_bank.seq_offsets, minhash=train_minhash).to(device)
+    if not args.sdpa_baseline:
+        atom_emb = nn.Embedding(V, args.atom_dim).to(device)
+        if args.adapter_rank > 0:
+            adapter = AtomFeatureAdapter(args.atom_dim, rank=args.adapter_rank).to(device)
+            print("[Adapter] enabled (low-rank adapter trainable; Φ pooled per-batch with autograd)")
+            with torch.no_grad():
+                phi_snapshot = adapter(atom_emb.weight).detach()
+        else:
+            for p in atom_emb.parameters():
+                p.requires_grad = False
+            phi_snapshot = atom_emb.weight
+            print("[Adapter] disabled (atom pool frozen; Φ pooled from fixed atom_emb)")
 
-    if has_val:
-        val_minhash = MinHasher(k=args.minhash_k, device=val_src_bank.values.device)
-        val_cache_src = SetFeatureCache(universe, val_src_bank.values, val_src_bank.set_offsets, val_src_bank.seq_offsets, minhash=val_minhash).to(device)
-        val_cache_tgt = SetFeatureCache(universe, val_tgt_bank.values, val_tgt_bank.set_offsets, val_tgt_bank.seq_offsets, minhash=val_minhash).to(device)
+        universe_ids = torch.arange(V, dtype=torch.long)
+        universe = UniversePool(
+            universe_ids,
+            metadata={
+                "tokenizer_type": args.tokenizer_type,
+                "tokenizer_path": tokenizer_dir or "inline",
+            },
+        )
+        print(universe.log_summary(prefix="[Universe]"))
+
+        train_minhash = MinHasher(k=args.minhash_k, device=src_bank.values.device)
+        cache_src = SetFeatureCache(
+            universe, src_bank.values, src_bank.set_offsets, src_bank.seq_offsets, minhash=train_minhash
+        )
+        cache_tgt = SetFeatureCache(
+            universe, tgt_bank.values, tgt_bank.set_offsets, tgt_bank.seq_offsets, minhash=train_minhash
+        )
+
+        if has_val and val_src_bank is not None and val_tgt_bank is not None:
+            val_minhash = MinHasher(k=args.minhash_k, device=val_src_bank.values.device)
+            val_cache_src = SetFeatureCache(
+                universe, val_src_bank.values, val_src_bank.set_offsets, val_src_bank.seq_offsets, minhash=val_minhash
+            )
+            val_cache_tgt = SetFeatureCache(
+                universe, val_tgt_bank.values, val_tgt_bank.set_offsets, val_tgt_bank.seq_offsets, minhash=val_minhash
+            )
+        if args.precompute_bank:
+            universe = universe.to(device)
+            cache_src = cache_src.to(device)
+            cache_tgt = cache_tgt.to(device)
+            if val_cache_src is not None:
+                val_cache_src = val_cache_src.to(device)
+            if val_cache_tgt is not None:
+                val_cache_tgt = val_cache_tgt.to(device)
 
     model = TinySeq2SeqBackbone(
         src_vocab=len(train_src_stoi),
@@ -340,25 +387,29 @@ def main():
         nhead=args.heads,
         layers=args.layers,
     ).to(device)
-    set_attn = SetBankAttention(
-        d_model=args.atom_dim,
-        num_heads=args.heads,
-        tau=args.tau,
-        gamma=0.3,
-        beta=args.beta,
-        score_mode=args.set_kernel,
-        eta=args.eta,
-        backend=args.ska_backend,
-        precision=args.precision,
-    ).to(device)
-    router = TokenSetRouter(d_model=args.atom_dim, num_heads=args.heads, topk=args.router_topk).to(device)
+    set_attn = router = None
+    if not args.sdpa_baseline:
+        set_attn = SetBankAttention(
+            d_model=args.atom_dim,
+            num_heads=args.heads,
+            tau=args.tau,
+            gamma=0.3,
+            beta=args.beta,
+            score_mode=args.set_kernel,
+            eta=args.eta,
+            backend=args.ska_backend,
+            precision=args.precision,
+        ).to(device)
+        router = TokenSetRouter(d_model=args.atom_dim, num_heads=args.heads, topk=args.router_topk).to(device)
     out_proj = nn.Linear(args.atom_dim, len(train_tgt_stoi)).to(device)
 
-    params = list(model.parameters()) + list(set_attn.parameters()) + list(router.parameters()) + list(out_proj.parameters())
-    if adapter is not None:
-        params += list(adapter.parameters()) + list(atom_emb.parameters())
-    else:
-        params += list(atom_emb.parameters())
+    params = list(model.parameters()) + list(out_proj.parameters())
+    if not args.sdpa_baseline and set_attn is not None and router is not None:
+        params += list(set_attn.parameters()) + list(router.parameters())
+        if atom_emb is not None:
+            params += list(atom_emb.parameters())
+        if adapter is not None:
+            params += list(adapter.parameters())
     opt = torch.optim.AdamW(params, lr=3e-4)
 
     if args.benchmark:
@@ -387,8 +438,10 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         model.train()
-        set_attn.train()
-        router.train()
+        if set_attn is not None:
+            set_attn.train()
+        if router is not None:
+            router.train()
         if adapter is not None:
             adapter.train()
 
@@ -410,13 +463,15 @@ def main():
                 tgt_ids = tgt_ids.to(device, non_blocking=True)
                 tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
 
-                phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi_q, Sig_q, Size_q, q_ptrs = cache_tgt.gather_flat(batch_idx_tensor, phi_dynamic)
-                Phi_k, Sig_k, Size_k, k_ptrs = cache_src.gather_flat(batch_idx_tensor, phi_dynamic)
-
                 dec_h, _ = model(src_ids, tgt_in)
-                Z_sets, q_ptrs = set_attn(Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
-                tok_out = router(dec_h, Z_sets, Phi_q, q_ptrs)
+                if args.sdpa_baseline:
+                    tok_out = dec_h
+                else:
+                    phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+                    Phi_q, Sig_q, Size_q, q_ptrs = cache_tgt.gather_flat(batch_idx_tensor, phi_dynamic)
+                    Phi_k, Sig_k, Size_k, k_ptrs = cache_src.gather_flat(batch_idx_tensor, phi_dynamic)
+                    Z_sets, q_ptrs = set_attn(Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
+                    tok_out = router(dec_h, Z_sets, Phi_q, q_ptrs)
                 logits = out_proj(tok_out)
 
                 loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
@@ -434,8 +489,9 @@ def main():
         tr_ppl = math.exp(min(tr_loss, 20.0))
         tr_bleu = corpus_bleu(train_refs, train_hyps)
         tr_rouge = rouge_l(train_refs, train_hyps)
+        mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
         msg = (
-            f"[Seq2Seq-Text-Banked] epoch {epoch:02d} "
+            f"[Seq2Seq-Text-Banked][{mode_tag}][{args.set_kernel}] epoch {epoch:02d} "
             f"train loss {tr_loss:.4f} ppl {tr_ppl:.2f} BLEU {tr_bleu:.3f} | ROUGE-L {tr_rouge:.3f} | time {prof['time_s']:.2f}s"
         )
         if prof.get("cpu_pct") is not None:
@@ -462,8 +518,10 @@ def main():
         val_refs, val_hyps, val_src = [], [], []
         if has_val:
             model.eval()
-            set_attn.eval()
-            router.eval()
+            if set_attn is not None:
+                set_attn.eval()
+            if router is not None:
+                router.eval()
             if adapter is not None:
                 adapter.eval()
             val_loss_total = 0.0
@@ -483,13 +541,15 @@ def main():
                     tgt_ids = tgt_ids.to(device, non_blocking=True)
                     tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
 
-                    phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                    Phi_q, Sig_q, Size_q, q_ptrs = val_cache_tgt.gather_flat(batch_idx_tensor, phi_dynamic)
-                    Phi_k, Sig_k, Size_k, k_ptrs = val_cache_src.gather_flat(batch_idx_tensor, phi_dynamic)
-
                     dec_h, _ = model(src_ids, tgt_in)
-                    Z_sets, q_ptrs = set_attn(Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
-                    tok_out = router(dec_h, Z_sets, Phi_q, q_ptrs)
+                    if args.sdpa_baseline:
+                        tok_out = dec_h
+                    else:
+                        phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+                        Phi_q, Sig_q, Size_q, q_ptrs = val_cache_tgt.gather_flat(batch_idx_tensor, phi_dynamic)
+                        Phi_k, Sig_k, Size_k, k_ptrs = val_cache_src.gather_flat(batch_idx_tensor, phi_dynamic)
+                        Z_sets, q_ptrs = set_attn(Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
+                        tok_out = router(dec_h, Z_sets, Phi_q, q_ptrs)
                     logits = out_proj(tok_out)
                     loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
                     val_loss_total += float(loss.detach()) * tgt_ids.numel()
@@ -505,8 +565,8 @@ def main():
             v_bleu = corpus_bleu(val_refs, val_hyps)
             v_rouge = rouge_l(val_refs, val_hyps)
             print(
-                f"[Seq2Seq-Text-Banked] epoch {epoch:02d} VAL loss {v_loss:.4f} ppl {v_ppl:.2f} "
-                f"BLEU {v_bleu:.3f} | ROUGE-L {v_rouge:.3f}"
+                f"[Seq2Seq-Text-Banked][{mode_tag}][{args.set_kernel}] epoch {epoch:02d} "
+                f"VAL loss {v_loss:.4f} ppl {v_ppl:.2f} BLEU {v_bleu:.3f} | ROUGE-L {v_rouge:.3f}"
             )
         else:
             v_loss = v_ppl = v_bleu = v_rouge = None
@@ -540,18 +600,7 @@ def main():
             wandb_run.log(payload, step=epoch)
 
     wandb_run.finish()
-            if wandb_run.enabled:
-                wandb_run.log(
-                    {
-                        "val/bleu": v_bleu,
-                        "val/rougeL": v_rouge,
-                    },
-                    step=epoch,
-                )
-
-    wandb_run.finish()
 
 
 if __name__ == "__main__":
     main()
-

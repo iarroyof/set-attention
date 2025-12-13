@@ -134,18 +134,33 @@ def run_vit_benchmark(
     xb = xb.to(device, non_blocking=True)
     yb = yb.to(device, non_blocking=True)
 
-    def step():
-        optim.zero_grad(set_to_none=True)
-        tokens = backbone(xb)
-        phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-        Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
-        Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
-        routed = router(tokens, Z, Phi, q_ptrs)
-        cls_repr = routed.mean(dim=1)
-        logits = head(cls_repr)
-        loss = F.cross_entropy(logits, yb)
-        loss.backward()
-        optim.step()
+    if args.sdpa_baseline:
+        backend_label = "sdpa"
+
+        def step():
+            optim.zero_grad(set_to_none=True)
+            tokens = backbone(xb)
+            cls_repr = tokens.mean(dim=1)
+            logits = head(cls_repr)
+            loss = F.cross_entropy(logits, yb)
+            loss.backward()
+            optim.step()
+
+    else:
+        backend_label = f"{args.ska_backend}/{args.precision}"
+
+        def step():
+            optim.zero_grad(set_to_none=True)
+            tokens = backbone(xb)
+            phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+            Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
+            Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
+            routed = router(tokens, Z, Phi, q_ptrs)
+            cls_repr = routed.mean(dim=1)
+            logits = head(cls_repr)
+            loss = F.cross_entropy(logits, yb)
+            loss.backward()
+            optim.step()
 
     for _ in range(args.bench_warmup):
         step()
@@ -159,10 +174,7 @@ def run_vit_benchmark(
     elapsed = time.perf_counter() - t0
     images = xb.size(0) * args.bench_iters
     throughput = images / elapsed if elapsed > 0 else 0.0
-    print(
-        f"[benchmark][vit] backend={args.ska_backend} precision={args.precision} "
-        f"imgs/s={throughput:.1f} elapsed={elapsed:.3f}s"
-    )
+    print(f"[benchmark][vit] backend={backend_label} imgs/s={throughput:.1f} elapsed={elapsed:.3f}s")
     if wandb_run.enabled:
         wandb_run.log(
             {
@@ -204,6 +216,16 @@ def main():
     ap.add_argument("--wandb-tags", type=str, default="")
     ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
+    ap.add_argument(
+        "--sdpa-baseline",
+        action="store_true",
+        help="Skip set attention/router and run plain ViT encoder.",
+    )
+    ap.add_argument(
+        "--precompute-bank",
+        action="store_true",
+        help="Move banks/universe to the training device (default keeps them on CPU).",
+    )
     args = ap.parse_args()
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
@@ -218,6 +240,8 @@ def main():
         "router_topk": args.router_topk,
         "adapter_rank": args.adapter_rank,
         "batch": args.batch,
+        "sdpa_baseline": args.sdpa_baseline,
+        "precompute_bank": args.precompute_bank,
         "sample_count": args.sample_count,
     }
     wandb_run = init_wandb(
@@ -277,42 +301,65 @@ def main():
         else None
     )
 
-    bank = build_patch_banks(base_dataset, args.patch, total_limit).to(device)
-    val_count_log = len(val_dataset) if val_dataset is not None else 0
-    print(f"[ViT-Banked] dataset prepared | train samples {len(train_dataset)} | val samples {val_count_log} | total banked {total_limit}")
-    vocab_size = int(bank.values.max().item() + 1) if bank.values.numel() > 0 else (args.patch * args.patch * 2)
-
-    atom_emb = nn.Embedding(vocab_size, 128).to(device)
-    adapter = None
-    if args.adapter_rank > 0:
-        adapter = AtomFeatureAdapter(128, rank=args.adapter_rank).to(device)
-        with torch.no_grad():
-            phi_snapshot = adapter(atom_emb.weight).detach()
+    bank = cache = None
+    atom_emb = adapter = phi_snapshot = None
+    universe = None
+    if not args.sdpa_baseline:
+        bank = build_patch_banks(base_dataset, args.patch, total_limit)
+        val_count_log = len(val_dataset) if val_dataset is not None else 0
+        print(
+            f"[ViT-Banked] dataset prepared | train samples {len(train_dataset)} | "
+            f"val samples {val_count_log} | total banked {total_limit}"
+        )
+        vocab_size = int(bank.values.max().item() + 1) if bank.values.numel() > 0 else (args.patch * args.patch * 2)
+        atom_emb = nn.Embedding(vocab_size, 128).to(device)
+        if args.adapter_rank > 0:
+            adapter = AtomFeatureAdapter(128, rank=args.adapter_rank).to(device)
+            with torch.no_grad():
+                phi_snapshot = adapter(atom_emb.weight).detach()
+        else:
+            phi_snapshot = atom_emb.weight
+        universe_ids = torch.arange(vocab_size, dtype=torch.long)
+        universe = UniversePool(universe_ids, metadata={"task": "tiny_vit"})
+        minhash = MinHasher(k=args.minhash_k, device=bank.values.device)
+        cache = SetFeatureCache(universe, bank.values, bank.set_offsets, bank.seq_offsets, minhash=minhash)
+        if args.precompute_bank:
+            universe = universe.to(device)
+            cache = cache.to(device)
     else:
-        phi_snapshot = atom_emb.weight
-    universe_ids = torch.arange(vocab_size, device=device, dtype=torch.long)
-    universe = UniversePool(universe_ids, metadata={"task": "tiny_vit"}).to(device)
-    minhash = MinHasher(k=args.minhash_k, device=bank.values.device)
-    cache = SetFeatureCache(universe, bank.values, bank.set_offsets, bank.seq_offsets, minhash=minhash).to(device)
+        val_count_log = len(val_dataset) if val_dataset is not None else 0
+        print(
+            f"[ViT-Banked] dataset prepared | train samples {len(train_dataset)} | "
+            f"val samples {val_count_log} | baseline mode (no banks)"
+        )
 
     backbone = TinyViTBackbone(dim=128, depth=4, heads=4, patch=args.patch).to(device)
-    set_attn = SetBankAttention(
-        d_model=128,
-        num_heads=4,
-        tau=1.0,
-        gamma=0.3,
-        beta=1.0,
-        score_mode="delta_plus_dot",
-        eta=1.0,
-        backend=args.ska_backend,
-        precision=args.precision,
-    ).to(device)
-    router = TokenSetRouter(d_model=128, num_heads=4, topk=args.router_topk).to(device)
+    set_attn = router = None
+    if not args.sdpa_baseline:
+        set_attn = SetBankAttention(
+            d_model=128,
+            num_heads=4,
+            tau=1.0,
+            gamma=0.3,
+            beta=1.0,
+            score_mode="delta_plus_dot",
+            eta=1.0,
+            backend=args.ska_backend,
+            precision=args.precision,
+        ).to(device)
+        router = TokenSetRouter(d_model=128, num_heads=4, topk=args.router_topk).to(device)
     head = nn.Linear(128, 10).to(device)
 
-    params = list(backbone.parameters()) + list(set_attn.parameters()) + list(router.parameters()) + list(head.parameters()) + list(atom_emb.parameters())
-    if adapter is not None:
-        params += list(adapter.parameters())
+    params = list(backbone.parameters()) + list(head.parameters())
+    if not args.sdpa_baseline:
+        if set_attn is not None:
+            params += list(set_attn.parameters())
+        if router is not None:
+            params += list(router.parameters())
+        if atom_emb is not None:
+            params += list(atom_emb.parameters())
+        if adapter is not None:
+            params += list(adapter.parameters())
     optim = torch.optim.AdamW(params, lr=3e-4)
 
     if args.benchmark:
@@ -334,7 +381,11 @@ def main():
         wandb_run.finish()
         return
 
-    modules = [backbone, set_attn, router, head]
+    modules = [backbone, head]
+    if set_attn is not None:
+        modules.append(set_attn)
+    if router is not None:
+        modules.append(router)
     if adapter is not None:
         modules.append(adapter)
 
@@ -342,7 +393,7 @@ def main():
         for mod in modules:
             mod.train(train_flag)
 
-    coverage_size = cache.num_sets()
+    coverage_size = cache.num_sets() if cache is not None else 0
 
     def evaluate(loader, sample_indices=None):
         if loader is None or len(loader.dataset) == 0:
@@ -362,10 +413,13 @@ def main():
                 xb = xb.to(device, non_blocking=True)
                 yb = yb.to(device, non_blocking=True)
                 tokens = backbone(xb)
-                phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
-                Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
-                routed = router(tokens, Z, Phi, q_ptrs)
+                if args.sdpa_baseline:
+                    routed = tokens
+                else:
+                    phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+                    Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
+                    Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
+                    routed = router(tokens, Z, Phi, q_ptrs)
                 cls_repr = routed.mean(dim=1)
                 logits = head(cls_repr)
                 loss = F.cross_entropy(logits, yb)
@@ -413,10 +467,13 @@ def main():
                 xb = xb.to(device, non_blocking=True)
                 yb = yb.to(device, non_blocking=True)
                 tokens = backbone(xb)
-                phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
-                Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
-                routed = router(tokens, Z, Phi, q_ptrs)
+                if args.sdpa_baseline:
+                    routed = tokens
+                else:
+                    phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+                    Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
+                    Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
+                    routed = router(tokens, Z, Phi, q_ptrs)
                 cls_repr = routed.mean(dim=1)
                 logits = head(cls_repr)
                 loss = F.cross_entropy(logits, yb)
@@ -426,12 +483,13 @@ def main():
                 pred = logits.argmax(dim=-1)
                 topk = logits.topk(min(5, logits.size(-1)), dim=-1).indices
                 batch_top5 = (topk == yb.unsqueeze(-1)).any(dim=-1).sum().item()
-                with torch.no_grad():
-                    set_idx_batch, _ = cache.gather_sequence_sets(batch_idx)
-                    _, mask = pad_segments_from_ptrs(Phi.new_zeros(Phi.size(0), 1), q_ptrs)
-                batch_sets, batch_seqs, coverage_mask = update_coverage_stats(mask, set_idx_batch, coverage_mask)
-                sets_seen_total += float(batch_sets)
-                seq_seen_total += batch_seqs
+                if not args.sdpa_baseline:
+                    with torch.no_grad():
+                        set_idx_batch, _ = cache.gather_sequence_sets(batch_idx)
+                        _, mask = pad_segments_from_ptrs(Phi.new_zeros(Phi.size(0), 1), q_ptrs)
+                    batch_sets, batch_seqs, coverage_mask = update_coverage_stats(mask, set_idx_batch, coverage_mask)
+                    sets_seen_total += float(batch_sets)
+                    seq_seen_total += batch_seqs
                 total_loss += float(loss.detach()) * xb.size(0)
                 total_acc += float((pred == yb).sum().item())
                 total_top5 += float(batch_top5)
@@ -451,8 +509,9 @@ def main():
         if val_metrics is not None and "samples" in val_metrics:
             val_samples = val_metrics["samples"]
             del val_metrics["samples"]
+        mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
         msg = (
-            f"[ViT-Banked][{args.attn}] epoch {ep:02d} "
+            f"[ViT-Banked][{mode_tag}][{args.attn}] epoch {ep:02d} "
             f"train loss {avg_loss:.4f} acc {avg_acc:.3f} top5 {avg_top5:.3f} "
             f"| sets/seq {avg_sets_per_seq:.2f} | coverage {coverage_ratio*100:.1f}%"
         )
