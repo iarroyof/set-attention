@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional
+import warnings
 
 import torch
 
@@ -129,5 +130,9 @@ def get_backend(name: str, *, score_mode: str):
     if name == "python":
         return PythonSKABackend(score_mode=score_mode)
     if name in {"triton", "keops"}:
-        return _UnavailableBackend(name)
+        warnings.warn(
+            f"SKA backend '{name}' is not yet available; falling back to the reference python backend.",
+            stacklevel=2,
+        )
+        return PythonSKABackend(score_mode=score_mode)
     raise ValueError(f"Unknown ska backend '{name}'")
