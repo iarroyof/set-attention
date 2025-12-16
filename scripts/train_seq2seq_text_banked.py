@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import math
 import os
@@ -67,6 +68,20 @@ def _normalize_tokenizer_config(config: Dict[str, Any]) -> Dict[str, Any]:
             out[key] = int(out[key])
     return out
 
+def _append_benchmark_row(csv_path: str, row: dict) -> None:
+    if not csv_path:
+        return
+    path = Path(csv_path)
+    write_header = not path.exists()
+    fieldnames = list(row.keys())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 class TinySeq2SeqBackbone(nn.Module):
     def __init__(self, src_vocab: int, tgt_vocab: int, d_model: int, nhead: int, layers: int):
         super().__init__()
@@ -105,6 +120,7 @@ def run_seq2seq_benchmark(
     opt,
     device,
     wandb_run,
+    benchmark_csv,
 ):
     iterator = text_batch_iterator(
         train_pairs,
@@ -173,6 +189,28 @@ def run_seq2seq_benchmark(
                 "benchmark/batch_tokens": tokens,
             }
         )
+    _append_benchmark_row(
+        benchmark_csv,
+        {
+            "script": "train_seq2seq_text_banked",
+            "dataset": args.dataset or "custom",
+            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+            "precision": args.precision,
+            "set_kernel": args.set_kernel,
+            "batch": args.batch,
+            "max_len": max_len,
+            "window": args.window,
+            "stride": args.stride,
+            "minhash_k": args.minhash_k,
+            "router_topk": args.router_topk,
+            "adapter_rank": args.adapter_rank,
+            "bench_warmup": args.bench_warmup,
+            "bench_iters": args.bench_iters,
+            "tokens_per_s": throughput,
+            "elapsed_s": elapsed,
+            "tokens_total": tokens,
+        },
+    )
 
 
 def main():
@@ -186,7 +224,12 @@ def main():
     parser.add_argument("--demo", action="store_true")
     parser.add_argument("--demo-samples", type=int, default=200)
     parser.add_argument("--dataset", choices=["", "wmt16_en_ro", "cnn_dailymail"], default="")
-    parser.add_argument("--limit", type=int, default=200)
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional cap on dataset size; omit to use the full split.",
+    )
     tokenizer_choices = tuple(available_tokenizer_types())
     parser.add_argument(
         "--tokenizer-dir",
@@ -234,6 +277,12 @@ def main():
     parser.add_argument("--benchmark", action="store_true")
     parser.add_argument("--bench-warmup", type=int, default=5)
     parser.add_argument("--bench-iters", type=int, default=20)
+    parser.add_argument(
+        "--benchmark-csv",
+        type=str,
+        default="",
+        help="Optional CSV path to log benchmark runs.",
+    )
     parser.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     parser.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     args = parser.parse_args()
@@ -432,6 +481,7 @@ def main():
             opt,
             device,
             wandb_run,
+            args.benchmark_csv,
         )
         wandb_run.finish()
         return

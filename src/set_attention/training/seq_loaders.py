@@ -11,7 +11,7 @@ from set_attention.experiments.datasets_hf import load_seq2seq_pairs
 
 def get_seq2seq_datasets(
     dataset: str = "",
-    limit: int = 200,
+    limit: Optional[int] = None,
     val_limit: Optional[int] = None,
     src_path: Optional[str] = None,
     tgt_path: Optional[str] = None,

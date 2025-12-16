@@ -1,7 +1,9 @@
 import argparse
+import csv
 import os
 import random
 import time
+from pathlib import Path
 from typing import Iterator, Optional, Tuple
 
 import torch
@@ -22,6 +24,20 @@ from set_attention.heads.banked_attention import SetBankAttention
 from set_attention.heads.token_router import TokenSetRouter
 from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
+
+
+def _append_benchmark_row(csv_path: str, row: dict) -> None:
+    if not csv_path:
+        return
+    path = Path(csv_path)
+    write_header = not path.exists()
+    fieldnames = list(row.keys())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
 
 
 def summarize_tensor(tensor: torch.Tensor, max_items: int = 16) -> str:
@@ -110,6 +126,7 @@ def run_diffusion_benchmark(
     optimizer,
     device,
     wandb_run,
+    benchmark_csv,
 ):
     bench_batch = min(args.batch, train_data.size(0))
     if bench_batch == 0:
@@ -159,6 +176,25 @@ def run_diffusion_benchmark(
                 "benchmark/elapsed_s": elapsed,
             }
         )
+    _append_benchmark_row(
+        benchmark_csv,
+        {
+            "script": "train_toy_diffusion_banked",
+            "config": args.config,
+            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+            "precision": args.precision,
+            "window": args.window,
+            "stride": args.stride,
+            "minhash_k": args.minhash_k,
+            "router_topk": args.router_topk,
+            "batch": args.batch,
+            "steps": args.steps,
+            "bench_warmup": args.bench_warmup,
+            "bench_iters": args.bench_iters,
+            "sequences_per_s": throughput,
+            "elapsed_s": elapsed,
+        },
+    )
 
 
 def tensor_batch_iterator(
@@ -219,6 +255,12 @@ def main():
     ap.add_argument("--benchmark", action="store_true")
     ap.add_argument("--bench-warmup", type=int, default=5)
     ap.add_argument("--bench-iters", type=int, default=20)
+    ap.add_argument(
+        "--benchmark-csv",
+        type=str,
+        default="",
+        help="Optional CSV path to log benchmark metrics.",
+    )
     ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     defaults = ap.parse_args([])
@@ -386,6 +428,7 @@ def main():
             optimizer,
             device,
             wandb_run,
+            args.benchmark_csv,
         )
         wandb_run.finish()
         return

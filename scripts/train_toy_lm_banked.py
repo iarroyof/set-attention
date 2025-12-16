@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import math
 import time
@@ -298,6 +299,20 @@ class TinyLMBackbone(nn.Module):
         return self.enc(self.emb(x))
 
 
+def _append_benchmark_row(csv_path: str, row: dict) -> None:
+    if not csv_path:
+        return
+    path = Path(csv_path)
+    write_header = not path.exists()
+    fieldnames = list(row.keys())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 def run_lm_benchmark(
     args,
     backbone,
@@ -313,6 +328,7 @@ def run_lm_benchmark(
     max_len,
     device,
     wandb_run,
+    benchmark_csv,
 ):
     if bench_batch is None:
         print("[benchmark] no data available.")
@@ -359,6 +375,29 @@ def run_lm_benchmark(
                 "benchmark/batch_tokens": tokens,
             }
         )
+    _append_benchmark_row(
+        benchmark_csv,
+        {
+            "script": "train_toy_lm_banked",
+            "dataset": args.dataset or "custom",
+            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+            "precision": args.precision,
+            "attn": args.attn,
+            "batch": args.batch,
+            "seq_len": max_len,
+            "seq_stride": args.seq_stride,
+            "window": args.window,
+            "stride": args.stride,
+            "minhash_k": args.minhash_k,
+            "router_topk": args.router_topk,
+            "adapter_rank": args.adapter_rank,
+            "bench_warmup": args.bench_warmup,
+            "bench_iters": args.bench_iters,
+            "tokens_per_s": throughput,
+            "elapsed_s": elapsed,
+            "tokens_total": tokens,
+        },
+    )
 
 
 def main():
@@ -391,6 +430,12 @@ def main():
     ap.add_argument("--benchmark", action="store_true")
     ap.add_argument("--bench-warmup", type=int, default=5)
     ap.add_argument("--bench-iters", type=int, default=20)
+    ap.add_argument(
+        "--benchmark-csv",
+        type=str,
+        default="",
+        help="Optional CSV file to append benchmark metrics.",
+    )
     ap.add_argument("--dataset", choices=["", "wikitext2", "wikitext103"], default="")
     ap.add_argument("--dataset-lines", type=int, default=0, help="Limit number of text lines per split (0 = all).")
     ap.add_argument(
@@ -696,6 +741,29 @@ def main():
                         "benchmark/batch_tokens": tokens,
                     }
                 )
+            _append_benchmark_row(
+                args.benchmark_csv,
+                {
+                    "script": "train_toy_lm_banked",
+                    "dataset": args.dataset or "custom",
+                    "mode": "sdpa",
+                    "precision": args.precision,
+                    "attn": args.attn,
+                    "batch": bench_batch,
+                    "seq_len": tgt_ids.size(1),
+                    "seq_stride": args.seq_stride,
+                    "window": args.window,
+                    "stride": args.stride,
+                    "minhash_k": args.minhash_k,
+                    "router_topk": args.router_topk,
+                    "adapter_rank": args.adapter_rank,
+                    "bench_warmup": args.bench_warmup,
+                    "bench_iters": args.bench_iters,
+                    "tokens_per_s": throughput,
+                    "elapsed_s": elapsed,
+                    "tokens_total": tokens,
+                },
+            )
         else:
             run_lm_benchmark(
                 args,
@@ -712,6 +780,7 @@ def main():
                 max_len,
                 device,
                 wandb_run,
+                args.benchmark_csv,
             )
         return
 

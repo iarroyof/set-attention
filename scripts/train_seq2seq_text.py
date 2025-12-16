@@ -208,7 +208,12 @@ def main():
     parser.add_argument("--demo", action="store_true")
     parser.add_argument("--demo-samples", type=int, default=200)
     parser.add_argument("--dataset", choices=["", "wmt16_en_ro", "cnn_dailymail"], default="")
-    parser.add_argument("--limit", type=int, default=200)
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional cap on dataset size; omit to use the full split.",
+    )
     parser.add_argument("--attn", choices=["dot", "cosine", "rbf", "intersect", "ska_true", "ska_tok"], default="dot")
     parser.add_argument("--d-model", type=int, default=128)
     parser.add_argument("--nhead", type=int, default=8)

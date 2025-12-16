@@ -1,6 +1,8 @@
 import argparse
+import csv
 import os
 import time
+from pathlib import Path
 from typing import List
 
 import torch
@@ -26,6 +28,20 @@ from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.sample_logging import select_sample_indices
 from set_attention.utils.profiling import profiler
+
+
+def _append_benchmark_row(csv_path: str, row: dict) -> None:
+    if not csv_path:
+        return
+    path = Path(csv_path)
+    write_header = not path.exists()
+    fieldnames = list(row.keys())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
 
 
 def patch_ids_from_image(img: torch.Tensor, patch: int) -> torch.Tensor:
@@ -117,6 +133,7 @@ def run_vit_benchmark(
     optim,
     device,
     wandb_run,
+    benchmark_csv,
 ):
     bench_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -182,6 +199,25 @@ def run_vit_benchmark(
                 "benchmark/elapsed_s": elapsed,
             }
         )
+    _append_benchmark_row(
+        benchmark_csv,
+        {
+            "script": "train_tiny_vit_banked",
+            "data_mode": args.data_mode,
+            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+            "precision": args.precision,
+            "patch": args.patch,
+            "window": args.window,
+            "stride": args.stride,
+            "minhash_k": args.minhash_k,
+            "router_topk": args.router_topk,
+            "batch": args.batch,
+            "bench_warmup": args.bench_warmup,
+            "bench_iters": args.bench_iters,
+            "images_per_s": throughput,
+            "elapsed_s": elapsed,
+        },
+    )
 
 
 def main():
@@ -191,7 +227,12 @@ def main():
     ap.add_argument("--batch", type=int, default=128)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--patch", type=int, default=4)
-    ap.add_argument("--limit", type=int, default=2048)
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional cap on dataset size; omit to use the full split.",
+    )
     ap.add_argument("--val-frac", type=float, default=0.1)
     ap.add_argument("--window", type=int, default=8)
     ap.add_argument("--stride", type=int, default=4)
@@ -209,6 +250,12 @@ def main():
     ap.add_argument("--benchmark", action="store_true")
     ap.add_argument("--bench-warmup", type=int, default=5)
     ap.add_argument("--bench-iters", type=int, default=20)
+    ap.add_argument(
+        "--benchmark-csv",
+        type=str,
+        default="",
+        help="Optional CSV path to append benchmark metrics.",
+    )
     ap.add_argument("--data-root", type=str, default="")
     ap.add_argument("--wandb", action="store_true")
     ap.add_argument("--wandb-project", type=str, default="")
@@ -268,7 +315,8 @@ def main():
         base_dataset = SyntheticVisionDataset(num_samples=args.demo_samples, img_size=32, num_classes=args.num_classes, seed=args.seed)
         dataset_len = len(base_dataset)
 
-    total_limit = min(args.limit, dataset_len)
+    limit = args.limit if args.limit is not None else dataset_len
+    total_limit = min(limit, dataset_len)
     indices_full = list(range(total_limit))
     if args.val_frac <= 0.0 or total_limit < 2:
         train_indices = indices_full
@@ -377,6 +425,7 @@ def main():
             optim,
             device,
             wandb_run,
+            args.benchmark_csv,
         )
         wandb_run.finish()
         return
