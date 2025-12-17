@@ -59,6 +59,9 @@ def run_benchmark(args, backend: str) -> Dict[str, float]:
         precision=args.precision,
     ).to(device)
 
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+
     def step():
         attn.zero_grad(set_to_none=True)
         out, _ = attn(phi_q, sig_q, size_q, q_ptrs, phi_k, sig_k, size_k, k_ptrs)
@@ -82,6 +85,15 @@ def run_benchmark(args, backend: str) -> Dict[str, float]:
     elapsed = time.perf_counter() - t0
     total_sets = args.seqs * args.sets_q * args.steps
     sets_per_sec = total_sets / elapsed if elapsed > 0 else 0.0
+    avg_sets_q = float(args.sets_q)
+    avg_sets_k = float(args.sets_k)
+    avg_atoms = float(size_q.float().mean().item()) if size_q.numel() > 0 else 0.0
+    scores_total = float(args.steps * args.seqs * args.sets_q * args.sets_k * args.heads)
+    scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
+    scores_per_1e6 = scores_per_s / 1e6
+    max_vram_mb = (
+        torch.cuda.max_memory_allocated() / (1024**2) if device.type == "cuda" else 0.0
+    )
     return {
         "backend": backend,
         "precision": args.precision,
@@ -95,6 +107,13 @@ def run_benchmark(args, backend: str) -> Dict[str, float]:
         "steps": args.steps,
         "elapsed_s": elapsed,
         "sets_per_sec": sets_per_sec,
+        "avg_sets_per_seq_q": avg_sets_q,
+        "avg_sets_per_seq_k": avg_sets_k,
+        "avg_atoms_per_set": avg_atoms,
+        "scores_total": scores_total,
+        "scores_per_s": scores_per_s,
+        "scores_per_1e6": scores_per_1e6,
+        "max_vram_mb": max_vram_mb,
     }
 
 

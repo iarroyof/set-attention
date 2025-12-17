@@ -40,6 +40,27 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
         writer.writerow(row)
 
 
+def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
+    if q_ptrs.numel() <= 1:
+        return 0.0, 0.0, 0.0
+    counts = (q_ptrs[1:] - q_ptrs[:-1]).to(torch.float32)
+    avg_sets = float(counts.mean().item()) if counts.numel() > 0 else 0.0
+    avg_atoms = float(size_tensor.to(torch.float32).mean().item()) if size_tensor.numel() > 0 else 0.0
+    scores_total = float((counts * counts).sum().item() * max(1, num_heads))
+    return avg_sets, avg_atoms, scores_total
+
+
+def _configure_dot_naive(dot_naive: bool) -> None:
+    if not dot_naive:
+        return
+    if torch.cuda.is_available():
+        torch.backends.cuda.enable_flash_sdp(False)
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        torch.backends.cuda.enable_math_sdp(True)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    print("[SDP] dot-naive enabled: flash/mem-efficient SDP disabled; using math backend.")
+
+
 def summarize_tensor(tensor: torch.Tensor, max_items: int = 16) -> str:
     flat = tensor.detach().cpu().flatten()
     head = flat[:max_items].tolist()
@@ -135,6 +156,8 @@ def run_diffusion_benchmark(
     batch_idx = torch.arange(bench_batch, dtype=torch.long, device=device)
     xb = train_data[:bench_batch].to(device)
 
+    stats_snapshot: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+
     if args.sdpa_baseline:
         backend_label = "sdpa"
 
@@ -148,6 +171,7 @@ def run_diffusion_benchmark(
         backend_label = f"{args.ska_backend}/{args.precision}"
 
         def step():
+            nonlocal stats_snapshot
             optimizer.zero_grad(set_to_none=True)
             phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
             Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
@@ -155,7 +179,10 @@ def run_diffusion_benchmark(
             loss = ddpm.loss(model, xb, lambda t, dim: timestep_embedding(t, args.d_model), args.d_model)
             loss.backward()
             optimizer.step()
+            stats_snapshot = (q_ptrs.detach().cpu(), Size.detach().cpu())
 
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
     for _ in range(args.bench_warmup):
         step()
     if torch.cuda.is_available():
@@ -166,8 +193,22 @@ def run_diffusion_benchmark(
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     elapsed = time.perf_counter() - t0
+    max_vram_mb = (
+        torch.cuda.max_memory_allocated() / (1024**2) if torch.cuda.is_available() else 0.0
+    )
     sequences = bench_batch * args.bench_iters
     throughput = sequences / elapsed if elapsed > 0 else 0.0
+    if args.sdpa_baseline:
+        seq_len = xb.size(1)
+        scores_total = float(bench_batch * seq_len * seq_len * args.nhead)
+        avg_sets = avg_atoms = 0.0
+    else:
+        avg_sets = avg_atoms = scores_total = 0.0
+        if stats_snapshot is not None:
+            q_ptrs_snap, size_snap = stats_snapshot
+            avg_sets, avg_atoms, scores_total = _summarize_ska_batch(
+                q_ptrs_snap, size_snap, args.nhead
+            )
     print(f"[benchmark][diffusion] backend={backend_label} seq/s={throughput:.1f} elapsed={elapsed:.3f}s")
     if wandb_run.enabled:
         wandb_run.log(
@@ -193,6 +234,12 @@ def run_diffusion_benchmark(
             "bench_iters": args.bench_iters,
             "sequences_per_s": throughput,
             "elapsed_s": elapsed,
+            "avg_sets_per_seq": avg_sets,
+            "avg_atoms_per_set": avg_atoms,
+            "scores_total": scores_total,
+            "scores_per_s": (scores_total / elapsed) if elapsed > 0 else 0.0,
+            "scores_per_1e6": ((scores_total / elapsed) / 1e6) if elapsed > 0 else 0.0,
+            "max_vram_mb": max_vram_mb,
         },
     )
 
@@ -228,6 +275,11 @@ def main():
     ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
     ap.add_argument("--config", type=str, default="configs/diffusion_toy.yaml")
     ap.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
+    ap.add_argument(
+        "--dot-naive",
+        action="store_true",
+        help="Force dot-product attention modules to use naive (math) implementation.",
+    )
     ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--samples", type=int, default=None, help="Override number of synthetic sequences.")
@@ -265,6 +317,7 @@ def main():
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     defaults = ap.parse_args([])
     args = ap.parse_args()
+    _configure_dot_naive(args.dot_naive)
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {

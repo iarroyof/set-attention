@@ -294,6 +294,7 @@ class TinyLMBackbone(nn.Module):
         self.emb = nn.Embedding(vocab, d_model)
         layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
         self.enc = nn.TransformerEncoder(layer, num_layers=layers)
+        self.nhead = nhead
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.enc(self.emb(x))
@@ -339,6 +340,9 @@ def run_lm_benchmark(
     src_ids = src_ids.to(device)
     tgt_ids = tgt_ids.to(device)
 
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
     def step():
         optimizer.zero_grad(set_to_none=True)
         phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
@@ -361,8 +365,16 @@ def run_lm_benchmark(
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     elapsed = time.perf_counter() - t0
+    max_vram_mb = (
+        torch.cuda.max_memory_allocated() / (1024**2) if torch.cuda.is_available() else 0.0
+    )
     tokens = bench_batch_size * max_len * args.bench_iters
     throughput = tokens / elapsed if elapsed > 0 else 0.0
+    avg_sets, avg_atoms, scores_total = _summarize_ska_batch(
+        q_ptrs, Size, set_attn.num_heads if set_attn is not None else args.nhead
+    )
+    scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
+    throughput_per_m = scores_per_s / 1e6
     print(
         f"[benchmark][lm] backend={args.ska_backend} precision={args.precision} "
         f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
@@ -396,6 +408,12 @@ def run_lm_benchmark(
             "tokens_per_s": throughput,
             "elapsed_s": elapsed,
             "tokens_total": tokens,
+            "avg_sets_per_seq": avg_sets,
+            "avg_atoms_per_set": avg_atoms,
+            "scores_total": scores_total,
+            "scores_per_s": scores_per_s,
+            "scores_per_1e6": throughput_per_m,
+            "max_vram_mb": max_vram_mb,
         },
     )
 
@@ -416,6 +434,11 @@ def main():
     ap.add_argument("--router-topk", type=int, default=0)
     ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
     ap.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
+    ap.add_argument(
+        "--dot-naive",
+        action="store_true",
+        help="Force PyTorch attention to run in naive (math) mode for dot baselines.",
+    )
     ap.add_argument("--vocab-path", type=str, default="", help="Optional path to persist the streaming vocabulary JSON.")
     ap.add_argument("--vocab-workers", type=int, default=0, help="Worker processes to build streaming vocabularies (0=auto).")
     ap.add_argument("--reuse-vocab", dest="reuse_vocab", action="store_true", help="Reuse/save streaming vocab files to skip re-tokenization.")
@@ -455,6 +478,7 @@ def main():
     ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log per epoch.")
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed controlling which samples are logged.")
     args = ap.parse_args()
+    _configure_dot_naive(args.dot_naive)
 
     if args.streaming is None:
         args.streaming = bool(args.dataset == "wikitext103")
@@ -708,6 +732,8 @@ def main():
             bench_batch = src_ids.size(0)
             src_ids = src_ids.to(device)
             tgt_ids = tgt_ids.to(device)
+            if torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats()
 
             def step():
                 optimizer.zero_grad(set_to_none=True)
@@ -727,8 +753,16 @@ def main():
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             elapsed = time.perf_counter() - t0
+            max_vram_mb = (
+                torch.cuda.max_memory_allocated() / (1024**2)
+                if torch.cuda.is_available()
+                else 0.0
+            )
             tokens = bench_batch * tgt_ids.size(1) * args.bench_iters
             throughput = tokens / elapsed if elapsed > 0 else 0.0
+            scores_total = float(bench_batch * tgt_ids.size(1) * tgt_ids.size(1) * args.nhead)
+            scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
+            throughput_per_m = scores_per_s / 1e6
             print(
                 f"[benchmark][lm] backend=sdpa precision={args.precision} "
                 f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
@@ -741,29 +775,35 @@ def main():
                         "benchmark/batch_tokens": tokens,
                     }
                 )
-            _append_benchmark_row(
-                args.benchmark_csv,
-                {
-                    "script": "train_toy_lm_banked",
-                    "dataset": args.dataset or "custom",
-                    "mode": "sdpa",
-                    "precision": args.precision,
-                    "attn": args.attn,
-                    "batch": bench_batch,
-                    "seq_len": tgt_ids.size(1),
-                    "seq_stride": args.seq_stride,
-                    "window": args.window,
-                    "stride": args.stride,
-                    "minhash_k": args.minhash_k,
-                    "router_topk": args.router_topk,
-                    "adapter_rank": args.adapter_rank,
-                    "bench_warmup": args.bench_warmup,
-                    "bench_iters": args.bench_iters,
-                    "tokens_per_s": throughput,
-                    "elapsed_s": elapsed,
-                    "tokens_total": tokens,
-                },
-            )
+                _append_benchmark_row(
+                    args.benchmark_csv,
+                    {
+                        "script": "train_toy_lm_banked",
+                        "dataset": args.dataset or "custom",
+                        "mode": "sdpa",
+                        "precision": args.precision,
+                        "attn": args.attn,
+                        "batch": bench_batch,
+                        "seq_len": tgt_ids.size(1),
+                        "seq_stride": args.seq_stride,
+                        "window": args.window,
+                        "stride": args.stride,
+                        "minhash_k": args.minhash_k,
+                        "router_topk": args.router_topk,
+                        "adapter_rank": args.adapter_rank,
+                        "bench_warmup": args.bench_warmup,
+                        "bench_iters": args.bench_iters,
+                        "tokens_per_s": throughput,
+                        "elapsed_s": elapsed,
+                        "tokens_total": tokens,
+                        "avg_sets_per_seq": 0.0,
+                        "avg_atoms_per_set": 0.0,
+                        "scores_total": scores_total,
+                        "scores_per_s": scores_per_s,
+                        "scores_per_1e6": throughput_per_m,
+                        "max_vram_mb": max_vram_mb,
+                    },
+                )
         else:
             run_lm_benchmark(
                 args,
@@ -884,3 +924,22 @@ def main():
     wandb_run.finish()
 if __name__ == "__main__":
     main()
+def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
+    if q_ptrs.numel() <= 1:
+        return 0.0, 0.0, 0.0
+    counts = (q_ptrs[1:] - q_ptrs[:-1]).to(torch.float32)
+    avg_sets = float(counts.mean().item()) if counts.numel() > 0 else 0.0
+    avg_atoms = float(size_tensor.to(torch.float32).mean().item()) if size_tensor.numel() > 0 else 0.0
+    scores_total = float((counts * counts).sum().item() * max(1, num_heads))
+    return avg_sets, avg_atoms, scores_total
+
+
+def _configure_dot_naive(dot_naive: bool) -> None:
+    if not dot_naive:
+        return
+    if torch.cuda.is_available():
+        torch.backends.cuda.enable_flash_sdp(False)
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        torch.backends.cuda.enable_math_sdp(True)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    print("[SDP] dot-naive enabled: flash/mem-efficient SDP disabled; using math backend.")

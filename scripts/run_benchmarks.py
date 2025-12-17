@@ -34,6 +34,7 @@ LM_BENCHES = [
             "256",
             "--seq-stride",
             "256",
+            "--dot-naive",
         ],
     },
     {
@@ -66,6 +67,7 @@ LM_BENCHES = [
             "256",
             "--seq-stride",
             "256",
+            "--dot-naive",
         ],
     },
 ]
@@ -131,6 +133,7 @@ DIFF_BENCHES = [
             "50",
             "--batch",
             "64",
+            "--dot-naive",
         ],
     },
     {
@@ -158,6 +161,7 @@ DIFF_BENCHES = [
             "50",
             "--batch",
             "64",
+            "--dot-naive",
         ],
     },
 ]
