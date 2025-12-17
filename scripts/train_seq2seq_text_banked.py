@@ -344,6 +344,10 @@ def main():
     args = parser.parse_args()
     _configure_dot_naive(args.dot_naive)
 
+    if args.benchmark and args.limit is None:
+        args.limit = 50000
+        print("[benchmark] limiting dataset to 50k pairs for memory safety.")
+
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {
         "script": "train_seq2seq_text_banked",
