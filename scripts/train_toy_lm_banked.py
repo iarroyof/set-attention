@@ -314,6 +314,27 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
         writer.writerow(row)
 
 
+def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
+    if q_ptrs.numel() <= 1:
+        return 0.0, 0.0, 0.0
+    counts = (q_ptrs[1:] - q_ptrs[:-1]).to(torch.float32)
+    avg_sets = float(counts.mean().item()) if counts.numel() > 0 else 0.0
+    avg_atoms = float(size_tensor.to(torch.float32).mean().item()) if size_tensor.numel() > 0 else 0.0
+    scores_total = float((counts * counts).sum().item() * max(1, num_heads))
+    return avg_sets, avg_atoms, scores_total
+
+
+def _configure_dot_naive(dot_naive: bool) -> None:
+    if not dot_naive:
+        return
+    if torch.cuda.is_available():
+        torch.backends.cuda.enable_flash_sdp(False)
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        torch.backends.cuda.enable_math_sdp(True)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    print("[SDP] dot-naive enabled: flash/mem-efficient SDP disabled; using math backend.")
+
+
 def run_lm_benchmark(
     args,
     backbone,
@@ -924,22 +945,3 @@ def main():
     wandb_run.finish()
 if __name__ == "__main__":
     main()
-def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
-    if q_ptrs.numel() <= 1:
-        return 0.0, 0.0, 0.0
-    counts = (q_ptrs[1:] - q_ptrs[:-1]).to(torch.float32)
-    avg_sets = float(counts.mean().item()) if counts.numel() > 0 else 0.0
-    avg_atoms = float(size_tensor.to(torch.float32).mean().item()) if size_tensor.numel() > 0 else 0.0
-    scores_total = float((counts * counts).sum().item() * max(1, num_heads))
-    return avg_sets, avg_atoms, scores_total
-
-
-def _configure_dot_naive(dot_naive: bool) -> None:
-    if not dot_naive:
-        return
-    if torch.cuda.is_available():
-        torch.backends.cuda.enable_flash_sdp(False)
-        torch.backends.cuda.enable_mem_efficient_sdp(False)
-        torch.backends.cuda.enable_math_sdp(True)
-    torch.backends.cuda.matmul.allow_tf32 = False
-    print("[SDP] dot-naive enabled: flash/mem-efficient SDP disabled; using math backend.")
