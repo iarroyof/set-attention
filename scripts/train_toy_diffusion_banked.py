@@ -215,6 +215,12 @@ def run_diffusion_benchmark(
             {
                 "benchmark/sequences_per_s": throughput,
                 "benchmark/elapsed_s": elapsed,
+                "benchmark/avg_sets_per_seq": avg_sets,
+                "benchmark/avg_atoms_per_set": avg_atoms,
+                "benchmark/scores_total": scores_total,
+                "benchmark/scores_per_s": (scores_total / elapsed) if elapsed > 0 else 0.0,
+                "benchmark/scores_per_1e6": ((scores_total / elapsed) / 1e6) if elapsed > 0 else 0.0,
+                "benchmark/max_vram_mb": max_vram_mb,
             }
         )
     _append_benchmark_row(

@@ -232,6 +232,12 @@ def run_seq2seq_benchmark(
                 "benchmark/tokens_per_s": throughput,
                 "benchmark/elapsed_s": elapsed,
                 "benchmark/batch_tokens": tokens,
+                "benchmark/avg_sets_per_seq": avg_sets,
+                "benchmark/avg_atoms_per_set": avg_atoms,
+                "benchmark/scores_total": scores_total,
+                "benchmark/scores_per_s": scores_per_s,
+                "benchmark/scores_per_1e6": scores_per_1e6,
+                "benchmark/max_vram_mb": max_vram_mb,
             }
         )
     _append_benchmark_row(
