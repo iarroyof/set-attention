@@ -44,6 +44,27 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
         writer.writerow(row)
 
 
+def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
+    if q_ptrs.numel() <= 1:
+        return 0.0, 0.0, 0.0
+    counts = (q_ptrs[1:] - q_ptrs[:-1]).to(torch.float32)
+    avg_sets = float(counts.mean().item()) if counts.numel() > 0 else 0.0
+    avg_atoms = float(size_tensor.to(torch.float32).mean().item()) if size_tensor.numel() > 0 else 0.0
+    scores_total = float((counts * counts).sum().item() * max(1, num_heads))
+    return avg_sets, avg_atoms, scores_total
+
+
+def _configure_dot_naive(dot_naive: bool) -> None:
+    if not dot_naive:
+        return
+    if torch.cuda.is_available():
+        torch.backends.cuda.enable_flash_sdp(False)
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        torch.backends.cuda.enable_math_sdp(True)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    print("[SDP] dot-naive enabled: flash/mem-efficient SDP disabled; using math backend.")
+
+
 def patch_ids_from_image(img: torch.Tensor, patch: int) -> torch.Tensor:
     # img: (3,H,W)
     C, H, W = img.shape
@@ -86,6 +107,7 @@ class TinyViTBackbone(nn.Module):
         self.patch = PatchEmbed(3, patch, dim, img_size)
         enc_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=heads, batch_first=True)
         self.enc = nn.TransformerEncoder(enc_layer, num_layers=depth)
+        self.heads = heads
 
     def forward(self, x):
         tokens = self.patch(x)
@@ -151,6 +173,11 @@ def run_vit_benchmark(
     xb = xb.to(device, non_blocking=True)
     yb = yb.to(device, non_blocking=True)
 
+    stats_ptrs = None
+    stats_sizes = None
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
     if args.sdpa_baseline:
         backend_label = "sdpa"
 
@@ -167,6 +194,7 @@ def run_vit_benchmark(
         backend_label = f"{args.ska_backend}/{args.precision}"
 
         def step():
+            nonlocal stats_ptrs, stats_sizes
             optim.zero_grad(set_to_none=True)
             tokens = backbone(xb)
             phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
@@ -178,6 +206,8 @@ def run_vit_benchmark(
             loss = F.cross_entropy(logits, yb)
             loss.backward()
             optim.step()
+            stats_ptrs = q_ptrs.detach().cpu()
+            stats_sizes = Size.detach().cpu()
 
     for _ in range(args.bench_warmup):
         step()
@@ -189,8 +219,25 @@ def run_vit_benchmark(
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     elapsed = time.perf_counter() - t0
+    max_vram_mb = (
+        torch.cuda.max_memory_allocated() / (1024**2) if torch.cuda.is_available() else 0.0
+    )
     images = xb.size(0) * args.bench_iters
     throughput = images / elapsed if elapsed > 0 else 0.0
+    head_count = getattr(backbone, "heads", 4)
+    if args.sdpa_baseline:
+        seq_len = backbone.patch.num_patches
+        scores_total = float(seq_len * seq_len * head_count * xb.size(0) * args.bench_iters)
+        avg_sets = avg_atoms = 0.0
+    else:
+        if stats_ptrs is not None and stats_sizes is not None:
+            avg_sets, avg_atoms, scores_total = _summarize_ska_batch(
+                stats_ptrs, stats_sizes, head_count
+            )
+        else:
+            avg_sets = avg_atoms = scores_total = 0.0
+    scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
+    scores_per_1e6 = scores_per_s / 1e6
     print(f"[benchmark][vit] backend={backend_label} imgs/s={throughput:.1f} elapsed={elapsed:.3f}s")
     if wandb_run.enabled:
         wandb_run.log(
@@ -216,6 +263,12 @@ def run_vit_benchmark(
             "bench_iters": args.bench_iters,
             "images_per_s": throughput,
             "elapsed_s": elapsed,
+            "avg_sets_per_seq": avg_sets,
+            "avg_atoms_per_set": avg_atoms,
+            "scores_total": scores_total,
+            "scores_per_s": scores_per_s,
+            "scores_per_1e6": scores_per_1e6,
+            "max_vram_mb": max_vram_mb,
         },
     )
 
@@ -247,6 +300,11 @@ def main():
     ap.add_argument("--num-workers", type=int, default=2)
     ap.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
     ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    ap.add_argument(
+        "--dot-naive",
+        action="store_true",
+        help="Force dot-product baseline attention to use the naive math path.",
+    )
     ap.add_argument("--benchmark", action="store_true")
     ap.add_argument("--bench-warmup", type=int, default=5)
     ap.add_argument("--bench-iters", type=int, default=20)
@@ -274,6 +332,7 @@ def main():
         help="Move banks/universe to the training device (default keeps them on CPU).",
     )
     args = ap.parse_args()
+    _configure_dot_naive(args.dot_naive)
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {
