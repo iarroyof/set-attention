@@ -361,10 +361,14 @@ def run_lm_benchmark(
     src_ids = src_ids.to(device)
     tgt_ids = tgt_ids.to(device)
 
+    stats_ptrs = None
+    stats_sizes = None
+
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
     def step():
+        nonlocal stats_ptrs, stats_sizes
         optimizer.zero_grad(set_to_none=True)
         phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
         Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
@@ -375,6 +379,8 @@ def run_lm_benchmark(
         loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
         loss.backward()
         optimizer.step()
+        stats_ptrs = q_ptrs.detach().cpu()
+        stats_sizes = Size.detach().cpu()
 
     for _ in range(args.bench_warmup):
         step()
@@ -391,9 +397,12 @@ def run_lm_benchmark(
     )
     tokens = bench_batch_size * max_len * args.bench_iters
     throughput = tokens / elapsed if elapsed > 0 else 0.0
-    avg_sets, avg_atoms, scores_total = _summarize_ska_batch(
-        q_ptrs, Size, set_attn.num_heads if set_attn is not None else args.nhead
-    )
+    if stats_ptrs is not None and stats_sizes is not None:
+        avg_sets, avg_atoms, scores_total = _summarize_ska_batch(
+            stats_ptrs, stats_sizes, set_attn.num_heads if set_attn is not None else args.nhead
+        )
+    else:
+        avg_sets = avg_atoms = scores_total = 0.0
     scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
     throughput_per_m = scores_per_s / 1e6
     print(
