@@ -40,6 +40,41 @@ from set_attention.utils.wandb import init_wandb
 from set_attention.experiments.nlp_eval import corpus_bleu, rouge_l
 
 
+def _append_benchmark_row(csv_path: str, row: dict) -> None:
+    if not csv_path:
+        return
+    path = Path(csv_path)
+    write_header = not path.exists()
+    fieldnames = list(row.keys())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
+def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
+    if q_ptrs.numel() <= 1:
+        return 0.0, 0.0, 0.0
+    counts = (q_ptrs[1:] - q_ptrs[:-1]).to(torch.float32)
+    avg_sets = float(counts.mean().item()) if counts.numel() > 0 else 0.0
+    avg_atoms = float(size_tensor.to(torch.float32).mean().item()) if size_tensor.numel() > 0 else 0.0
+    scores_total = float((counts * counts).sum().item() * max(1, num_heads))
+    return avg_sets, avg_atoms, scores_total
+
+
+def _configure_dot_naive(dot_naive: bool) -> None:
+    if not dot_naive:
+        return
+    if torch.cuda.is_available():
+        torch.backends.cuda.enable_flash_sdp(False)
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        torch.backends.cuda.enable_math_sdp(True)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    print("[SDP] dot-naive enabled: flash/mem-efficient SDP disabled; using math backend.")
+
+
 def _parse_tokenizer_config_arg(value: str) -> Dict[str, Any]:
     if not value:
         return {}
@@ -67,20 +102,6 @@ def _normalize_tokenizer_config(config: Dict[str, Any]) -> Dict[str, Any]:
         if key in out:
             out[key] = int(out[key])
     return out
-
-def _append_benchmark_row(csv_path: str, row: dict) -> None:
-    if not csv_path:
-        return
-    path = Path(csv_path)
-    write_header = not path.exists()
-    fieldnames = list(row.keys())
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
-
 
 class TinySeq2SeqBackbone(nn.Module):
     def __init__(self, src_vocab: int, tgt_vocab: int, d_model: int, nhead: int, layers: int):
@@ -141,6 +162,11 @@ def run_seq2seq_benchmark(
     tgt_ids = tgt_ids.to(device, non_blocking=True)
     tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
 
+    stats_ptrs = None
+    stats_sizes = None
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
     if args.sdpa_baseline:
         def step():
             opt.zero_grad(set_to_none=True)
@@ -152,6 +178,7 @@ def run_seq2seq_benchmark(
         backend_label = "sdpa"
     else:
         def step():
+            nonlocal stats_ptrs, stats_sizes
             opt.zero_grad(set_to_none=True)
             phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
             Phi_q, Sig_q, Size_q, q_ptrs = cache_tgt.gather_flat(batch_idx_tensor, phi_dynamic)
@@ -163,6 +190,8 @@ def run_seq2seq_benchmark(
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
             loss.backward()
             opt.step()
+            stats_ptrs = q_ptrs.detach().cpu()
+            stats_sizes = Size_q.detach().cpu()
         backend_label = f"{args.ska_backend}/{args.precision}"
 
     for _ in range(args.bench_warmup):
@@ -175,8 +204,24 @@ def run_seq2seq_benchmark(
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     elapsed = time.perf_counter() - t0
+    max_vram_mb = (
+        torch.cuda.max_memory_allocated() / (1024**2) if torch.cuda.is_available() else 0.0
+    )
     tokens = tgt_ids.size(0) * max_len * args.bench_iters
     throughput = tokens / elapsed if elapsed > 0 else 0.0
+    if args.sdpa_baseline:
+        seq_len = tgt_ids.size(1)
+        scores_total = float(seq_len * seq_len * tgt_ids.size(0) * args.heads * args.bench_iters)
+        avg_sets = avg_atoms = 0.0
+    else:
+        if stats_ptrs is not None and stats_sizes is not None:
+            avg_sets, avg_atoms, scores_total = _summarize_ska_batch(
+                stats_ptrs, stats_sizes, args.heads
+            )
+        else:
+            avg_sets = avg_atoms = scores_total = 0.0
+    scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
+    scores_per_1e6 = scores_per_s / 1e6
     print(
         f"[benchmark][seq2seq] backend={backend_label} "
         f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
@@ -209,6 +254,12 @@ def run_seq2seq_benchmark(
             "tokens_per_s": throughput,
             "elapsed_s": elapsed,
             "tokens_total": tokens,
+            "avg_sets_per_seq": avg_sets,
+            "avg_atoms_per_set": avg_atoms,
+            "scores_total": scores_total,
+            "scores_per_s": scores_per_s,
+            "scores_per_1e6": scores_per_1e6,
+            "max_vram_mb": max_vram_mb,
         },
     )
 
@@ -263,6 +314,11 @@ def main():
     parser.add_argument("--beta", type=float, default=1.0)
     parser.add_argument("--eta", type=float, default=1.0)
     parser.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
+    parser.add_argument(
+        "--dot-naive",
+        action="store_true",
+        help="Force dot-product attention in baseline to use naive (math) mode.",
+    )
     parser.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
     parser.add_argument("--sdpa-baseline", action="store_true", help="Skip set attention/router and run plain Transformer decoder.")
     parser.add_argument(
@@ -286,6 +342,7 @@ def main():
     parser.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     parser.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     args = parser.parse_args()
+    _configure_dot_naive(args.dot_naive)
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {
