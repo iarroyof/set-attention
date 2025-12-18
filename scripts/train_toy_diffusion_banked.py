@@ -4,7 +4,7 @@ import os
 import random
 import time
 from pathlib import Path
-from typing import Iterator, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -24,6 +24,80 @@ from set_attention.heads.banked_attention import SetBankAttention
 from set_attention.heads.token_router import TokenSetRouter
 from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
+from set_attention.data.wikitext import load_wikitext_lines, tokenize_lines, chunk_tokens
+
+
+TEXT_SPECIAL_TOKENS = ["<pad>", "<s>", "</s>", "<unk>"]
+
+
+def _build_text_vocab(tokens: List[str]):
+    stoi = {tok: idx for idx, tok in enumerate(TEXT_SPECIAL_TOKENS)}
+    itos = list(TEXT_SPECIAL_TOKENS)
+    for tok in tokens:
+        if tok in stoi:
+            continue
+        idx = len(stoi)
+        stoi[tok] = idx
+        itos.append(tok)
+    return stoi, itos
+
+
+def _encode_token_chunks(chunks: List[List[str]], stoi: dict) -> List[torch.Tensor]:
+    unk_id = stoi.get("<unk>", 0)
+    encoded: List[torch.Tensor] = []
+    for chunk in chunks:
+        ids = torch.tensor([stoi.get(tok, unk_id) for tok in chunk], dtype=torch.long)
+        encoded.append(ids)
+    return encoded
+
+
+def _embed_token_chunks(id_chunks: List[torch.Tensor], embeddings: torch.Tensor) -> torch.Tensor:
+    if not id_chunks:
+        return torch.empty(0, 0, embeddings.size(1), dtype=embeddings.dtype)
+    stacked = [embeddings.index_select(0, ids) for ids in id_chunks]
+    return torch.stack(stacked, dim=0)
+
+
+def prepare_text_diffusion_data(
+    dataset: str,
+    cache_dir: Path,
+    seq_len: int,
+    stride: int,
+    train_line_limit: Optional[int],
+    val_line_limit: Optional[int],
+    train_seq_limit: Optional[int],
+    val_seq_limit: Optional[int],
+    embed_dim: int,
+    embed_seed: int,
+):
+    train_lines = load_wikitext_lines(dataset, "train", cache_dir, train_line_limit)
+    val_lines = load_wikitext_lines(dataset, "validation", cache_dir, val_line_limit)
+    train_tokens = tokenize_lines(train_lines)
+    if not train_tokens:
+        raise RuntimeError("No tokens available in training split for text diffusion data.")
+    stride = max(1, stride)
+    train_chunks = chunk_tokens(train_tokens, seq_len, stride)
+    if train_seq_limit is not None:
+        train_chunks = train_chunks[: max(0, int(train_seq_limit))]
+    val_tokens = tokenize_lines(val_lines)
+    val_chunks = chunk_tokens(val_tokens, seq_len, stride)
+    if val_seq_limit is not None:
+        val_chunks = val_chunks[: max(0, int(val_seq_limit))]
+    if not train_chunks:
+        raise RuntimeError("No sequences produced for training; check --text-seq-len/stride settings.")
+    if not val_chunks:
+        raise RuntimeError("No sequences produced for validation; check --text-seq-len/stride settings.")
+    stoi, _ = _build_text_vocab(train_tokens)
+    train_ids = _encode_token_chunks(train_chunks, stoi)
+    val_ids = _encode_token_chunks(val_chunks, stoi)
+    if not train_ids or not val_ids:
+        raise RuntimeError("Failed to encode text diffusion sequences.")
+    vocab_size = len(stoi)
+    gen = torch.Generator().manual_seed(int(embed_seed))
+    embeddings = torch.randn(vocab_size, embed_dim, generator=gen, dtype=torch.float32)
+    train_data = _embed_token_chunks(train_ids, embeddings)
+    val_data = _embed_token_chunks(val_ids, embeddings)
+    return train_data, val_data, train_ids, val_ids, vocab_size
 
 
 def _append_benchmark_row(csv_path: str, row: dict) -> None:
@@ -295,7 +369,21 @@ def main():
     ap.add_argument("--data-val-frac", type=float, default=None, help="Override validation fraction.")
     ap.add_argument("--data-modes", type=int, default=None, help="Override number of mixture modes.")
     ap.add_argument("--data-seed", type=int, default=None, help="Override synthetic data seed.")
-    ap.add_argument("--data-mode", choices=["continuous", "synthetic"], default="continuous")
+    ap.add_argument("--data-mode", choices=["continuous", "synthetic", "text"], default="continuous")
+    ap.add_argument("--text-dataset", choices=["wikitext2", "wikitext103"], default="wikitext2")
+    ap.add_argument(
+        "--text-cache-dir",
+        type=str,
+        default="~/.cache/set-attention/hf_datasets",
+        help="Cache directory for HuggingFace Wikitext data.",
+    )
+    ap.add_argument("--text-seq-len", type=int, default=128)
+    ap.add_argument("--text-stride", type=int, default=128)
+    ap.add_argument("--text-train-line-limit", type=int, default=None)
+    ap.add_argument("--text-val-line-limit", type=int, default=None)
+    ap.add_argument("--text-train-limit", type=int, default=None, help="Cap number of text sequences for training.")
+    ap.add_argument("--text-val-limit", type=int, default=None, help="Cap number of text sequences for validation.")
+    ap.add_argument("--text-embed-seed", type=int, default=1337)
     ap.add_argument("--wandb", action="store_true")
     ap.add_argument("--wandb-project", type=str, default="")
     ap.add_argument("--wandb-run-name", type=str, default="")
@@ -326,6 +414,7 @@ def main():
     _configure_dot_naive(args.dot_naive)
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
+    dataset_label = args.text_dataset if args.data_mode == "text" else args.config
     wandb_config = {
         "script": "train_toy_diffusion_banked",
         "ska_backend": args.ska_backend,
@@ -337,7 +426,7 @@ def main():
         "adapter_rank": args.adapter_rank,
         "steps": args.steps,
         "batch": args.batch,
-        "dataset": args.config,
+        "dataset": dataset_label,
         "sdpa_baseline": args.sdpa_baseline,
         "precompute_bank": args.precompute_bank,
         "sample_count": args.sample_count,
@@ -367,6 +456,7 @@ def main():
     override_from_cfg("nhead", "nhead")
     override_from_cfg("layers", "layers")
 
+    text_mode = args.data_mode == "text"
     seed = int(cfg_yaml.get("seed", 2024))
     if args.data_seed is not None:
         seed = int(args.data_seed)
@@ -398,24 +488,56 @@ def main():
     data_cfg.seed = seed
     if args.data_mode == "synthetic":
         print("[Data] Using synthetic continuous sequences (toy diffusion).")
-    train_loader, val_loader = make_toy_continuous_sequences(data_cfg)
+    text_train_ids: Optional[List[torch.Tensor]] = None
+    text_val_ids: Optional[List[torch.Tensor]] = None
+    text_vocab_size: Optional[int] = None
 
-    def subset_tensor(loader):
-        ds = loader.dataset
-        if hasattr(ds, "dataset") and hasattr(ds, "indices"):
-            base_tensor = ds.dataset.tensors[0]
-            return base_tensor[ds.indices].clone()
-        if hasattr(ds, "tensors"):
-            return ds.tensors[0].clone()
-        raise ValueError("Unsupported dataset type for tensor extraction")
+    if text_mode:
+        cache_dir = Path(args.text_cache_dir).expanduser()
+        stride = args.text_stride if args.text_stride > 0 else args.text_seq_len
+        embed_dim = args.data_dim if args.data_dim is not None else args.d_model
+        (
+            train_data,
+            val_data,
+            text_train_ids,
+            text_val_ids,
+            text_vocab_size,
+        ) = prepare_text_diffusion_data(
+            args.text_dataset,
+            cache_dir,
+            args.text_seq_len,
+            stride,
+            args.text_train_line_limit,
+            args.text_val_line_limit,
+            args.text_train_limit,
+            args.text_val_limit,
+            embed_dim,
+            args.text_embed_seed,
+        )
+        data_cfg.n_samples = train_data.size(0)
+        data_cfg.seq_len = train_data.size(1)
+        data_cfg.dim = train_data.size(2)
+        data_cfg.batch_size = args.batch
+    else:
+        train_loader, val_loader = make_toy_continuous_sequences(data_cfg)
 
-    train_data = subset_tensor(train_loader)
-    val_data = subset_tensor(val_loader)
+        def subset_tensor(loader):
+            ds = loader.dataset
+            if hasattr(ds, "dataset") and hasattr(ds, "indices"):
+                base_tensor = ds.dataset.tensors[0]
+                return base_tensor[ds.indices].clone()
+            if hasattr(ds, "tensors"):
+                return ds.tensors[0].clone()
+            raise ValueError("Unsupported dataset type for tensor extraction")
+
+        train_data = subset_tensor(train_loader)
+        val_data = subset_tensor(val_loader)
 
     seq_len = train_data.size(1) if train_data.dim() > 1 else 0
     feat_dim = train_data.size(2) if train_data.dim() > 2 else 0
+    mode_label = "text" if text_mode else args.data_mode
     print(
-        f"[Diffusion-Banked] dataset loaded | train sequences {train_data.size(0)} | "
+        f"[Diffusion-Banked] dataset loaded ({mode_label}) | train sequences {train_data.size(0)} | "
         f"val sequences {val_data.size(0)} | seq len {seq_len} | dim {feat_dim}"
     )
 
@@ -423,16 +545,23 @@ def main():
     atom_emb = adapter = phi_snapshot = None
     universe = None
     if not args.sdpa_baseline:
-        train_ids = [make_id_sequence(x) for x in train_data]
-        val_ids = [make_id_sequence(x) for x in val_data]
+        if text_mode and text_train_ids is not None and text_val_ids is not None:
+            train_ids = text_train_ids
+            val_ids = text_val_ids
+        else:
+            train_ids = [make_id_sequence(x) for x in train_data]
+            val_ids = [make_id_sequence(x) for x in val_data]
         train_bank = build_windowed_bank_from_ids(train_ids, window=args.window, stride=args.stride)
         val_bank = build_windowed_bank_from_ids(val_ids, window=args.window, stride=args.stride)
 
-        vocab_size = (
-            int(max(train_bank.values.max(), val_bank.values.max()).item() + 1)
-            if train_bank.values.numel() > 0
-            else data_cfg.seq_len * 2
-        )
+        if text_mode and text_vocab_size is not None:
+            vocab_size = text_vocab_size
+        else:
+            vocab_size = (
+                int(max(train_bank.values.max(), val_bank.values.max()).item() + 1)
+                if train_bank.values.numel() > 0
+                else data_cfg.seq_len * 2
+            )
         atom_emb = nn.Embedding(vocab_size, args.d_model).to(device)
         if args.adapter_rank > 0:
             adapter = AtomFeatureAdapter(args.d_model, rank=args.adapter_rank).to(device)
@@ -442,7 +571,10 @@ def main():
             phi_snapshot = atom_emb.weight
 
         universe_ids = torch.arange(vocab_size, dtype=torch.long)
-        universe = UniversePool(universe_ids, metadata={"task": "toy_diffusion"})
+        metadata = {"task": "text_diffusion" if text_mode else "toy_diffusion"}
+        if text_mode:
+            metadata["dataset"] = args.text_dataset
+        universe = UniversePool(universe_ids, metadata=metadata)
         train_minhash = MinHasher(k=args.minhash_k, device=train_bank.values.device)
         val_minhash = MinHasher(k=args.minhash_k, device=val_bank.values.device)
         train_cache = SetFeatureCache(
