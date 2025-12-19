@@ -1,4 +1,5 @@
 import argparse
+import copy
 import csv
 import json
 import math
@@ -14,6 +15,8 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from common.repro import set_seed
 
 from set_attention.data import configure_hf_cache, resolve_data_root
 from set_attention.data.wikitext import (
@@ -303,6 +306,7 @@ class TinyLMBackbone(nn.Module):
 
 def _append_benchmark_row(csv_path: str, row: dict) -> None:
     if not csv_path:
+        wandb_run.finish()
         return
     path = Path(csv_path)
     write_header = not path.exists()
@@ -376,6 +380,9 @@ def run_lm_benchmark(
     device,
     wandb_run,
     benchmark_csv,
+    seed,
+    rep,
+    run_uid,
 ):
     if bench_batch is None:
         print("[benchmark] no data available.")
@@ -456,6 +463,8 @@ def run_lm_benchmark(
                 "benchmark/min_sets_per_seq": min_sets,
                 "benchmark/max_sets_per_seq": max_sets,
                 "benchmark/max_vram_mb": max_vram_mb,
+                "benchmark/seed": seed,
+                "benchmark/rep": rep,
             }
         )
     _append_benchmark_row(
@@ -476,6 +485,9 @@ def run_lm_benchmark(
             "adapter_rank": args.adapter_rank,
             "bench_warmup": args.bench_warmup,
             "bench_iters": args.bench_iters,
+            "seed": seed,
+            "rep": rep,
+            "run_uid": run_uid,
             "device": info["device"],
             "gpu_name": info["gpu_name"],
             "torch_version": info["torch_version"],
@@ -556,8 +568,41 @@ def main():
     ap.add_argument("--wandb-tags", type=str, default="")
     ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log per epoch.")
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed controlling which samples are logged.")
+    ap.add_argument("--seed", type=int, default=2024, help="Base RNG seed used when --seeds is not provided.")
+    ap.add_argument(
+        "--seeds",
+        type=str,
+        default="",
+        help="Optional comma-separated list of seeds (overrides --seed).",
+    )
+    ap.add_argument("--reps", type=int, default=1, help="Number of repetitions per seed.")
     args = ap.parse_args()
     _configure_dot_naive(args.dot_naive)
+    seed_values = []
+    if args.seeds:
+        for part in args.seeds.replace(",", " ").split():
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                seed_values.append(int(part))
+            except ValueError:
+                continue
+    if not seed_values:
+        seed_values = [args.seed]
+    reps = max(1, int(args.reps))
+    total_runs = len(seed_values) * reps
+    for seed in seed_values:
+        for rep in range(1, reps + 1):
+            run_uid = f"{seed}-{rep}-{int(time.time() * 1e6) & 0xFFFFFFFFFFFF}"
+            run_args = copy.deepcopy(args)
+            run_single(run_args, seed, rep, run_uid, total_runs > 1)
+    return
+
+
+def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
+    set_seed(seed)
+    print(f"[Run] seed={seed} rep={rep} uid={run_uid}")
 
     if args.streaming is None:
         args.streaming = bool(args.dataset == "wikitext103")
@@ -591,11 +636,17 @@ def main():
         "vocab_path": args.vocab_path or "",
         "vocab_workers": args.vocab_workers,
         "hf_tokenizer_name": args.hf_tokenizer_name or "",
+        "seed": seed,
+        "rep": rep,
+        "run_uid": run_uid,
     }
+    run_name = args.wandb_run_name or None
+    if run_name and multi_run:
+        run_name = f"{run_name}-s{seed}-r{rep}"
     wandb_run = init_wandb(
         args.wandb,
         args.wandb_project or None,
-        args.wandb_run_name or None,
+        run_name,
         wandb_config,
         wandb_tags,
     )
@@ -852,11 +903,13 @@ def main():
                         "benchmark/tokens_per_s": throughput,
                         "benchmark/elapsed_s": elapsed,
                         "benchmark/batch_tokens": tokens,
+                        "benchmark/seed": seed,
+                        "benchmark/rep": rep,
                     }
                 )
-                _append_benchmark_row(
-                    args.benchmark_csv,
-                    {
+            _append_benchmark_row(
+                args.benchmark_csv,
+                {
                         "script": "train_toy_lm_banked",
                         "dataset": args.dataset or "custom",
                         "mode": "sdpa",
@@ -866,17 +919,20 @@ def main():
                         "seq_len": tgt_ids.size(1),
                         "seq_stride": args.seq_stride,
                         "window": args.window,
-                        "stride": args.stride,
-                        "minhash_k": args.minhash_k,
-                        "router_topk": args.router_topk,
-                        "adapter_rank": args.adapter_rank,
-                        "bench_warmup": args.bench_warmup,
-                        "bench_iters": args.bench_iters,
-                        "tokens_per_s": throughput,
-                        "elapsed_s": elapsed,
-                        "tokens_total": tokens,
-                        "avg_sets_per_seq": 0.0,
-                        "avg_atoms_per_set": 0.0,
+                    "stride": args.stride,
+                    "minhash_k": args.minhash_k,
+                    "router_topk": args.router_topk,
+                    "adapter_rank": args.adapter_rank,
+                    "bench_warmup": args.bench_warmup,
+                    "bench_iters": args.bench_iters,
+                    "seed": seed,
+                    "rep": rep,
+                    "run_uid": run_uid,
+                    "tokens_per_s": throughput,
+                    "elapsed_s": elapsed,
+                    "tokens_total": tokens,
+                    "avg_sets_per_seq": 0.0,
+                    "avg_atoms_per_set": 0.0,
                         "scores_total": scores_total,
                         "scores_per_s": scores_per_s,
                         "scores_per_1e6": throughput_per_m,
@@ -900,7 +956,11 @@ def main():
                 device,
                 wandb_run,
                 args.benchmark_csv,
+                seed,
+                rep,
+                run_uid,
             )
+        wandb_run.finish()
         return
 
     def run_epoch(train: bool):

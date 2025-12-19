@@ -3,14 +3,32 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List
 
 
-def _cmd(script: str, args: List[str], csv_path: Path) -> List[str]:
+def _cmd(
+    script: str,
+    base_args: List[str],
+    csv_path: Path,
+    seed: int,
+    rep: int,
+    wandb_name: str,
+    deterministic: bool,
+    benchmark_deterministic: bool,
+) -> List[str]:
     cmd = [sys.executable, script]
-    cmd.extend(args)
+    cmd.extend(base_args)
     cmd.extend(["--benchmark-csv", str(csv_path)])
+    cmd.extend(["--seed", str(seed)])
+    cmd.extend(["--reps", "1"])
+    if wandb_name:
+        cmd.extend(["--wandb-run-name", wandb_name])
+    if deterministic:
+        cmd.append("--deterministic")
+    if benchmark_deterministic:
+        cmd.append("--benchmark-deterministic")
     return cmd
 
 
@@ -245,8 +263,46 @@ def main() -> None:
         help="Directory to store benchmark CSV files.",
     )
     parser.add_argument("--device", type=str, default="", help="CUDA_VISIBLE_DEVICES value (optional).")
+    parser.add_argument("--seed", type=int, default=2024, help="Default seed when --seeds is not provided.")
+    parser.add_argument(
+        "--seeds",
+        type=str,
+        default="",
+        help="Comma/space separated list of seeds (overrides --seed when provided).",
+    )
+    parser.add_argument("--reps", type=int, default=1, help="Repetitions per seed.")
+    parser.add_argument(
+        "--wandb-name-template",
+        type=str,
+        default="",
+        help="Optional template for wandb run names, e.g. '{name}-s{seed}-r{rep}'.",
+    )
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="Pass --deterministic to benchmark commands.",
+    )
+    parser.add_argument(
+        "--benchmark-deterministic",
+        action="store_true",
+        help="Pass --benchmark-deterministic to benchmark commands.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print commands without executing.")
     args = parser.parse_args()
+
+    seed_values: List[int] = []
+    if args.seeds:
+        for part in args.seeds.replace(",", " ").split():
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                seed_values.append(int(part))
+            except ValueError:
+                continue
+    if not seed_values:
+        seed_values = [args.seed]
+    reps = max(1, int(args.reps))
 
     tasks = list(BENCHMARKS.keys()) if "all" in args.tasks else args.tasks
     out_dir = Path(args.output_dir)
@@ -261,14 +317,35 @@ def main() -> None:
         print(f"\n[bench-suite] task={task} ({len(specs)} runs)")
         for spec in specs:
             csv_path = out_dir / f"{spec['name']}.csv"
-            cmd = _cmd(spec["script"], spec["args"], csv_path)
-            print(f"[bench-suite] running: {' '.join(cmd)}")
-            if args.dry_run:
-                continue
-            result = subprocess.run(cmd, env=env)
-            if result.returncode != 0:
-                print(f"[bench-suite] command failed with code {result.returncode}")
-                sys.exit(result.returncode)
+            if csv_path.exists():
+                csv_path.unlink()
+            for seed in seed_values:
+                for rep in range(1, reps + 1):
+                    wandb_name = ""
+                    if args.wandb_name_template:
+                        wandb_name = args.wandb_name_template.format(
+                            name=spec["name"],
+                            seed=seed,
+                            rep=rep,
+                            script=spec["script"],
+                        )
+                    cmd = _cmd(
+                        spec["script"],
+                        spec["args"],
+                        csv_path,
+                        seed,
+                        rep,
+                        wandb_name,
+                        args.deterministic,
+                        args.benchmark_deterministic,
+                    )
+                    print(f"[bench-suite] running (seed={seed} rep={rep}): {' '.join(cmd)}")
+                    if args.dry_run:
+                        continue
+                    result = subprocess.run(cmd, env=env)
+                    if result.returncode != 0:
+                        print(f"[bench-suite] command failed with code {result.returncode}")
+                        sys.exit(result.returncode)
 
 
 if __name__ == "__main__":
