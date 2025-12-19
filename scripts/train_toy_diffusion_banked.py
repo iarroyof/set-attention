@@ -764,8 +764,11 @@ def main():
                 nn1s.append(val_nn1)
                 ref_token_batch = None
                 hyp_token_batch = None
-                if text_mode and gen_batch is not None and text_val_ids_tensor is not None and text_embedding_table is not None:
-                    tgt_ids = text_val_ids_tensor[batch_idx].to(device)
+                if text_mode and gen_batch is not None and text_embedding_table is not None:
+                    if text_val_ids_tensor is not None:
+                        tgt_ids = text_val_ids_tensor[batch_idx].to(device)
+                    else:
+                        tgt_ids = decode_embeddings_to_ids(xb, text_embedding_table)
                     pred_ids = decode_embeddings_to_ids(gen_batch.to(device), text_embedding_table)
                     text_token_matches += float((pred_ids == tgt_ids).sum().item())
                     text_token_total += float(pred_ids.numel())
@@ -807,7 +810,7 @@ def main():
             f"Chamfer {val_chamfer_mean:.4f} | 1NN {val_nn1_mean:.3f}"
         )
         if text_mode and text_token_acc is not None:
-            msg += f" | token acc {text_token_acc:.3f} | BLEU {text_bleu or 0.0:.3f}"
+            msg += f" | token acc {text_token_acc * 100:.2f}% | BLEU {text_bleu or 0.0:.3f}"
         if args.profile:
             msg += f" | time {prof['time_s']:.2f}s"
             if torch.cuda.is_available():
