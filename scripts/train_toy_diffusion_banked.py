@@ -2,6 +2,7 @@ import argparse
 import csv
 import os
 import random
+import subprocess
 import time
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
@@ -18,6 +19,7 @@ from set_attention.utils.metrics import chamfer_l2, one_nn_two_sample
 from set_attention.utils.profiling import profiler
 from set_attention.utils.sample_logging import select_sample_indices
 from set_attention.utils.wandb import init_wandb
+from set_attention.experiments.nlp_eval import corpus_bleu
 from set_attention.sets.bank_builders import build_windowed_bank_from_ids
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
 from set_attention.heads.banked_attention import SetBankAttention
@@ -58,6 +60,26 @@ def _embed_token_chunks(id_chunks: List[torch.Tensor], embeddings: torch.Tensor)
     return torch.stack(stacked, dim=0)
 
 
+def decode_embeddings_to_ids(
+    batch_vectors: torch.Tensor, embedding_table: torch.Tensor, chunk_size: int = 4096
+) -> torch.Tensor:
+    """Map continuous vectors back to token ids via cosine similarity."""
+    B, L, D = batch_vectors.shape
+    flat = batch_vectors.reshape(-1, D)
+    flat = F.normalize(flat, dim=-1)
+    emb = F.normalize(embedding_table, dim=-1)
+    best_scores = torch.full((flat.size(0),), float("-inf"), device=flat.device)
+    best_ids = torch.zeros(flat.size(0), dtype=torch.long, device=flat.device)
+    for start in range(0, emb.size(0), chunk_size):
+        chunk = emb[start : start + chunk_size]
+        scores = flat @ chunk.T
+        max_vals, max_idx = scores.max(dim=1)
+        better = max_vals > best_scores
+        best_scores = torch.where(better, max_vals, best_scores)
+        best_ids = torch.where(better, start + max_idx, best_ids)
+    return best_ids.view(B, L)
+
+
 def prepare_text_diffusion_data(
     dataset: str,
     cache_dir: Path,
@@ -87,7 +109,7 @@ def prepare_text_diffusion_data(
         raise RuntimeError("No sequences produced for training; check --text-seq-len/stride settings.")
     if not val_chunks:
         raise RuntimeError("No sequences produced for validation; check --text-seq-len/stride settings.")
-    stoi, _ = _build_text_vocab(train_tokens)
+    stoi, itos = _build_text_vocab(train_tokens)
     train_ids = _encode_token_chunks(train_chunks, stoi)
     val_ids = _encode_token_chunks(val_chunks, stoi)
     if not train_ids or not val_ids:
@@ -97,7 +119,17 @@ def prepare_text_diffusion_data(
     embeddings = torch.randn(vocab_size, embed_dim, generator=gen, dtype=torch.float32)
     train_data = _embed_token_chunks(train_ids, embeddings)
     val_data = _embed_token_chunks(val_ids, embeddings)
-    return train_data, val_data, train_ids, val_ids, vocab_size
+    return {
+        "train_data": train_data,
+        "val_data": val_data,
+        "train_ids": train_ids,
+        "val_ids": val_ids,
+        "train_ids_tensor": torch.stack(train_ids),
+        "val_ids_tensor": torch.stack(val_ids),
+        "vocab_size": vocab_size,
+        "embeddings": embeddings,
+        "itos": itos,
+    }
 
 
 def _append_benchmark_row(csv_path: str, row: dict) -> None:
@@ -116,12 +148,14 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
 
 def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
     if q_ptrs.numel() <= 1:
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0
     counts = (q_ptrs[1:] - q_ptrs[:-1]).to(torch.float32)
     avg_sets = float(counts.mean().item()) if counts.numel() > 0 else 0.0
     avg_atoms = float(size_tensor.to(torch.float32).mean().item()) if size_tensor.numel() > 0 else 0.0
-    scores_total = float((counts * counts).sum().item() * max(1, num_heads))
-    return avg_sets, avg_atoms, scores_total
+    scores_per_batch = float((counts * counts).sum().item() * max(1, num_heads))
+    min_sets = float(counts.min().item()) if counts.numel() > 0 else 0.0
+    max_sets = float(counts.max().item()) if counts.numel() > 0 else 0.0
+    return avg_sets, avg_atoms, scores_per_batch, min_sets, max_sets
 
 
 def _configure_dot_naive(dot_naive: bool) -> None:
@@ -133,6 +167,28 @@ def _configure_dot_naive(dot_naive: bool) -> None:
         torch.backends.cuda.enable_math_sdp(True)
     torch.backends.cuda.matmul.allow_tf32 = False
     print("[SDP] dot-naive enabled: flash/mem-efficient SDP disabled; using math backend.")
+
+
+def _system_info():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    gpu_name = torch.cuda.get_device_name(torch.cuda.current_device()) if torch.cuda.is_available() else "cpu"
+    torch_version = torch.__version__
+    cuda_version = torch.version.cuda or "cpu"
+    try:
+        git_sha = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
+            .decode("utf-8")
+            .strip()
+        )
+    except Exception:
+        git_sha = "unknown"
+    return {
+        "device": device,
+        "gpu_name": gpu_name,
+        "torch_version": torch_version,
+        "cuda_version": cuda_version,
+        "git_sha": git_sha,
+    }
 
 
 def summarize_tensor(tensor: torch.Tensor, max_items: int = 16) -> str:
@@ -261,6 +317,7 @@ def run_diffusion_benchmark(
         step()
     if torch.cuda.is_available():
         torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
     t0 = time.perf_counter()
     for _ in range(args.bench_iters):
         step()
@@ -272,17 +329,22 @@ def run_diffusion_benchmark(
     )
     sequences = bench_batch * args.bench_iters
     throughput = sequences / elapsed if elapsed > 0 else 0.0
+    info = _system_info()
     if args.sdpa_baseline:
         seq_len = xb.size(1)
-        scores_total = float(bench_batch * seq_len * seq_len * args.nhead)
-        avg_sets = avg_atoms = 0.0
+        scores_total = float(bench_batch * seq_len * seq_len * max(1, args.nhead) * args.bench_iters)
+        avg_sets = avg_atoms = min_sets = max_sets = 0.0
     else:
-        avg_sets = avg_atoms = scores_total = 0.0
+        avg_sets = avg_atoms = min_sets = max_sets = 0.0
+        scores_total = 0.0
         if stats_snapshot is not None:
             q_ptrs_snap, size_snap = stats_snapshot
-            avg_sets, avg_atoms, scores_total = _summarize_ska_batch(
+            avg_sets, avg_atoms, scores_per_batch, min_sets, max_sets = _summarize_ska_batch(
                 q_ptrs_snap, size_snap, args.nhead
             )
+            scores_total = scores_per_batch * args.bench_iters
+    scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
+    scores_per_1e6 = scores_per_s / 1e6 if elapsed > 0 else 0.0
     print(f"[benchmark][diffusion] backend={backend_label} seq/s={throughput:.1f} elapsed={elapsed:.3f}s")
     if wandb_run.enabled:
         wandb_run.log(
@@ -292,16 +354,23 @@ def run_diffusion_benchmark(
                 "benchmark/avg_sets_per_seq": avg_sets,
                 "benchmark/avg_atoms_per_set": avg_atoms,
                 "benchmark/scores_total": scores_total,
-                "benchmark/scores_per_s": (scores_total / elapsed) if elapsed > 0 else 0.0,
-                "benchmark/scores_per_1e6": ((scores_total / elapsed) / 1e6) if elapsed > 0 else 0.0,
+                "benchmark/scores_per_s": scores_per_s,
+                "benchmark/scores_per_1e6": scores_per_1e6,
+                "benchmark/min_sets_per_seq": min_sets,
+                "benchmark/max_sets_per_seq": max_sets,
                 "benchmark/max_vram_mb": max_vram_mb,
             }
         )
+    text_mode = args.data_mode == "text"
+    stride_text = args.text_stride if args.text_stride > 0 else args.text_seq_len
+    config_label = args.config
+    if text_mode:
+        config_label = f"text::{args.text_dataset}@{args.text_seq_len}/{stride_text}"
     _append_benchmark_row(
         benchmark_csv,
         {
             "script": "train_toy_diffusion_banked",
-            "config": args.config,
+            "config": config_label,
             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
             "precision": args.precision,
             "window": args.window,
@@ -312,13 +381,26 @@ def run_diffusion_benchmark(
             "steps": args.steps,
             "bench_warmup": args.bench_warmup,
             "bench_iters": args.bench_iters,
+            "device": info["device"],
+            "gpu_name": info["gpu_name"],
+            "torch_version": info["torch_version"],
+            "cuda_version": info["cuda_version"],
+            "git_sha": info["git_sha"],
+            "data_mode": args.data_mode,
+            "text_dataset": args.text_dataset if text_mode else "",
+            "text_seq_len": args.text_seq_len if text_mode else "",
+            "text_stride": stride_text if text_mode else "",
+            "text_train_limit": args.text_train_limit if text_mode else "",
+            "text_val_limit": args.text_val_limit if text_mode else "",
             "sequences_per_s": throughput,
             "elapsed_s": elapsed,
             "avg_sets_per_seq": avg_sets,
             "avg_atoms_per_set": avg_atoms,
             "scores_total": scores_total,
-            "scores_per_s": (scores_total / elapsed) if elapsed > 0 else 0.0,
-            "scores_per_1e6": ((scores_total / elapsed) / 1e6) if elapsed > 0 else 0.0,
+            "scores_per_s": scores_per_s,
+            "scores_per_1e6": scores_per_1e6,
+            "min_sets_per_seq": min_sets,
+            "max_sets_per_seq": max_sets,
             "max_vram_mb": max_vram_mb,
         },
     )
@@ -490,19 +572,17 @@ def main():
         print("[Data] Using synthetic continuous sequences (toy diffusion).")
     text_train_ids: Optional[List[torch.Tensor]] = None
     text_val_ids: Optional[List[torch.Tensor]] = None
+    text_train_ids_tensor: Optional[torch.Tensor] = None
+    text_val_ids_tensor: Optional[torch.Tensor] = None
     text_vocab_size: Optional[int] = None
+    text_embeddings: Optional[torch.Tensor] = None
+    text_itos: Optional[List[str]] = None
 
     if text_mode:
         cache_dir = Path(args.text_cache_dir).expanduser()
         stride = args.text_stride if args.text_stride > 0 else args.text_seq_len
         embed_dim = args.data_dim if args.data_dim is not None else args.d_model
-        (
-            train_data,
-            val_data,
-            text_train_ids,
-            text_val_ids,
-            text_vocab_size,
-        ) = prepare_text_diffusion_data(
+        text_payload = prepare_text_diffusion_data(
             args.text_dataset,
             cache_dir,
             args.text_seq_len,
@@ -514,6 +594,15 @@ def main():
             embed_dim,
             args.text_embed_seed,
         )
+        train_data = text_payload["train_data"]
+        val_data = text_payload["val_data"]
+        text_train_ids = text_payload["train_ids"]
+        text_val_ids = text_payload["val_ids"]
+        text_train_ids_tensor = text_payload["train_ids_tensor"]
+        text_val_ids_tensor = text_payload["val_ids_tensor"]
+        text_vocab_size = text_payload["vocab_size"]
+        text_embeddings = text_payload["embeddings"]
+        text_itos = text_payload["itos"]
         data_cfg.n_samples = train_data.size(0)
         data_cfg.seq_len = train_data.size(1)
         data_cfg.dim = train_data.size(2)
@@ -540,6 +629,7 @@ def main():
         f"[Diffusion-Banked] dataset loaded ({mode_label}) | train sequences {train_data.size(0)} | "
         f"val sequences {val_data.size(0)} | seq len {seq_len} | dim {feat_dim}"
     )
+    text_embedding_table = text_embeddings.to(device) if text_mode and text_embeddings is not None else None
 
     train_cache = val_cache = None
     atom_emb = adapter = phi_snapshot = None
@@ -649,9 +739,13 @@ def main():
         model.eval()
         sample_indices = select_sample_indices(val_data.size(0), args.sample_count, args.sample_seed + epoch)
         sample_lookup = {idx: order for order, idx in enumerate(sample_indices)}
-        captured_samples = {}
+        captured_samples: dict[int, dict] = {}
         with torch.no_grad():
             mmds, chamfers, nn1s = [], [], []
+            text_token_matches = 0.0
+            text_token_total = 0.0
+            text_refs_all: List[List[str]] = []
+            text_hyps_all: List[List[str]] = []
             for batch_idx, xb in tensor_batch_iterator(val_data, data_cfg.batch_size, shuffle=False):
                 xb_cpu = xb
                 xb = xb_cpu.to(device)
@@ -661,21 +755,41 @@ def main():
                     model.set_current_bank(Phi, Sig, Size, q_ptrs)
                 batch_indices = batch_idx.detach().cpu().tolist()
                 need_samples = any(idx in sample_lookup for idx in batch_indices)
+                want_generated = need_samples or text_mode
                 val_mmd, val_chamfer, val_nn1, gen_batch = eval_suite(
-                    ddpm, model, xb, args.d_model, return_generated=need_samples
+                    ddpm, model, xb, args.d_model, return_generated=want_generated
                 )
                 mmds.append(val_mmd)
                 chamfers.append(val_chamfer)
                 nn1s.append(val_nn1)
+                ref_token_batch = None
+                hyp_token_batch = None
+                if text_mode and gen_batch is not None and text_val_ids_tensor is not None and text_embedding_table is not None:
+                    tgt_ids = text_val_ids_tensor[batch_idx].to(device)
+                    pred_ids = decode_embeddings_to_ids(gen_batch.to(device), text_embedding_table)
+                    text_token_matches += float((pred_ids == tgt_ids).sum().item())
+                    text_token_total += float(pred_ids.numel())
+                    ref_token_batch = [
+                        [text_itos[int(tok)] for tok in seq.tolist()] for seq in tgt_ids.detach().cpu()
+                    ]
+                    hyp_token_batch = [
+                        [text_itos[int(tok)] for tok in seq.tolist()] for seq in pred_ids.detach().cpu()
+                    ]
+                    text_refs_all.extend(ref_token_batch)
+                    text_hyps_all.extend(hyp_token_batch)
                 if need_samples and gen_batch is not None:
                     for local_pos, global_idx in enumerate(batch_indices):
                         order = sample_lookup.get(int(global_idx))
                         if order is None or order in captured_samples:
                             continue
-                        captured_samples[order] = (
-                            xb_cpu[local_pos].detach().cpu(),
-                            gen_batch[local_pos].detach().cpu(),
-                        )
+                        entry = {"idx": int(global_idx)}
+                        if text_mode and ref_token_batch is not None and hyp_token_batch is not None:
+                            entry["ref_text"] = " ".join(ref_token_batch[local_pos])
+                            entry["gen_text"] = " ".join(hyp_token_batch[local_pos])
+                        else:
+                            entry["ref_tensor"] = xb_cpu[local_pos].detach().cpu()
+                            entry["gen_tensor"] = gen_batch[local_pos].detach().cpu()
+                        captured_samples[order] = entry
 
         def safe_mean(values):
             return float(sum(values) / len(values)) if values else float("nan")
@@ -683,6 +797,8 @@ def main():
         val_mmd_mean = safe_mean(mmds)
         val_chamfer_mean = safe_mean(chamfers)
         val_nn1_mean = safe_mean(nn1s)
+        text_token_acc = (text_token_matches / text_token_total) if text_token_total > 0 else None
+        text_bleu = corpus_bleu(text_refs_all, text_hyps_all) if text_refs_all else None
 
         mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
         msg = (
@@ -690,6 +806,8 @@ def main():
             f"train loss {train_loss:.4f} | val MMD {val_mmd_mean:.4f} | "
             f"Chamfer {val_chamfer_mean:.4f} | 1NN {val_nn1_mean:.3f}"
         )
+        if text_mode and text_token_acc is not None:
+            msg += f" | token acc {text_token_acc:.3f} | BLEU {text_bleu or 0.0:.3f}"
         if args.profile:
             msg += f" | time {prof['time_s']:.2f}s"
             if torch.cuda.is_available():
@@ -699,15 +817,24 @@ def main():
         if captured_samples:
             blocks = []
             for order, idx in enumerate(sample_indices):
-                pair = captured_samples.get(order)
-                if pair is None:
+                entry = captured_samples.get(order)
+                if entry is None:
                     continue
-                ref_sample, gen_sample = pair
-                blocks.append(
-                    f"[{order}] idx={idx}\n"
-                    f"TGT {summarize_tensor(ref_sample)}\n"
-                    f"GEN {summarize_tensor(gen_sample)}"
-                )
+                idx_display = entry.get("idx", idx)
+                if text_mode and "ref_text" in entry:
+                    blocks.append(
+                        f"[{order}] idx={idx_display}\n"
+                        f"TGT {entry['ref_text']}\n"
+                        f"GEN {entry['gen_text']}"
+                    )
+                else:
+                    ref_sample = entry["ref_tensor"]
+                    gen_sample = entry["gen_tensor"]
+                    blocks.append(
+                        f"[{order}] idx={idx_display}\n"
+                        f"TGT {summarize_tensor(ref_sample)}\n"
+                        f"GEN {summarize_tensor(gen_sample)}"
+                    )
             if blocks:
                 sample_text = "\n\n".join(blocks)
         if wandb_run.enabled:
@@ -717,6 +844,10 @@ def main():
                 "val/chamfer": val_chamfer_mean,
                 "val/1nn": val_nn1_mean,
             }
+            if text_mode and text_token_acc is not None:
+                wandb_payload["val/token_acc"] = text_token_acc
+                if text_bleu is not None:
+                    wandb_payload["val/bleu"] = text_bleu
             if args.profile:
                 wandb_payload["train/time_s"] = prof["time_s"]
             if sample_text is not None:

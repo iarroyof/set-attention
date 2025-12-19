@@ -1,6 +1,7 @@
 import argparse
 import csv
 import os
+import subprocess
 import time
 from pathlib import Path
 from typing import List
@@ -46,12 +47,14 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
 
 def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
     if q_ptrs.numel() <= 1:
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0
     counts = (q_ptrs[1:] - q_ptrs[:-1]).to(torch.float32)
     avg_sets = float(counts.mean().item()) if counts.numel() > 0 else 0.0
     avg_atoms = float(size_tensor.to(torch.float32).mean().item()) if size_tensor.numel() > 0 else 0.0
-    scores_total = float((counts * counts).sum().item() * max(1, num_heads))
-    return avg_sets, avg_atoms, scores_total
+    scores_per_batch = float((counts * counts).sum().item() * max(1, num_heads))
+    min_sets = float(counts.min().item()) if counts.numel() > 0 else 0.0
+    max_sets = float(counts.max().item()) if counts.numel() > 0 else 0.0
+    return avg_sets, avg_atoms, scores_per_batch, min_sets, max_sets
 
 
 def _configure_dot_naive(dot_naive: bool) -> None:
@@ -63,6 +66,28 @@ def _configure_dot_naive(dot_naive: bool) -> None:
         torch.backends.cuda.enable_math_sdp(True)
     torch.backends.cuda.matmul.allow_tf32 = False
     print("[SDP] dot-naive enabled: flash/mem-efficient SDP disabled; using math backend.")
+
+
+def _system_info():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    gpu_name = torch.cuda.get_device_name(torch.cuda.current_device()) if torch.cuda.is_available() else "cpu"
+    torch_version = torch.__version__
+    cuda_version = torch.version.cuda or "cpu"
+    try:
+        git_sha = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
+            .decode("utf-8")
+            .strip()
+        )
+    except Exception:
+        git_sha = "unknown"
+    return {
+        "device": device,
+        "gpu_name": gpu_name,
+        "torch_version": torch_version,
+        "cuda_version": cuda_version,
+        "git_sha": git_sha,
+    }
 
 
 def patch_ids_from_image(img: torch.Tensor, patch: int) -> torch.Tensor:
@@ -213,6 +238,7 @@ def run_vit_benchmark(
         step()
     if torch.cuda.is_available():
         torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
     t0 = time.perf_counter()
     for _ in range(args.bench_iters):
         step()
@@ -225,17 +251,19 @@ def run_vit_benchmark(
     images = xb.size(0) * args.bench_iters
     throughput = images / elapsed if elapsed > 0 else 0.0
     head_count = getattr(backbone, "heads", 4)
+    info = _system_info()
     if args.sdpa_baseline:
         seq_len = backbone.patch.num_patches
         scores_total = float(seq_len * seq_len * head_count * xb.size(0) * args.bench_iters)
-        avg_sets = avg_atoms = 0.0
+        avg_sets = avg_atoms = min_sets = max_sets = 0.0
     else:
         if stats_ptrs is not None and stats_sizes is not None:
-            avg_sets, avg_atoms, scores_total = _summarize_ska_batch(
+            avg_sets, avg_atoms, scores_per_batch, min_sets, max_sets = _summarize_ska_batch(
                 stats_ptrs, stats_sizes, head_count
             )
+            scores_total = scores_per_batch * args.bench_iters
         else:
-            avg_sets = avg_atoms = scores_total = 0.0
+            avg_sets = avg_atoms = scores_total = min_sets = max_sets = 0.0
     scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
     scores_per_1e6 = scores_per_s / 1e6
     print(f"[benchmark][vit] backend={backend_label} imgs/s={throughput:.1f} elapsed={elapsed:.3f}s")
@@ -249,6 +277,8 @@ def run_vit_benchmark(
                 "benchmark/scores_total": scores_total,
                 "benchmark/scores_per_s": scores_per_s,
                 "benchmark/scores_per_1e6": scores_per_1e6,
+                "benchmark/min_sets_per_seq": min_sets,
+                "benchmark/max_sets_per_seq": max_sets,
                 "benchmark/max_vram_mb": max_vram_mb,
             }
         )
@@ -267,6 +297,11 @@ def run_vit_benchmark(
             "batch": args.batch,
             "bench_warmup": args.bench_warmup,
             "bench_iters": args.bench_iters,
+            "device": info["device"],
+            "gpu_name": info["gpu_name"],
+            "torch_version": info["torch_version"],
+            "cuda_version": info["cuda_version"],
+            "git_sha": info["git_sha"],
             "images_per_s": throughput,
             "elapsed_s": elapsed,
             "avg_sets_per_seq": avg_sets,
@@ -274,6 +309,8 @@ def run_vit_benchmark(
             "scores_total": scores_total,
             "scores_per_s": scores_per_s,
             "scores_per_1e6": scores_per_1e6,
+            "min_sets_per_seq": min_sets,
+            "max_sets_per_seq": max_sets,
             "max_vram_mb": max_vram_mb,
         },
     )
