@@ -53,7 +53,7 @@ def group_rows(rows: List[Dict[str, str]]):
     groups = defaultdict(list)
     for row in rows:
         keys, metrics = split_columns(row)
-        key_tuple = tuple(sorted(keys.items()))
+        key_tuple = tuple(sorted((str(k), v) for k, v in keys.items()))
         groups[key_tuple].append(metrics)
     return groups
 
