@@ -38,10 +38,14 @@ def split_columns(row: Dict[str, str]):
         if not v:
             keys[k] = ""
             continue
+        val = v
+        if not isinstance(val, (str, bytes)):
+            keys[k] = str(val)
+            continue
         try:
-            metrics[k] = float(v)
+            metrics[k] = float(val)
         except ValueError:
-            keys[k] = v
+            keys[k] = val
     return keys, metrics
 
 
