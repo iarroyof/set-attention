@@ -1,4 +1,5 @@
 import argparse
+import copy
 import csv
 import os
 import subprocess
@@ -29,20 +30,35 @@ from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.sample_logging import select_sample_indices
 from set_attention.utils.profiling import profiler
+from src.common.repro import set_seed
 
 
 def _append_benchmark_row(csv_path: str, row: dict) -> None:
     if not csv_path:
         return
     path = Path(csv_path)
-    write_header = not path.exists()
-    fieldnames = list(row.keys())
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        if write_header:
+    if path.exists():
+        with path.open("r", newline="") as handle:
+            reader = csv.DictReader(handle)
+            existing = reader.fieldnames
+        if not existing:
+            raise ValueError(f"[benchmark] existing CSV {path} missing header.")
+        missing = [col for col in existing if col not in row]
+        extra = [col for col in row if col not in existing]
+        if missing or extra:
+            raise ValueError(
+                f"[benchmark] schema mismatch for {path}: missing={missing}, extra={extra}"
+            )
+        with path.open("a", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=existing)
+            writer.writerow({col: row.get(col, "") for col in existing})
+    else:
+        fieldnames = list(row.keys())
+        with path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
-        writer.writerow(row)
+            writer.writerow(row)
 
 
 def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
@@ -181,6 +197,9 @@ def run_vit_benchmark(
     device,
     wandb_run,
     benchmark_csv,
+    seed,
+    rep,
+    run_uid,
 ):
     bench_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -280,6 +299,8 @@ def run_vit_benchmark(
                 "benchmark/min_sets_per_seq": min_sets,
                 "benchmark/max_sets_per_seq": max_sets,
                 "benchmark/max_vram_mb": max_vram_mb,
+                "benchmark/seed": seed,
+                "benchmark/rep": rep,
             }
         )
     _append_benchmark_row(
@@ -297,6 +318,9 @@ def run_vit_benchmark(
             "batch": args.batch,
             "bench_warmup": args.bench_warmup,
             "bench_iters": args.bench_iters,
+            "seed": seed,
+            "rep": rep,
+            "run_uid": run_uid,
             "device": info["device"],
             "gpu_name": info["gpu_name"],
             "torch_version": info["torch_version"],
@@ -365,6 +389,23 @@ def main():
     ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     ap.add_argument(
+        "--seeds",
+        type=str,
+        default="",
+        help="Optional comma/space separated list of seeds (overrides --seed).",
+    )
+    ap.add_argument("--reps", type=int, default=1, help="Number of repetitions per seed.")
+    ap.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="Use deterministic torch algorithms (may reduce throughput).",
+    )
+    ap.add_argument(
+        "--benchmark-mode",
+        action="store_true",
+        help="Enable benchmark-friendly seeding (disables deterministic algs but seeds RNG).",
+    )
+    ap.add_argument(
         "--sdpa-baseline",
         action="store_true",
         help="Skip set attention/router and run plain ViT encoder.",
@@ -376,6 +417,33 @@ def main():
     )
     args = ap.parse_args()
     _configure_dot_naive(args.dot_naive)
+
+    seed_values: List[int] = []
+    if args.seeds:
+        for part in args.seeds.replace(",", " ").split():
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                seed_values.append(int(part))
+            except ValueError:
+                continue
+    if not seed_values:
+        seed_values = [int(args.seed)]
+    reps = max(1, int(args.reps))
+    multi_run = len(seed_values) * reps > 1
+    for seed in seed_values:
+        for rep in range(1, reps + 1):
+            run_args = copy.deepcopy(args)
+            run_uid = f"{int(time.time() * 1e6)}-{os.getpid()}-{seed}-{rep}"
+            run_single(run_args, seed, rep, run_uid, multi_run)
+    return
+
+
+def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
+    torch.backends.cudnn.benchmark = True
+    set_seed(seed, deterministic=args.deterministic, benchmark_mode=args.benchmark_mode)
+    print(f"[Run] seed={seed} rep={rep} uid={run_uid}")
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {
@@ -392,11 +460,17 @@ def main():
         "sdpa_baseline": args.sdpa_baseline,
         "precompute_bank": args.precompute_bank,
         "sample_count": args.sample_count,
+        "seed": seed,
+        "rep": rep,
+        "run_uid": run_uid,
     }
+    run_name = args.wandb_run_name or None
+    if run_name and multi_run:
+        run_name = f"{run_name}-s{seed}-r{rep}"
     wandb_run = init_wandb(
         args.wandb,
         args.wandb_project or None,
-        args.wandb_run_name or None,
+        run_name,
         wandb_config,
         wandb_tags,
     )
@@ -414,7 +488,7 @@ def main():
         base_dataset = torchvision.datasets.CIFAR10(root=str(vision_root), train=True, download=True, transform=transform)
         dataset_len = len(base_dataset)
     else:
-        base_dataset = SyntheticVisionDataset(num_samples=args.demo_samples, img_size=32, num_classes=args.num_classes, seed=args.seed)
+        base_dataset = SyntheticVisionDataset(num_samples=args.demo_samples, img_size=32, num_classes=args.num_classes, seed=seed)
         dataset_len = len(base_dataset)
 
     limit = args.limit if args.limit is not None else dataset_len
@@ -528,6 +602,9 @@ def main():
             device,
             wandb_run,
             args.benchmark_csv,
+            seed,
+            rep,
+            run_uid,
         )
         wandb_run.finish()
         return
