@@ -52,28 +52,19 @@ def detect_numeric_columns(rows: List[Dict[str, str]]) -> Tuple[set, List[str]]:
     return numeric_cols, header
 
 
-def split_columns(row: Dict[str, str], numeric_cols: set):
-    metrics = {}
-    keys = {}
-    for k, v in row.items():
-        if not v:
-            keys[k] = ""
-            continue
-        if k in numeric_cols:
-            try:
-                metrics[k] = float(v)
-                continue
-            except (ValueError, TypeError):
-                pass
-        keys[k] = str(v)
-    return keys, metrics
-
-
-def group_rows(rows: List[Dict[str, str]], numeric_cols: set):
+def group_rows(rows: List[Dict[str, str]], numeric_cols: set, group_cols: List[str]):
     groups = defaultdict(list)
     for row in rows:
-        keys, metrics = split_columns(row, numeric_cols)
-        key_tuple = tuple(sorted((str(k), v) for k, v in keys.items()))
+        key_tuple = tuple((col, row.get(col, "")) for col in group_cols)
+        metrics = {}
+        for col in numeric_cols:
+            val = row.get(col, "")
+            if val in ("", None):
+                continue
+            try:
+                metrics[col] = float(val)
+            except (ValueError, TypeError):
+                continue
         groups[key_tuple].append(metrics)
     return groups
 
@@ -92,7 +83,7 @@ def aggregate_metrics(group):
     return metrics
 
 
-def write_summary(groups, output_path: Path):
+def write_summary(groups, output_path: Path, group_cols: List[str], numeric_order: List[str]):
     rows = []
     metric_names = set()
     for key_tuple, metrics_list in groups.items():
@@ -100,8 +91,15 @@ def write_summary(groups, output_path: Path):
         metrics = aggregate_metrics(metrics_list)
         metric_names.update(metrics.keys())
         rows.append((key_dict, metrics))
-    key_cols = sorted({k for key_dict, _ in rows for k in key_dict.keys()})
-    metric_cols = sorted(metric_names)
+    if not rows:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["note"])
+            writer.writeheader()
+            writer.writerow({"note": "no_data"})
+        return
+    key_cols = [col for col in group_cols if col]
+    metric_cols = [col for col in numeric_order if col in metric_names]
     fieldnames = key_cols + [f"{m}_mean" for m in metric_cols] + [f"{m}_std" for m in metric_cols] + [
         f"{m}_n" for m in metric_cols
     ]
@@ -125,11 +123,13 @@ def main():
         input_paths = list(Path("out/benchmarks").glob("*.csv"))
     rows = load_rows(input_paths)
     if not rows:
+        write_summary({}, Path(args.output), [], [])
         print("No rows found; nothing to aggregate.")
         return
-    numeric_cols, _ = detect_numeric_columns(rows)
-    groups = group_rows(rows, numeric_cols)
-    write_summary(groups, Path(args.output))
+    numeric_cols, header = detect_numeric_columns(rows)
+    group_cols = [col for col in header if col not in numeric_cols and col not in {"run_uid", "seed", "rep"}]
+    groups = group_rows(rows, numeric_cols, group_cols)
+    write_summary(groups, Path(args.output), group_cols, [col for col in header if col in numeric_cols])
     print(f"Aggregated {len(rows)} rows into {len(groups)} groups -> {args.output}")
 
 
