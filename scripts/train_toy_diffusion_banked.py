@@ -394,13 +394,16 @@ def run_diffusion_benchmark(
     text_mode = args.data_mode == "text"
     stride_text = args.text_stride if args.text_stride > 0 else args.text_seq_len
     config_label = args.config
+    dataset_label = args.config
     if text_mode:
         config_label = f"text::{args.text_dataset}@{args.text_seq_len}/{stride_text}"
+        dataset_label = args.text_dataset
     _append_benchmark_row(
         benchmark_csv,
         {
             "script": "train_toy_diffusion_banked",
             "task": "textdiff" if text_mode else "diffusion",
+            "dataset": dataset_label,
             "config": config_label,
             "dataset_id": config_label,
             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",

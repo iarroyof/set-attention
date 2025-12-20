@@ -4,7 +4,16 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-FORCE_STR_COLUMNS = {"seed", "rep", "run_uid"}
+FORCE_STR_COLUMNS = {
+    "seed",
+    "rep",
+    "run_uid",
+    "device",
+    "gpu_name",
+    "torch_version",
+    "cuda_version",
+    "git_sha",
+}
 
 def parse_args():
     ap = argparse.ArgumentParser(description="Aggregate benchmark CSVs into summary stats.")
