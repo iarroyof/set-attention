@@ -306,17 +306,39 @@ class TinyLMBackbone(nn.Module):
 
 def _append_benchmark_row(csv_path: str, row: dict) -> None:
     if not csv_path:
-        wandb_run.finish()
         return
     path = Path(csv_path)
-    write_header = not path.exists()
-    fieldnames = list(row.keys())
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        if write_header:
+    if path.exists():
+        with path.open("r", newline="") as handle:
+            reader = csv.DictReader(handle)
+            existing = reader.fieldnames or []
+            existing_rows = list(reader)
+        if not existing:
+            fieldnames = list(row.keys())
+            with path.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(row)
+            return
+        extras = [col for col in row if col not in existing]
+        if extras:
+            new_fields = existing + [col for col in extras if col not in existing]
+            with path.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=new_fields)
+                writer.writeheader()
+                for prev in existing_rows:
+                    writer.writerow({col: prev.get(col, "") for col in new_fields})
+            existing = new_fields
+        with path.open("a", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=existing)
+            writer.writerow({col: row.get(col, "") for col in existing})
+    else:
+        fieldnames = list(row.keys())
+        with path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
-        writer.writerow(row)
+            writer.writerow(row)
 
 
 def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):

@@ -142,15 +142,24 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
     if path.exists():
         with path.open("r", newline="") as handle:
             reader = csv.DictReader(handle)
-            existing = reader.fieldnames
+            existing = reader.fieldnames or []
+            existing_rows = list(reader)
         if not existing:
-            raise ValueError(f"[benchmark] existing CSV {path} missing header.")
-        missing = [col for col in existing if col not in row]
-        extra = [col for col in row if col not in existing]
-        if missing or extra:
-            raise ValueError(
-                f"[benchmark] schema mismatch for {path}: missing={missing}, extra={extra}"
-            )
+            fieldnames = list(row.keys())
+            with path.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(row)
+            return
+        extras = [col for col in row if col not in existing]
+        if extras:
+            new_fields = existing + [col for col in extras if col not in existing]
+            with path.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=new_fields)
+                writer.writeheader()
+                for prev in existing_rows:
+                    writer.writerow({col: prev.get(col, "") for col in new_fields})
+            existing = new_fields
         with path.open("a", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=existing)
             writer.writerow({col: row.get(col, "") for col in existing})
