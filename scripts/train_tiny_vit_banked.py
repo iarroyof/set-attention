@@ -307,6 +307,9 @@ def run_vit_benchmark(
         benchmark_csv,
         {
             "script": "train_tiny_vit_banked",
+            "task": "vit",
+            "dataset": args.data_mode,
+            "dataset_id": args.data_mode,
             "data_mode": args.data_mode,
             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
             "precision": args.precision,

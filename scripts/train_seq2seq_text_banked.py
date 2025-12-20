@@ -297,7 +297,9 @@ def run_seq2seq_benchmark(
         benchmark_csv,
         {
             "script": "train_seq2seq_text_banked",
+            "task": "seq2seq",
             "dataset": args.dataset or "custom",
+            "dataset_id": args.dataset or "custom",
             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
             "precision": args.precision,
             "set_kernel": args.set_kernel,

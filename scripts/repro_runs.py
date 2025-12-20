@@ -4,6 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+FORCE_STR_COLUMNS = {"seed", "rep", "run_uid"}
 
 def parse_args():
     ap = argparse.ArgumentParser(description="Aggregate benchmark CSVs into summary stats.")
@@ -37,6 +38,8 @@ def detect_numeric_columns(rows: List[Dict[str, str]]) -> Tuple[set, List[str]]:
     header = list(rows[0].keys())
     numeric_cols = set()
     for col in header:
+        if col in FORCE_STR_COLUMNS:
+            continue
         values = [row[col] for row in rows if row.get(col) not in ("", None)]
         if not values:
             continue
@@ -127,7 +130,8 @@ def main():
         print("No rows found; nothing to aggregate.")
         return
     numeric_cols, header = detect_numeric_columns(rows)
-    group_cols = [col for col in header if col not in numeric_cols and col not in {"run_uid", "seed", "rep"}]
+    numeric_cols -= FORCE_STR_COLUMNS
+    group_cols = [col for col in header if col not in numeric_cols and col not in FORCE_STR_COLUMNS]
     groups = group_rows(rows, numeric_cols, group_cols)
     write_summary(groups, Path(args.output), group_cols, [col for col in header if col in numeric_cols])
     print(f"Aggregated {len(rows)} rows into {len(groups)} groups -> {args.output}")

@@ -471,7 +471,9 @@ def run_lm_benchmark(
         benchmark_csv,
         {
             "script": "train_toy_lm_banked",
+            "task": "lm",
             "dataset": args.dataset or "custom",
+            "dataset_id": args.dataset or "custom",
             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
             "precision": args.precision,
             "attn": args.attn,
@@ -854,6 +856,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     optimizer = torch.optim.AdamW(params, lr=3e-4)
 
     if args.benchmark:
+        sys_info = _system_info()
         if args.sdpa_baseline:
             if benchmark_batch is None:
                 print("[benchmark] no data available.")
@@ -907,18 +910,21 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                         "benchmark/rep": rep,
                     }
                 )
+            dataset_id = args.dataset or "custom"
             _append_benchmark_row(
                 args.benchmark_csv,
                 {
-                        "script": "train_toy_lm_banked",
-                        "dataset": args.dataset or "custom",
-                        "mode": "sdpa",
-                        "precision": args.precision,
-                        "attn": args.attn,
-                        "batch": bench_batch,
-                        "seq_len": tgt_ids.size(1),
-                        "seq_stride": args.seq_stride,
-                        "window": args.window,
+                    "script": "train_toy_lm_banked",
+                    "task": "lm",
+                    "dataset": dataset_id,
+                    "dataset_id": dataset_id,
+                    "mode": "sdpa",
+                    "precision": args.precision,
+                    "attn": args.attn,
+                    "batch": bench_batch,
+                    "seq_len": tgt_ids.size(1),
+                    "seq_stride": args.seq_stride,
+                    "window": args.window,
                     "stride": args.stride,
                     "minhash_k": args.minhash_k,
                     "router_topk": args.router_topk,
@@ -928,17 +934,22 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     "seed": seed,
                     "rep": rep,
                     "run_uid": run_uid,
+                    "device": sys_info["device"],
+                    "gpu_name": sys_info["gpu_name"],
+                    "torch_version": sys_info["torch_version"],
+                    "cuda_version": sys_info["cuda_version"],
+                    "git_sha": sys_info["git_sha"],
                     "tokens_per_s": throughput,
                     "elapsed_s": elapsed,
                     "tokens_total": tokens,
                     "avg_sets_per_seq": 0.0,
                     "avg_atoms_per_set": 0.0,
-                        "scores_total": scores_total,
-                        "scores_per_s": scores_per_s,
-                        "scores_per_1e6": throughput_per_m,
-                        "max_vram_mb": max_vram_mb,
-                    },
-                )
+                    "scores_total": scores_total,
+                    "scores_per_s": scores_per_s,
+                    "scores_per_1e6": throughput_per_m,
+                    "max_vram_mb": max_vram_mb,
+                },
+            )
         else:
             run_lm_benchmark(
                 args,

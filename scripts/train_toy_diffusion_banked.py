@@ -391,7 +391,9 @@ def run_diffusion_benchmark(
         benchmark_csv,
         {
             "script": "train_toy_diffusion_banked",
+            "task": "textdiff" if text_mode else "diffusion",
             "config": config_label,
+            "dataset_id": config_label,
             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
             "precision": args.precision,
             "window": args.window,
