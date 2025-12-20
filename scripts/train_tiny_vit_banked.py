@@ -30,7 +30,7 @@ from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.sample_logging import select_sample_indices
 from set_attention.utils.profiling import profiler
-from src.common.repro import set_seed
+from common.repro import set_seed
 
 
 def _append_benchmark_row(csv_path: str, row: dict) -> None:

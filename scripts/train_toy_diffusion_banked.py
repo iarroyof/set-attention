@@ -28,7 +28,7 @@ from set_attention.heads.token_router import TokenSetRouter
 from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.data.wikitext import load_wikitext_lines, tokenize_lines, chunk_tokens
-from src.common.repro import set_seed
+from common.repro import set_seed
 
 
 TEXT_SPECIAL_TOKENS = ["<pad>", "<s>", "</s>", "<unk>"]

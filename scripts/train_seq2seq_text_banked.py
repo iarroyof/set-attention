@@ -40,7 +40,7 @@ from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.profiling import profiler
 from set_attention.utils.wandb import init_wandb
 from set_attention.experiments.nlp_eval import corpus_bleu, rouge_l
-from src.common.repro import set_seed
+from common.repro import set_seed
 
 
 def _append_benchmark_row(csv_path: str, row: dict) -> None:
