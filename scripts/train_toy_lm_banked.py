@@ -50,6 +50,7 @@ def make_char_data(n=2000, seq_len=64, vocab=32, seed=3):
 
 
 SPECIAL_TOKENS = ["<pad>", "<s>", "</s>", "<unk>"]
+EXPLICIT_ATTN_IMPLS = ("pytorch_math", "explicit_matmul")
 
 
 def build_vocab_from_tokens(tokens):
@@ -292,16 +293,86 @@ def load_wikitext_dataset(args, cache_dir):
     return train_X, train_Y, val_X, val_Y, stoi, itos
 
 
-class TinyLMBackbone(nn.Module):
-    def __init__(self, vocab: int, d_model: int, nhead: int, layers: int):
+def _explicit_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, scale: float) -> torch.Tensor:
+    # q, k, v: (B, H, L, Dh)
+    scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+    weights = torch.softmax(scores, dim=-1)
+    return torch.matmul(weights, v)
+
+
+class ExplicitMultiheadAttention(nn.Module):
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.0):
         super().__init__()
-        self.emb = nn.Embedding(vocab, d_model)
-        layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
-        self.enc = nn.TransformerEncoder(layer, num_layers=layers)
+        if d_model % nhead != 0:
+            raise ValueError("d_model must be divisible by nhead for explicit attention.")
+        self.d_model = d_model
         self.nhead = nhead
+        self.d_head = d_model // nhead
+        self.scale = 1.0 / math.sqrt(self.d_head)
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.enc(self.emb(x))
+        # x: (B, L, D)
+        B, L, _ = x.shape
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
+        q = q.view(B, L, self.nhead, self.d_head).transpose(1, 2)  # (B, H, L, Dh)
+        k = k.view(B, L, self.nhead, self.d_head).transpose(1, 2)
+        v = v.view(B, L, self.nhead, self.d_head).transpose(1, 2)
+        ctx = _explicit_attention(q, k, v, self.scale)
+        ctx = self.dropout(ctx)
+        ctx = ctx.transpose(1, 2).reshape(B, L, self.d_model)
+        return self.out_proj(ctx)
+
+
+class ExplicitTransformerEncoderLayer(nn.Module):
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.1, activation: str = "gelu"):
+        super().__init__()
+        self.self_attn = ExplicitMultiheadAttention(d_model, nhead, dropout=dropout)
+        self.linear1 = nn.Linear(d_model, d_model * 4)
+        self.linear2 = nn.Linear(d_model * 4, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.activation = F.gelu if activation == "gelu" else F.relu
+
+    def forward(self, src: torch.Tensor) -> torch.Tensor:
+        attn_out = self.self_attn(src)
+        src = self.norm1(src + self.dropout1(attn_out))
+        ff = self.linear2(self.dropout(self.activation(self.linear1(src))))
+        src = self.norm2(src + self.dropout2(ff))
+        return src
+
+
+class TinyLMBackbone(nn.Module):
+    def __init__(self, vocab: int, d_model: int, nhead: int, layers: int, attn_baseline: str = "pytorch"):
+        super().__init__()
+        self.emb = nn.Embedding(vocab, d_model)
+        self.attn_baseline = attn_baseline
+        self.nhead = nhead
+        if attn_baseline == "explicit":
+            self.layers = nn.ModuleList(
+                [ExplicitTransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=0.0) for _ in range(layers)]
+            )
+        else:
+            layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
+            self.enc = nn.TransformerEncoder(layer, num_layers=layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        emb = self.emb(x)
+        if self.attn_baseline == "explicit":
+            out = emb
+            for layer in self.layers:
+                out = layer(out.float())  # enforce fp32 in explicit baseline
+            return out
+        return self.enc(emb)
 
 
 def _append_benchmark_row(csv_path: str, row: dict) -> None:
@@ -373,6 +444,21 @@ def _system_info():
         "cuda_version": cuda_version,
         "git_sha": git_sha,
     }
+
+
+def _sanity_check_explicit_attention(device: torch.device, d_model: int, nhead: int, tol: float = 1e-5) -> None:
+    torch.manual_seed(1337)
+    B, L = 2, 4
+    d_head = d_model // nhead
+    x = torch.randn(B, nhead, L, d_head, device=device)
+    explicit = _explicit_attention(x, x, x, 1.0 / math.sqrt(d_head))
+    sdp = F.scaled_dot_product_attention(x, x, x)
+    max_diff = (explicit - sdp).abs().max().item()
+    if max_diff > tol:
+        raise RuntimeError(
+            f"Explicit attention sanity check failed (max diff {max_diff:.2e} > {tol}). "
+            "Explicit baseline no longer matches PyTorch SDP math."
+        )
 
 
 def _configure_dot_naive(dot_naive: bool) -> None:
@@ -466,6 +552,7 @@ def run_lm_benchmark(
     scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
     throughput_per_m = scores_per_s / 1e6
     scores_per_token = scores_total / tokens_total if tokens_total > 0 else 0.0
+    attn_impl = f"ska/{args.ska_backend}"
     print(
         f"[benchmark][lm] backend={args.ska_backend} precision={args.precision} "
         f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
@@ -497,6 +584,7 @@ def run_lm_benchmark(
             "dataset": args.dataset or "custom",
             "dataset_id": args.dataset or "custom",
             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+            "attn_impl": attn_impl,
             "precision": args.precision,
             "attn": args.attn,
             "batch": args.batch,
@@ -536,6 +624,12 @@ def run_lm_benchmark(
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--attn", choices=["dot", "cosine", "rbf", "intersect", "ska_true"], default="dot")
+    ap.add_argument(
+        "--attn-baseline",
+        choices=["pytorch", "explicit"],
+        default="pytorch",
+        help="Baseline attention implementation when using --sdpa-baseline.",
+    )
     ap.add_argument("--epochs", type=int, default=5)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--d-model", type=int, default=128)
@@ -602,6 +696,8 @@ def main():
     ap.add_argument("--reps", type=int, default=1, help="Number of repetitions per seed.")
     args = ap.parse_args()
     _configure_dot_naive(args.dot_naive)
+    if args.sdpa_baseline and args.attn_baseline == "explicit":
+        _sanity_check_explicit_attention(torch.device(args.device), args.d_model, args.nhead)
     seed_values = []
     if args.seeds:
         for part in args.seeds.replace(",", " ").split():
@@ -840,7 +936,13 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         atom_emb = adapter = None
         phi_snapshot = None
 
-    backbone = TinyLMBackbone(vocab_size, args.d_model, args.nhead, args.layers).to(device)
+    backbone = TinyLMBackbone(
+        vocab_size,
+        args.d_model,
+        args.nhead,
+        args.layers,
+        attn_baseline="explicit" if (args.sdpa_baseline and args.attn_baseline == "explicit") else "pytorch",
+    ).to(device)
     if not args.sdpa_baseline:
         ska_score_mode = "delta_plus_dot"
         ska_gamma = 0.3
@@ -918,8 +1020,9 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             scores_total = float(bench_batch * tgt_ids.size(1) * tgt_ids.size(1) * args.nhead)
             scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
             throughput_per_m = scores_per_s / 1e6
+            attn_impl = "dot_explicit" if args.attn_baseline == "explicit" else "dot_builtin"
             print(
-                f"[benchmark][lm] backend=sdpa precision={args.precision} "
+                f"[benchmark][lm] backend=sdpa ({attn_impl}) precision={args.precision} "
                 f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
             )
             if wandb_run.enabled:
@@ -941,6 +1044,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     "dataset": dataset_id,
                     "dataset_id": dataset_id,
                     "mode": "sdpa",
+                    "attn_impl": attn_impl,
                     "precision": args.precision,
                     "attn": args.attn,
                     "batch": bench_batch,
@@ -1059,7 +1163,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         val_bleu = corpus_bleu(val_refs_epoch, val_hyps_epoch) if val_refs_epoch else 0.0
         train_ppl = math.exp(min(train_loss, 20.0))
         val_ppl = math.exp(min(val_loss, 20.0))
+        attn_impl = "dot_explicit" if (args.sdpa_baseline and args.attn_baseline == "explicit") else "dot_builtin"
         mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
+        if args.sdpa_baseline:
+            mode_tag = f"{mode_tag}/{attn_impl}"
         msg = (
             f"[LM-Banked][{mode_tag}][{args.attn}] epoch {epoch:02d} "
             f"train loss {train_loss:.4f} ppl {train_ppl:.2f} BLEU {train_bleu:.3f} | "
