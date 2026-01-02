@@ -111,7 +111,11 @@ def write_summary(groups, output_path: Path, group_cols: List[str], numeric_orde
             writer.writerow({"note": "no_data"})
         return
     key_cols = [col for col in group_cols if col]
+    # Keep original numeric order, but include any new metrics discovered.
     metric_cols = [col for col in numeric_order if col in metric_names]
+    for extra in sorted(metric_names):
+        if extra not in metric_cols:
+            metric_cols.append(extra)
     fieldnames = key_cols + [f"{m}_mean" for m in metric_cols] + [f"{m}_std" for m in metric_cols] + [
         f"{m}_n" for m in metric_cols
     ]
@@ -125,6 +129,17 @@ def write_summary(groups, output_path: Path, group_cols: List[str], numeric_orde
                 row[f"{metric_name}_mean"] = stats["mean"]
                 row[f"{metric_name}_std"] = stats["std"]
                 row[f"{metric_name}_n"] = stats["n"]
+            # Fill missing metric columns with NA for clarity
+            for metric_name in metric_cols:
+                mean_key = f"{metric_name}_mean"
+                std_key = f"{metric_name}_std"
+                n_key = f"{metric_name}_n"
+                if mean_key not in row:
+                    row[mean_key] = "NA"
+                if std_key not in row:
+                    row[std_key] = "NA"
+                if n_key not in row:
+                    row[n_key] = "NA"
             writer.writerow(row)
 
 
