@@ -446,6 +446,12 @@ def _system_info():
     }
 
 
+def _attn_impl_label(args, sdpa_mode: bool) -> str:
+    if sdpa_mode:
+        return "dot_explicit" if args.attn_baseline == "explicit" else "dot_builtin"
+    return f"ska/{args.ska_backend}"
+
+
 def _sanity_check_explicit_attention(device: torch.device, d_model: int, nhead: int, tol: float = 1e-5) -> None:
     torch.manual_seed(1337)
     B, L = 2, 4
@@ -539,6 +545,7 @@ def run_lm_benchmark(
     tokens_total = bench_batch_size * max_len * args.bench_iters
     throughput = tokens_total / elapsed if elapsed > 0 else 0.0
     info = _system_info()
+    attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     if stats_ptrs is not None and stats_sizes is not None:
         avg_sets, avg_atoms, scores_per_batch, min_sets, max_sets = _summarize_ska_batch(
             stats_ptrs, stats_sizes, set_attn.num_heads if set_attn is not None else args.nhead
@@ -552,9 +559,8 @@ def run_lm_benchmark(
     scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
     throughput_per_m = scores_per_s / 1e6
     scores_per_token = scores_total / tokens_total if tokens_total > 0 else 0.0
-    attn_impl = f"ska/{args.ska_backend}"
     print(
-        f"[benchmark][lm] backend={args.ska_backend} precision={args.precision} "
+        f"[benchmark][lm] backend={args.ska_backend} ({attn_impl}) precision={args.precision} "
         f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
     )
     if wandb_run.enabled:
@@ -668,6 +674,12 @@ def main():
         default="",
         help="Optional CSV file to append benchmark metrics.",
     )
+    ap.add_argument(
+        "--metrics-csv",
+        type=str,
+        default="",
+        help="Optional CSV file to append training/validation metrics per epoch.",
+    )
     ap.add_argument("--dataset", choices=["", "wikitext2", "wikitext103"], default="")
     ap.add_argument("--dataset-lines", type=int, default=0, help="Limit number of text lines per split (0 = all).")
     ap.add_argument(
@@ -759,6 +771,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,
+        "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
     }
     run_name = args.wandb_run_name or None
     if run_name and multi_run:
@@ -1185,6 +1198,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "val/loss": val_loss,
                 "val/ppl": val_ppl,
                 "val/bleu": val_bleu,
+                "impl/attn_impl": attn_impl,
             }
             if args.profile:
                 payload["train/time_s"] = prof["time_s"]
@@ -1199,6 +1213,38 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             if sample_text:
                 payload["samples/val_text"] = sample_text
             wandb_run.log(payload, step=epoch)
+        if args.metrics_csv:
+            _append_benchmark_row(
+                args.metrics_csv,
+                {
+                    "script": "train_toy_lm_banked",
+                    "task": "lm",
+                    "dataset": args.dataset or "custom",
+                    "dataset_id": args.dataset or "custom",
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": attn_impl,
+                    "precision": args.precision,
+                    "attn": args.attn,
+                    "batch": args.batch,
+                    "seq_len": args.seq_len,
+                    "seq_stride": args.seq_stride,
+                    "window": args.window,
+                    "stride": args.stride,
+                    "minhash_k": args.minhash_k,
+                    "router_topk": args.router_topk,
+                    "adapter_rank": args.adapter_rank,
+                    "seed": seed,
+                    "rep": rep,
+                    "run_uid": run_uid,
+                    "epoch": epoch,
+                    "train_loss": train_loss,
+                    "train_ppl": train_ppl,
+                    "train_bleu": train_bleu,
+                    "val_loss": val_loss,
+                    "val_ppl": val_ppl,
+                    "val_bleu": val_bleu,
+                },
+            )
 
     wandb_run.finish()
 if __name__ == "__main__":
