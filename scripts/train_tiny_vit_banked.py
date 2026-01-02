@@ -93,6 +93,76 @@ def _configure_dot_naive(dot_naive: bool) -> None:
     print("[SDP] dot-naive enabled: flash/mem-efficient SDP disabled; using math backend.")
 
 
+def _explicit_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, scale: float) -> torch.Tensor:
+    scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+    weights = torch.softmax(scores, dim=-1)
+    return torch.matmul(weights, v)
+
+
+class ExplicitMultiheadAttention(nn.Module):
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.0):
+        super().__init__()
+        if d_model % nhead != 0:
+            raise ValueError("d_model must be divisible by nhead for explicit attention.")
+        self.d_model = d_model
+        self.nhead = nhead
+        self.d_head = d_model // nhead
+        self.scale = 1.0 / math.sqrt(self.d_head)
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, L, _ = x.shape
+        q = self.q_proj(x).view(B, L, self.nhead, self.d_head).transpose(1, 2)
+        k = self.k_proj(x).view(B, L, self.nhead, self.d_head).transpose(1, 2)
+        v = self.v_proj(x).view(B, L, self.nhead, self.d_head).transpose(1, 2)
+        ctx = _explicit_attention(q, k, v, self.scale)
+        ctx = self.dropout(ctx)
+        return self.out_proj(ctx.transpose(1, 2).reshape(B, L, self.d_model))
+
+
+class ExplicitTransformerEncoderLayer(nn.Module):
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.1, activation: str = "gelu"):
+        super().__init__()
+        self.self_attn = ExplicitMultiheadAttention(d_model, nhead, dropout=dropout)
+        self.linear1 = nn.Linear(d_model, d_model * 4)
+        self.linear2 = nn.Linear(d_model * 4, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.activation = F.gelu if activation == "gelu" else F.relu
+
+    def forward(self, src: torch.Tensor) -> torch.Tensor:
+        attn_out = self.self_attn(src)
+        src = self.norm1(src + self.dropout1(attn_out))
+        ff = self.linear2(self.dropout(self.activation(self.linear1(src))))
+        src = self.norm2(src + self.dropout2(ff))
+        return src
+
+
+def _attn_impl_label(args, sdpa_mode: bool) -> str:
+    if sdpa_mode:
+        return "dot_explicit" if args.attn_baseline == "explicit" else "dot_builtin"
+    return f"ska/{args.ska_backend}"
+
+
+def _sanity_check_explicit_attention(device: torch.device, d_model: int, nhead: int, tol: float = 1e-5) -> None:
+    torch.manual_seed(1337)
+    B, L = 2, 4
+    d_head = d_model // nhead
+    x = torch.randn(B, nhead, L, d_head, device=device)
+    explicit = _explicit_attention(x, x, x, 1.0 / math.sqrt(d_head))
+    sdp = F.scaled_dot_product_attention(x, x, x)
+    max_diff = (explicit - sdp).abs().max().item()
+    if max_diff > tol:
+        raise RuntimeError(f"Explicit attention sanity check failed (max diff {max_diff:.2e} > {tol}).")
+
+
 def _system_info():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     gpu_name = torch.cuda.get_device_name(torch.cuda.current_device()) if torch.cuda.is_available() else "cpu"
@@ -152,15 +222,26 @@ class PatchEmbed(nn.Module):
 
 
 class TinyViTBackbone(nn.Module):
-    def __init__(self, dim=128, depth=4, heads=4, patch=4, img_size=32):
+    def __init__(self, dim=128, depth=4, heads=4, patch=4, img_size=32, attn_baseline: str = "pytorch"):
         super().__init__()
         self.patch = PatchEmbed(3, patch, dim, img_size)
-        enc_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=heads, batch_first=True)
-        self.enc = nn.TransformerEncoder(enc_layer, num_layers=depth)
+        self.use_explicit = attn_baseline == "explicit"
+        if self.use_explicit:
+            self.enc_layers = nn.ModuleList(
+                [ExplicitTransformerEncoderLayer(d_model=dim, nhead=heads, dropout=0.0) for _ in range(depth)]
+            )
+        else:
+            enc_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=heads, batch_first=True)
+            self.enc = nn.TransformerEncoder(enc_layer, num_layers=depth)
         self.heads = heads
 
     def forward(self, x):
         tokens = self.patch(x)
+        if self.use_explicit:
+            h = tokens
+            for layer in self.enc_layers:
+                h = layer(h.float())
+            return h
         return self.enc(tokens)
 
 
@@ -231,8 +312,9 @@ def run_vit_benchmark(
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
+    attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     if args.sdpa_baseline:
-        backend_label = "sdpa"
+        backend_label = f"sdpa/{attn_impl}"
 
         def step():
             optim.zero_grad(set_to_none=True)
@@ -244,7 +326,7 @@ def run_vit_benchmark(
             optim.step()
 
     else:
-        backend_label = f"{args.ska_backend}/{args.precision}"
+        backend_label = attn_impl
 
         def step():
             nonlocal stats_ptrs, stats_sizes
@@ -321,6 +403,7 @@ def run_vit_benchmark(
             "dataset_id": args.data_mode,
             "data_mode": args.data_mode,
             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+            "attn_impl": attn_impl,
             "precision": args.precision,
             "patch": args.patch,
             "window": args.window,
@@ -384,6 +467,12 @@ def main():
         action="store_true",
         help="Force dot-product baseline attention to use the naive math path.",
     )
+    ap.add_argument(
+        "--attn-baseline",
+        choices=["pytorch", "explicit"],
+        default="pytorch",
+        help="Baseline attention implementation when --sdpa-baseline is used.",
+    )
     ap.add_argument("--benchmark", action="store_true")
     ap.add_argument("--bench-warmup", type=int, default=5)
     ap.add_argument("--bench-iters", type=int, default=20)
@@ -429,6 +518,8 @@ def main():
     )
     args = ap.parse_args()
     _configure_dot_naive(args.dot_naive)
+    if args.sdpa_baseline and args.attn_baseline == "explicit":
+        _sanity_check_explicit_attention(torch.device(args.device), dim=128, nhead=4)
 
     seed_values: List[int] = []
     if args.seeds:
@@ -475,6 +566,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,
+        "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
     }
     run_name = args.wandb_run_name or None
     if run_name and multi_run:
@@ -569,7 +661,13 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             f"val samples {val_count_log} | baseline mode (no banks)"
         )
 
-    backbone = TinyViTBackbone(dim=128, depth=4, heads=4, patch=args.patch).to(device)
+    backbone = TinyViTBackbone(
+        dim=128,
+        depth=4,
+        heads=4,
+        patch=args.patch,
+        attn_baseline="explicit" if (args.sdpa_baseline and args.attn_baseline == "explicit") else "pytorch",
+    ).to(device)
     set_attn = router = None
     if not args.sdpa_baseline:
         set_attn = SetBankAttention(

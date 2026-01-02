@@ -153,21 +153,110 @@ def _normalize_tokenizer_config(config: Dict[str, Any]) -> Dict[str, Any]:
             out[key] = int(out[key])
     return out
 
+def _explicit_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, scale: float) -> torch.Tensor:
+    scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+    weights = torch.softmax(scores, dim=-1)
+    return torch.matmul(weights, v)
+
+
+class ExplicitMultiheadAttention(nn.Module):
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.0):
+        super().__init__()
+        if d_model % nhead != 0:
+            raise ValueError("d_model must be divisible by nhead for explicit attention.")
+        self.d_model = d_model
+        self.nhead = nhead
+        self.d_head = d_model // nhead
+        self.scale = 1.0 / math.sqrt(self.d_head)
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, L, _ = x.shape
+        q = self.q_proj(x).view(B, L, self.nhead, self.d_head).transpose(1, 2)
+        k = self.k_proj(x).view(B, L, self.nhead, self.d_head).transpose(1, 2)
+        v = self.v_proj(x).view(B, L, self.nhead, self.d_head).transpose(1, 2)
+        ctx = _explicit_attention(q, k, v, self.scale)
+        ctx = self.dropout(ctx)
+        return self.out_proj(ctx.transpose(1, 2).reshape(B, L, self.d_model))
+
+
+class ExplicitTransformerEncoderLayer(nn.Module):
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.1, activation: str = "gelu"):
+        super().__init__()
+        self.self_attn = ExplicitMultiheadAttention(d_model, nhead, dropout=dropout)
+        self.linear1 = nn.Linear(d_model, d_model * 4)
+        self.linear2 = nn.Linear(d_model * 4, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.activation = F.gelu if activation == "gelu" else F.relu
+
+    def forward(self, src: torch.Tensor) -> torch.Tensor:
+        attn_out = self.self_attn(src)
+        src = self.norm1(src + self.dropout1(attn_out))
+        ff = self.linear2(self.dropout(self.activation(self.linear1(src))))
+        src = self.norm2(src + self.dropout2(ff))
+        return src
+
+
+def _attn_impl_label(args, sdpa_mode: bool) -> str:
+    if sdpa_mode:
+        return "dot_explicit" if args.attn_baseline == "explicit" else "dot_builtin"
+    return f"ska/{args.ska_backend}"
+
+
+def _sanity_check_explicit_attention(device: torch.device, d_model: int, nhead: int, tol: float = 1e-5) -> None:
+    torch.manual_seed(1337)
+    B, L = 2, 4
+    d_head = d_model // nhead
+    x = torch.randn(B, nhead, L, d_head, device=device)
+    explicit = _explicit_attention(x, x, x, 1.0 / math.sqrt(d_head))
+    sdp = F.scaled_dot_product_attention(x, x, x)
+    max_diff = (explicit - sdp).abs().max().item()
+    if max_diff > tol:
+        raise RuntimeError(
+            f"Explicit attention sanity check failed (max diff {max_diff:.2e} > {tol})."
+        )
+
+
 class TinySeq2SeqBackbone(nn.Module):
-    def __init__(self, src_vocab: int, tgt_vocab: int, d_model: int, nhead: int, layers: int):
+    def __init__(self, src_vocab: int, tgt_vocab: int, d_model: int, nhead: int, layers: int, attn_baseline: str = "pytorch"):
         super().__init__()
         self.src_emb = nn.Embedding(src_vocab, d_model)
         self.tgt_emb = nn.Embedding(tgt_vocab, d_model)
-        enc_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
-        self.enc = nn.TransformerEncoder(enc_layer, num_layers=layers)
-        self.dec_self = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True),
-            num_layers=1,
-        )
+        self.use_explicit = attn_baseline == "explicit"
+        if self.use_explicit:
+            self.enc_layers = nn.ModuleList(
+                [ExplicitTransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=0.0) for _ in range(layers)]
+            )
+            self.dec_layers = nn.ModuleList([ExplicitTransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=0.0)])
+        else:
+            enc_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
+            self.enc = nn.TransformerEncoder(enc_layer, num_layers=layers)
+            self.dec_self = nn.TransformerEncoder(
+                nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True),
+                num_layers=1,
+            )
 
     def forward(self, src_ids: torch.Tensor, tgt_in_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        mem = self.enc(self.src_emb(src_ids))
-        dec = self.dec_self(self.tgt_emb(tgt_in_ids))
+        src_emb = self.src_emb(src_ids)
+        tgt_emb = self.tgt_emb(tgt_in_ids)
+        if self.use_explicit:
+            mem = src_emb
+            for layer in self.enc_layers:
+                mem = layer(mem.float())
+            dec = tgt_emb
+            for layer in self.dec_layers:
+                dec = layer(dec.float())
+        else:
+            mem = self.enc(src_emb)
+            dec = self.dec_self(tgt_emb)
         return dec, mem
 
 
@@ -220,6 +309,7 @@ def run_seq2seq_benchmark(
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
+    attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     if args.sdpa_baseline:
         def step():
             opt.zero_grad(set_to_none=True)
@@ -228,7 +318,7 @@ def run_seq2seq_benchmark(
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
             loss.backward()
             opt.step()
-        backend_label = "sdpa"
+        backend_label = f"sdpa/{attn_impl}"
     else:
         def step():
             nonlocal stats_ptrs, stats_sizes
@@ -245,7 +335,7 @@ def run_seq2seq_benchmark(
             opt.step()
             stats_ptrs = q_ptrs.detach().cpu()
             stats_sizes = Size_q.detach().cpu()
-        backend_label = f"{args.ska_backend}/{args.precision}"
+        backend_label = attn_impl
 
     for _ in range(args.bench_warmup):
         step()
@@ -310,6 +400,7 @@ def run_seq2seq_benchmark(
             "dataset": args.dataset or "custom",
             "dataset_id": args.dataset or "custom",
             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+            "attn_impl": attn_impl,
             "precision": args.precision,
             "set_kernel": args.set_kernel,
             "batch": args.batch,
@@ -400,6 +491,12 @@ def main():
         action="store_true",
         help="Force dot-product attention in baseline to use naive (math) mode.",
     )
+    parser.add_argument(
+        "--attn-baseline",
+        choices=["pytorch", "explicit"],
+        default="pytorch",
+        help="Baseline attention implementation when using --sdpa-baseline.",
+    )
     parser.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
     parser.add_argument("--sdpa-baseline", action="store_true", help="Skip set attention/router and run plain Transformer decoder.")
     parser.add_argument(
@@ -442,6 +539,8 @@ def main():
     )
     args = parser.parse_args()
     _configure_dot_naive(args.dot_naive)
+    if args.sdpa_baseline and args.attn_baseline == "explicit":
+        _sanity_check_explicit_attention(torch.device(args.device), args.atom_dim, args.heads)
 
     if args.benchmark and args.limit is None:
         args.limit = 50000
@@ -494,6 +593,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,
+        "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
     }
     run_name = args.wandb_run_name or None
     if run_name and multi_run:
@@ -628,6 +728,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         d_model=args.atom_dim,
         nhead=args.heads,
         layers=args.layers,
+        attn_baseline="explicit" if (args.sdpa_baseline and args.attn_baseline == "explicit") else "pytorch",
     ).to(device)
     set_attn = router = None
     if not args.sdpa_baseline:
@@ -735,7 +836,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         tr_ppl = math.exp(min(tr_loss, 20.0))
         tr_bleu = corpus_bleu(train_refs, train_hyps)
         tr_rouge = rouge_l(train_refs, train_hyps)
+        attn_impl = _attn_impl_label(args, args.sdpa_baseline)
         mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
+        if args.sdpa_baseline:
+            mode_tag = f"{mode_tag}/{attn_impl}"
         kernel_tag = "sdpa" if args.sdpa_baseline else args.set_kernel
         msg = (
             f"[Seq2Seq-Text-Banked][{mode_tag}][{kernel_tag}] epoch {epoch:02d} "
@@ -757,6 +861,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "train/bleu": tr_bleu,
                 "train/rougeL": tr_rouge,
                 "train/time_s": prof["time_s"],
+                "impl/attn_impl": attn_impl,
             }
             if prof.get("gpu_peak_mem_mib") is not None:
                 wandb_payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
@@ -835,6 +940,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                         "val/rougeL": v_rouge,
                     }
                 )
+            payload["impl/attn_impl"] = attn_impl
             sample_text = format_text_samples(
                 val_refs,
                 val_hyps,

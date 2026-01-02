@@ -32,6 +32,7 @@ from common.repro import set_seed
 
 
 TEXT_SPECIAL_TOKENS = ["<pad>", "<s>", "</s>", "<unk>"]
+EXPLICIT_ATTN_IMPLS = ("pytorch", "explicit")
 
 
 def _build_text_vocab(tokens: List[str]):
@@ -216,6 +217,20 @@ def _system_info():
     }
 
 
+def _sanity_check_explicit_attention(device: torch.device, d_model: int, nhead: int, tol: float = 1e-5) -> None:
+    torch.manual_seed(1337)
+    B, L = 2, 4
+    d_head = d_model // nhead
+    x = torch.randn(B, nhead, L, d_head, device=device)
+    explicit = _explicit_attention(x, x, x, 1.0 / math.sqrt(d_head))
+    sdp = F.scaled_dot_product_attention(x, x, x)
+    max_diff = (explicit - sdp).abs().max().item()
+    if max_diff > tol:
+        raise RuntimeError(
+            f"Explicit attention sanity check failed (max diff {max_diff:.2e} > {tol})."
+        )
+
+
 def summarize_tensor(tensor: torch.Tensor, max_items: int = 16) -> str:
     flat = tensor.detach().cpu().flatten()
     head = flat[:max_items].tolist()
@@ -234,6 +249,64 @@ def make_id_sequence(x: torch.Tensor) -> torch.Tensor:
     return base + sign
 
 
+def _explicit_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, scale: float) -> torch.Tensor:
+    scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+    weights = torch.softmax(scores, dim=-1)
+    return torch.matmul(weights, v)
+
+
+class ExplicitMultiheadAttention(nn.Module):
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.0):
+        super().__init__()
+        if d_model % nhead != 0:
+            raise ValueError("d_model must be divisible by nhead for explicit attention.")
+        self.d_model = d_model
+        self.nhead = nhead
+        self.d_head = d_model // nhead
+        self.scale = 1.0 / math.sqrt(self.d_head)
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, L, _ = x.shape
+        q = self.q_proj(x).view(B, L, self.nhead, self.d_head).transpose(1, 2)
+        k = self.k_proj(x).view(B, L, self.nhead, self.d_head).transpose(1, 2)
+        v = self.v_proj(x).view(B, L, self.nhead, self.d_head).transpose(1, 2)
+        ctx = _explicit_attention(q, k, v, self.scale)
+        ctx = self.dropout(ctx)
+        return self.out_proj(ctx.transpose(1, 2).reshape(B, L, self.d_model))
+
+
+class ExplicitTransformerEncoderLayer(nn.Module):
+    def __init__(self, d_model: int, nhead: int, dropout: float = 0.1, activation: str = "gelu"):
+        super().__init__()
+        self.self_attn = ExplicitMultiheadAttention(d_model, nhead, dropout=dropout)
+        self.linear1 = nn.Linear(d_model, d_model * 4)
+        self.linear2 = nn.Linear(d_model * 4, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.activation = F.gelu if activation == "gelu" else F.relu
+
+    def forward(self, src: torch.Tensor) -> torch.Tensor:
+        attn_out = self.self_attn(src)
+        src = self.norm1(src + self.dropout1(attn_out))
+        ff = self.linear2(self.dropout(self.activation(self.linear1(src))))
+        src = self.norm2(src + self.dropout2(ff))
+        return src
+
+
+def _attn_impl_label(args, sdpa_mode: bool) -> str:
+    if sdpa_mode:
+        return "dot_explicit" if args.attn_baseline == "explicit" else "dot_builtin"
+    return f"ska/{args.ska_backend}"
+
+
 class BankedDenoiser(nn.Module):
     def __init__(
         self,
@@ -245,12 +318,20 @@ class BankedDenoiser(nn.Module):
         ska_backend: str = "python",
         precision: str = "fp32",
         use_ska: bool = True,
+        attn_baseline: str = "pytorch",
     ):
         super().__init__()
         self.proj_in = nn.Linear(in_dim, d_model)
         self.pos_enc = PositionalEncoding(d_model)
-        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
-        self.enc = nn.TransformerEncoder(encoder_layer, num_layers=layers)
+        self.attn_baseline = attn_baseline
+        self.use_explicit = attn_baseline == "explicit"
+        if self.use_explicit:
+            self.enc_layers = nn.ModuleList(
+                [ExplicitTransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=0.0) for _ in range(layers)]
+            )
+        else:
+            encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
+            self.enc = nn.TransformerEncoder(encoder_layer, num_layers=layers)
         self.use_ska = use_ska
         self.router = None
         self.set_attn = None
@@ -280,7 +361,11 @@ class BankedDenoiser(nn.Module):
         if t_embed.dim() == 2:
             t_embed = t_embed.unsqueeze(1)
         h = h + t_embed
-        h = self.enc(h)
+        if self.use_explicit:
+            for layer in self.enc_layers:
+                h = layer(h.float())
+        else:
+            h = self.enc(h)
         if not self.use_ska:
             return self.proj_out(h)
         assert self._bank is not None, "bank not set"
@@ -316,8 +401,9 @@ def run_diffusion_benchmark(
 
     stats_snapshot: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
 
+    attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     if args.sdpa_baseline:
-        backend_label = "sdpa"
+        backend_label = f"sdpa/{attn_impl}"
 
         def step():
             optimizer.zero_grad(set_to_none=True)
@@ -326,7 +412,7 @@ def run_diffusion_benchmark(
             optimizer.step()
 
     else:
-        backend_label = f"{args.ska_backend}/{args.precision}"
+        backend_label = f"{attn_impl}"
 
         def step():
             nonlocal stats_snapshot
@@ -407,6 +493,7 @@ def run_diffusion_benchmark(
             "config": config_label,
             "dataset_id": config_label,
             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+            "attn_impl": attn_impl,
             "precision": args.precision,
             "window": args.window,
             "stride": args.stride,
@@ -480,6 +567,12 @@ def main():
         action="store_true",
         help="Force dot-product attention modules to use naive (math) implementation.",
     )
+    ap.add_argument(
+        "--attn-baseline",
+        choices=["pytorch", "explicit"],
+        default="pytorch",
+        help="Baseline attention implementation when --sdpa-baseline is used.",
+    )
     ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--samples", type=int, default=None, help="Override number of synthetic sequences.")
@@ -550,6 +643,8 @@ def main():
     defaults = ap.parse_args([])
     args = ap.parse_args()
     _configure_dot_naive(args.dot_naive)
+    if args.sdpa_baseline and args.attn_baseline == "explicit":
+        _sanity_check_explicit_attention(torch.device(args.device), args.d_model, args.nhead)
 
     seed_values: List[int] = []
     if args.seeds:
@@ -598,6 +693,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,
+        "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
     }
     run_name = args.wandb_run_name or None
     if run_name and multi_run:
@@ -778,6 +874,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         ska_backend=args.ska_backend,
         precision=args.precision,
         use_ska=not args.sdpa_baseline,
+        attn_baseline=args.attn_baseline,
     ).to(device)
     ddpm = SimpleDDPM(T=args.steps, device=device)
     params = list(model.parameters())
@@ -897,7 +994,10 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         text_token_acc = (text_token_matches / text_token_total) if text_token_total > 0 else None
         text_bleu = corpus_bleu(text_refs_all, text_hyps_all) if text_refs_all else None
 
+        attn_impl = _attn_impl_label(args, args.sdpa_baseline)
         mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
+        if args.sdpa_baseline:
+            mode_tag = f"{mode_tag}/{attn_impl}"
         msg = (
             f"[Diffusion-Banked][{mode_tag}] epoch {epoch:02d} "
             f"train loss {train_loss:.4f} | val MMD {val_mmd_mean:.4f} | "
@@ -940,6 +1040,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 "val/mmd": val_mmd_mean,
                 "val/chamfer": val_chamfer_mean,
                 "val/1nn": val_nn1_mean,
+                "impl/attn_impl": attn_impl,
             }
             if text_mode and text_token_acc is not None:
                 wandb_payload["val/token_acc"] = text_token_acc
