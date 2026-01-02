@@ -520,7 +520,7 @@ def main():
     args = ap.parse_args()
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
-        _sanity_check_explicit_attention(torch.device(args.device), dim=128, nhead=4)
+        _sanity_check_explicit_attention(torch.device(args.device), 128, 4)
 
     seed_values: List[int] = []
     if args.seeds:

@@ -130,7 +130,11 @@ def write_summary(groups, output_path: Path, group_cols: List[str], numeric_orde
 
 def main():
     args = parse_args()
-    input_paths = [Path(p) for p in args.input]
+    input_paths = []
+    if args.input:
+        for pattern in args.input:
+            # Expand glob patterns even when passed in quotes
+            input_paths.extend(Path().glob(pattern))
     if not input_paths:
         input_paths = list(Path("out/benchmarks").glob("*.csv"))
     rows = load_rows(input_paths)
