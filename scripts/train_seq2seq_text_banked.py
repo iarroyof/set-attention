@@ -125,6 +125,17 @@ def _configure_dot_naive(dot_naive: bool) -> None:
     print("[SDP] dot-naive enabled: flash/mem-efficient SDP disabled; using math backend.")
 
 
+def _maybe_set_hf_cache(hf_cache_dir: str) -> Path:
+    """Ensure HF cache is shared across runs; if populated, enable offline to avoid repeated downloads."""
+    cache_dir = Path(hf_cache_dir).expanduser() if hf_cache_dir else Path("~/.cache/set-attention/hf_datasets").expanduser()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_DATASETS_CACHE", str(cache_dir))
+    os.environ.setdefault("HF_HOME", str(cache_dir / "hf_home"))
+    if any(cache_dir.glob("*")) and "HF_DATASETS_OFFLINE" not in os.environ:
+        os.environ["HF_DATASETS_OFFLINE"] = "1"
+    return cache_dir
+
+
 def _parse_tokenizer_config_arg(value: str) -> Dict[str, Any]:
     if not value:
         return {}
@@ -517,6 +528,12 @@ def main():
         default="",
         help="Optional CSV path to log benchmark runs.",
     )
+    parser.add_argument(
+        "--hf-cache-dir",
+        type=str,
+        default="~/.cache/set-attention/hf_datasets",
+        help="Shared HF datasets cache (offline is enabled automatically when populated).",
+    )
     parser.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     parser.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     parser.add_argument("--seed", type=int, default=2024, help="Base RNG seed used when --seeds is not provided.")
@@ -541,6 +558,7 @@ def main():
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), args.atom_dim, args.heads)
+    _maybe_set_hf_cache(args.hf_cache_dir)
 
     if args.benchmark and args.limit is None:
         args.limit = 50000
