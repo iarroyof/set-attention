@@ -2,6 +2,7 @@
 import argparse
 import json
 import math
+import os
 import random
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -9,6 +10,15 @@ from typing import Dict, List, Tuple
 import numpy as np
 
 from set_attention.data.wikitext import _WIKITEXT_CONFIGS, load_wikitext_hf_dataset
+
+
+def _maybe_set_hf_cache(hf_cache_dir: str) -> Path:
+    """Set shared HF cache; leave offline mode to caller control."""
+    cache_dir = Path(hf_cache_dir).expanduser()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_DATASETS_CACHE", str(cache_dir))
+    os.environ.setdefault("HF_HOME", str(cache_dir / "hf_home"))
+    return cache_dir
 
 
 def _load_documents(dataset: str, split: str, cache_dir: Path) -> List[str]:
@@ -137,8 +147,18 @@ def main() -> None:
     parser.add_argument("--stride", type=int, default=32)
     args = parser.parse_args()
 
-    cache_dir = Path(args.cache_dir).expanduser()
-    docs = _load_documents(args.dataset, args.split, cache_dir)
+    cache_dir = _maybe_set_hf_cache(args.cache_dir)
+    try:
+        docs = _load_documents(args.dataset, args.split, cache_dir)
+    except ValueError as exc:
+        offline = os.environ.get("HF_DATASETS_OFFLINE") == "1"
+        hint = ""
+        if offline:
+            hint = (
+                " (HF_DATASETS_OFFLINE=1 is set but the requested config is not cached; "
+                "unset it or pre-download online first)"
+            )
+        raise RuntimeError(f"Failed to load dataset {args.dataset}:{args.split}{hint}") from exc
     lengths, total_tokens = _token_lengths(docs)
     buckets = _bucket_indices(lengths)
     out_dir = Path(args.output_dir)
