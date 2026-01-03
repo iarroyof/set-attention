@@ -172,7 +172,12 @@ def main() -> None:
                 " (HF_HUB_OFFLINE=1 is set but the requested config is not cached; "
                 "unset it or pre-download online first)"
             )
-        raise RuntimeError(f"Failed to load dataset {args.dataset}:{args.split}{hint}") from exc
+        # Give a clearer next step.
+        raise RuntimeError(
+            f"Failed to load dataset {args.dataset}:{args.split}{hint} | "
+            "Run scripts/prefetch_datasets.py --datasets wikitext103 --force-online "
+            "or mount a prepared HF cache."
+        ) from exc
     lengths, total_tokens = _token_lengths(docs)
     buckets = _bucket_indices(lengths)
     out_dir = Path(args.output_dir)
