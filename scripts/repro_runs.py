@@ -124,7 +124,10 @@ def write_summary(groups, output_path: Path, group_cols: List[str], numeric_orde
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for key_dict, metrics in rows:
-            row = {col: key_dict.get(col, "") for col in key_cols}
+            row = {}
+            for col in key_cols:
+                val = key_dict.get(col, "")
+                row[col] = val if val not in ("", None) else "NA"
             for metric_name, stats in metrics.items():
                 row[f"{metric_name}_mean"] = stats["mean"]
                 row[f"{metric_name}_std"] = stats["std"]

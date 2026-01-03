@@ -34,13 +34,18 @@ def iter_wikitext_lines(
     cache_dir: Path,
     limit: Optional[int] = None,
     dataset_obj=None,
+    indices: Optional[List[int]] = None,
 ) -> Iterator[str]:
     """Yield cleaned text lines lazily from a Wikitext split."""
     if dataset_obj is None:
         dataset_obj = load_wikitext_hf_dataset(dataset, cache_dir)
+    if indices is not None and getattr(dataset_obj, "is_streaming", False):
+        raise ValueError("Subset indices are not supported with streaming datasets.")
     if split not in dataset_obj:
         raise ValueError(f"Split '{split}' not available for dataset '{dataset}'")
     dsplit = dataset_obj[split]
+    if indices is not None:
+        dsplit = dsplit.select(indices)
     count = 0
     for item in dsplit:
         text = item.get("text", "")
@@ -60,9 +65,10 @@ def load_wikitext_lines(
     split: str,
     cache_dir: Path,
     limit: Optional[int] = None,
+    indices: Optional[List[int]] = None,
 ) -> List[str]:
     """Return cleaned text lines from a Wikitext split."""
-    return list(iter_wikitext_lines(dataset, split, cache_dir, limit))
+    return list(iter_wikitext_lines(dataset, split, cache_dir, limit, indices=indices))
 
 
 def tokenize_lines(lines: List[str]) -> List[str]:

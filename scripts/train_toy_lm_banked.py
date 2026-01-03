@@ -277,7 +277,8 @@ def load_vocab_file(path: Path):
 
 def load_wikitext_dataset(args, cache_dir):
     line_limit = args.dataset_lines if args.dataset_lines > 0 else None
-    train_lines = load_wikitext_lines(args.dataset, "train", cache_dir, line_limit)
+    subset_indices = args.subset_indices if getattr(args, "subset_indices", None) else None
+    train_lines = load_wikitext_lines(args.dataset, "train", cache_dir, line_limit, indices=subset_indices)
     val_lines = load_wikitext_lines(args.dataset, "validation", cache_dir, line_limit)
     train_tokens = tokenize_lines(train_lines)
     val_tokens = tokenize_lines(val_lines)
@@ -683,6 +684,18 @@ def main():
     ap.add_argument("--dataset", choices=["", "wikitext2", "wikitext103"], default="")
     ap.add_argument("--dataset-lines", type=int, default=0, help="Limit number of text lines per split (0 = all).")
     ap.add_argument(
+        "--subset-path",
+        type=str,
+        default="",
+        help="Optional JSON produced by scripts/data_make_subsets.py containing 'indices' for train split.",
+    )
+    ap.add_argument(
+        "--subset-budget-tokens",
+        type=float,
+        default=0.0,
+        help="Optional token budget fraction (0<frac<=1) or absolute tokens for WT103; requires --subset-path if not zero.",
+    )
+    ap.add_argument(
         "--hf-tokenizer-name",
         type=str,
         default="",
@@ -745,6 +758,21 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         raise ValueError("--hf-tokenizer-name requires --dataset to be set.")
     if use_hf_tokenizer and not args.streaming:
         raise ValueError("--hf-tokenizer-name currently requires --streaming.")
+    subset_indices = None
+    if args.subset_path:
+        subset_payload = json.loads(Path(args.subset_path).read_text())
+        subset_indices = subset_payload.get("indices", [])
+        if not subset_indices:
+            raise ValueError(f"No indices found in subset file: {args.subset_path}")
+        args.streaming = False  # subset selection requires non-streaming mode
+        args.subset_indices = subset_indices
+        if args.subset_budget_tokens and subset_payload.get("target_tokens"):
+            print(
+                f"[Data] Subset token budget target={subset_payload.get('target_tokens')} "
+                f"actual={subset_payload.get('actual_tokens')} "
+                f"fraction={subset_payload.get('actual_fraction'):.4f}"
+            )
+        print(f"[Data] Using subset indices from {args.subset_path} (count={len(subset_indices)})")
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {

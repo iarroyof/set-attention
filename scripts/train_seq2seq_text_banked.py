@@ -612,6 +612,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "rep": rep,
         "run_uid": run_uid,
         "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+        "hf_cache_dir": args.hf_cache_dir,
     }
     run_name = args.wandb_run_name or None
     if run_name and multi_run:
