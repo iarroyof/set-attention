@@ -145,9 +145,18 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--window", type=int, default=64)
     parser.add_argument("--stride", type=int, default=32)
+    parser.add_argument(
+        "--force-online",
+        action="store_true",
+        help="Force online mode by clearing HF offline env vars before loading (use when cache lacks the config).",
+    )
     args = parser.parse_args()
 
     cache_dir = _maybe_set_hf_cache(args.cache_dir)
+    if args.force_online:
+        os.environ.pop("HF_DATASETS_OFFLINE", None)
+        os.environ.pop("HF_HUB_OFFLINE", None)
+        print("[subset] force-online enabled: HF offline env cleared.")
     try:
         docs = _load_documents(args.dataset, args.split, cache_dir)
     except ValueError as exc:
@@ -156,6 +165,11 @@ def main() -> None:
         if offline:
             hint = (
                 " (HF_DATASETS_OFFLINE=1 is set but the requested config is not cached; "
+                "unset it or pre-download online first)"
+            )
+        elif os.environ.get("HF_HUB_OFFLINE") == "1":
+            hint = (
+                " (HF_HUB_OFFLINE=1 is set but the requested config is not cached; "
                 "unset it or pre-download online first)"
             )
         raise RuntimeError(f"Failed to load dataset {args.dataset}:{args.split}{hint}") from exc
