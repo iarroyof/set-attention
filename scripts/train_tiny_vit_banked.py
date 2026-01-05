@@ -31,6 +31,7 @@ from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.sample_logging import select_sample_indices
 from set_attention.utils.profiling import profiler
+from set_attention.utils.bench_skip import should_skip_dense, should_skip_ska
 from common.repro import set_seed
 
 
@@ -313,6 +314,36 @@ def run_vit_benchmark(
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
+    # Pre-skip estimate
+    if args.gpu_vram > 0:
+        tok_preview = backbone.patch(xb)
+        seq_len = tok_preview.size(1)
+        dim = tok_preview.size(2)
+        decision = should_skip_dense(
+            xb.size(0), seq_len, dim, args.heads, args.precision, args.gpu_vram
+        ) if args.sdpa_baseline else should_skip_ska(
+            xb.size(0), seq_len, args.window, args.stride, args.heads, args.precision, args.gpu_vram
+        )
+        if decision.skip or args.dry_run:
+            _append_benchmark_row(
+                benchmark_csv,
+                {
+                    "script": "train_tiny_vit_banked",
+                    "task": "vit",
+                    "dataset": args.data_mode,
+                    "dataset_id": args.data_mode,
+                    "data_mode": args.data_mode,
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                    "precision": args.precision,
+                    "status": "skipped",
+                    "skip_reason": decision.reason or ("dry_run" if args.dry_run else ""),
+                    "gpu_vram_gb": args.gpu_vram,
+                },
+            )
+            if args.dry_run or decision.skip:
+                return
+
     attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     if args.sdpa_baseline:
         backend_label = f"sdpa/{attn_impl}"
@@ -351,8 +382,30 @@ def run_vit_benchmark(
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
     t0 = time.perf_counter()
-    for _ in range(args.bench_iters):
-        step()
+    try:
+        for _ in range(args.bench_iters):
+            step()
+    except torch.cuda.OutOfMemoryError:
+        if args.skip_oom:
+            torch.cuda.empty_cache()
+            _append_benchmark_row(
+                benchmark_csv,
+                {
+                    "script": "train_tiny_vit_banked",
+                    "task": "vit",
+                    "dataset": args.data_mode,
+                    "dataset_id": args.data_mode,
+                    "data_mode": args.data_mode,
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                    "precision": args.precision,
+                    "status": "oom",
+                    "skip_reason": "runtime_oom",
+                    "gpu_vram_gb": args.gpu_vram,
+                },
+            )
+            return
+        raise
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     elapsed = time.perf_counter() - t0
@@ -432,6 +485,9 @@ def run_vit_benchmark(
             "min_sets_per_seq": min_sets,
             "max_sets_per_seq": max_sets,
             "max_vram_mb": max_vram_mb,
+            "status": "ok",
+            "skip_reason": "",
+            "gpu_vram_gb": args.gpu_vram,
         },
     )
 
@@ -517,6 +573,9 @@ def main():
         action="store_true",
         help="Move banks/universe to the training device (default keeps them on CPU).",
     )
+    ap.add_argument("--gpu-vram", type=float, default=0.0, help="Approx GPU VRAM in GB for skip estimation (0=disable).")
+    ap.add_argument("--skip-oom", action="store_true", help="Skip configs that OOM or exceed estimated VRAM.")
+    ap.add_argument("--dry-run", action="store_true", help="Print skip/ok decision and write CSV status without running.")
     args = ap.parse_args()
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":

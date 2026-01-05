@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from set_attention.utils.bench_skip import should_skip_dense, should_skip_ska
 from set_attention.experiments.data_toy import ToyDiffConfig, make_toy_continuous_sequences
 from set_attention.experiments.diffusion_core import SimpleDDPM
 from set_attention.experiments.models import PositionalEncoding, timestep_embedding
@@ -413,7 +414,32 @@ def run_diffusion_benchmark(
     xb = train_data[:bench_batch].to(device)
 
     stats_snapshot: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
-
+    attn_impl = _attn_impl_label(args, args.sdpa_baseline)
+    if args.gpu_vram > 0:
+        # use seq len from data
+        seq_len = xb.size(1) if xb.dim() > 1 else args.window
+        decision = should_skip_dense(bench_batch, seq_len, args.d_model, args.nhead, args.precision, args.gpu_vram) if args.sdpa_baseline else should_skip_ska(
+            bench_batch, seq_len, args.window, args.stride, args.nhead, args.precision, args.gpu_vram
+        )
+        if decision.skip or args.dry_run:
+            _append_benchmark_row(
+                benchmark_csv,
+                {
+                    "script": "train_toy_diffusion_banked",
+                    "task": "textdiff" if text_mode else "diffusion",
+                    "dataset": dataset_label,
+                    "config": config_label,
+                    "dataset_id": config_label,
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": attn_impl,
+                    "precision": args.precision,
+                    "status": "skipped",
+                    "skip_reason": decision.reason or ("dry_run" if args.dry_run else ""),
+                    "gpu_vram_gb": args.gpu_vram,
+                },
+            )
+            if args.dry_run or decision.skip:
+                return
     attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     if args.sdpa_baseline:
         backend_label = f"sdpa/{attn_impl}"
@@ -446,8 +472,30 @@ def run_diffusion_benchmark(
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
     t0 = time.perf_counter()
-    for _ in range(args.bench_iters):
-        step()
+    try:
+        for _ in range(args.bench_iters):
+            step()
+    except torch.cuda.OutOfMemoryError:
+        if args.skip_oom:
+            torch.cuda.empty_cache()
+            _append_benchmark_row(
+                benchmark_csv,
+                {
+                    "script": "train_toy_diffusion_banked",
+                    "task": "textdiff" if text_mode else "diffusion",
+                    "dataset": dataset_label,
+                    "config": config_label,
+                    "dataset_id": config_label,
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": attn_impl,
+                    "precision": args.precision,
+                    "status": "oom",
+                    "skip_reason": "runtime_oom",
+                    "gpu_vram_gb": args.gpu_vram,
+                },
+            )
+            return
+        raise
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     elapsed = time.perf_counter() - t0
@@ -540,6 +588,9 @@ def run_diffusion_benchmark(
             "min_sets_per_seq": min_sets,
             "max_sets_per_seq": max_sets,
             "max_vram_mb": max_vram_mb,
+            "status": "ok",
+            "skip_reason": "",
+            "gpu_vram_gb": args.gpu_vram,
         },
     )
 
@@ -614,6 +665,9 @@ def main():
     ap.add_argument("--wandb-project", type=str, default="")
     ap.add_argument("--wandb-run-name", type=str, default="")
     ap.add_argument("--wandb-tags", type=str, default="")
+    ap.add_argument("--gpu-vram", type=float, default=0.0, help="Approx GPU VRAM in GB for skip estimation (0=disable).")
+    ap.add_argument("--skip-oom", action="store_true", help="Skip configs that OOM or exceed estimated VRAM.")
+    ap.add_argument("--dry-run", action="store_true", help="Print skip/ok decision and write CSV status without running.")
     ap.add_argument(
         "--sdpa-baseline",
         action="store_true",
@@ -632,6 +686,12 @@ def main():
         type=str,
         default="",
         help="Optional CSV path to log benchmark metrics.",
+    )
+    ap.add_argument(
+        "--metrics-csv",
+        type=str,
+        default="",
+        help="Optional CSV path to log training/validation metrics per epoch.",
     )
     ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
@@ -1065,6 +1125,36 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
             if sample_text is not None:
                 wandb_payload["samples/generated"] = sample_text
             wandb_run.log(wandb_payload, step=epoch)
+        if args.metrics_csv:
+            _append_benchmark_row(
+                args.metrics_csv,
+                {
+                    "script": "train_toy_diffusion_banked",
+                    "task": "textdiff" if text_mode else "diffusion",
+                    "dataset": dataset_label,
+                    "dataset_id": config_label,
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": attn_impl,
+                    "precision": args.precision,
+                    "window": args.window,
+                    "stride": args.stride,
+                    "minhash_k": args.minhash_k,
+                    "router_topk": args.router_topk,
+                    "batch": args.batch,
+                    "steps": args.steps,
+                    "seed": seed,
+                    "rep": rep,
+                    "run_uid": run_uid,
+                    "epoch": epoch,
+                    "train_loss": train_loss,
+                    "val_mmd": val_mmd_mean,
+                    "val_chamfer": val_chamfer_mean,
+                    "val_1nn": val_nn1_mean,
+                    "val_token_acc": text_token_acc if text_token_acc is not None else "NA",
+                    "val_bleu": text_bleu if text_bleu is not None else "NA",
+                    "status": "ok",
+                },
+            )
 
     wandb_run.finish()
 

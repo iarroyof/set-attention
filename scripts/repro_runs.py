@@ -156,6 +156,7 @@ def main():
     if not input_paths:
         input_paths = list(Path("out/benchmarks").glob("*.csv"))
     rows = load_rows(input_paths)
+    rows = [r for r in rows if r.get("status", "ok") == "ok"]
     if not rows:
         write_summary({}, Path(args.output), [], [])
         print("No rows found; nothing to aggregate.")

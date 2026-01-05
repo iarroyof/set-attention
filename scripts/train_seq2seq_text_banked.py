@@ -14,6 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from set_attention.utils.bench_skip import should_skip_dense, should_skip_ska
 from set_attention.tokenizers.active_tokenizer import ACTIVE_TOKENIZER_TYPE
 from set_attention.tokenizers.hf_bpe import HF_BPE_TYPE
 from set_attention.tokenizers.hf_unigram import HF_UNIGRAM_TYPE
@@ -296,6 +297,7 @@ def run_seq2seq_benchmark(
     rep,
     run_uid,
 ):
+    attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     iterator = text_batch_iterator(
         train_pairs,
         train_src_stoi,
@@ -319,6 +321,32 @@ def run_seq2seq_benchmark(
     stats_sizes = None
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
+
+    # Pre-skip estimate
+    if args.gpu_vram > 0:
+        decision = should_skip_dense(
+            tgt_ids.size(0), max_len, args.atom_dim, args.heads, args.precision, args.gpu_vram
+        ) if args.sdpa_baseline else should_skip_ska(
+            tgt_ids.size(0), max_len, args.window, args.stride, args.heads, args.precision, args.gpu_vram
+        )
+        if decision.skip or args.dry_run:
+            _append_benchmark_row(
+                benchmark_csv,
+                {
+                    "script": "train_seq2seq_text_banked",
+                    "task": "seq2seq",
+                    "dataset": args.dataset or "custom",
+                    "dataset_id": args.dataset or "custom",
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": attn_impl,
+                    "precision": args.precision,
+                    "status": "skipped",
+                    "skip_reason": decision.reason or ("dry_run" if args.dry_run else ""),
+                    "gpu_vram_gb": args.gpu_vram,
+                },
+            )
+            if args.dry_run or decision.skip:
+                return
 
     attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     if args.sdpa_baseline:
@@ -354,8 +382,29 @@ def run_seq2seq_benchmark(
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
     t0 = time.perf_counter()
-    for _ in range(args.bench_iters):
-        step()
+    try:
+        for _ in range(args.bench_iters):
+            step()
+    except torch.cuda.OutOfMemoryError:
+        if args.skip_oom:
+            torch.cuda.empty_cache()
+            _append_benchmark_row(
+                benchmark_csv,
+                {
+                    "script": "train_seq2seq_text_banked",
+                    "task": "seq2seq",
+                    "dataset": args.dataset or "custom",
+                    "dataset_id": args.dataset or "custom",
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": attn_impl,
+                    "precision": args.precision,
+                    "status": "oom",
+                    "skip_reason": "runtime_oom",
+                    "gpu_vram_gb": args.gpu_vram,
+                },
+            )
+            return
+        raise
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     elapsed = time.perf_counter() - t0
@@ -443,6 +492,9 @@ def run_seq2seq_benchmark(
             "min_sets_per_seq": min_sets,
             "max_sets_per_seq": max_sets,
             "max_vram_mb": max_vram_mb,
+            "status": "ok",
+            "skip_reason": "",
+            "gpu_vram_gb": args.gpu_vram,
         },
     )
 
@@ -528,6 +580,15 @@ def main():
         default="",
         help="Optional CSV path to log benchmark runs.",
     )
+    parser.add_argument(
+        "--metrics-csv",
+        type=str,
+        default="",
+        help="Optional CSV path to log training/validation metrics per epoch.",
+    )
+    parser.add_argument("--gpu-vram", type=float, default=0.0, help="Approx GPU VRAM in GB for skip estimation (0=disable).")
+    parser.add_argument("--skip-oom", action="store_true", help="Skip configs that OOM or exceed estimated VRAM.")
+    parser.add_argument("--dry-run", action="store_true", help="Print skip/ok decision and write CSV status without running.")
     parser.add_argument(
         "--hf-cache-dir",
         type=str,
@@ -970,6 +1031,40 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             if sample_text:
                 payload["samples/val_text"] = sample_text
             wandb_run.log(payload, step=epoch)
+        if args.metrics_csv:
+            _append_benchmark_row(
+                args.metrics_csv,
+                {
+                    "script": "train_seq2seq_text_banked",
+                    "task": "seq2seq",
+                    "dataset": args.dataset or "custom",
+                    "dataset_id": args.dataset or "custom",
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": attn_impl,
+                    "precision": args.precision,
+                    "set_kernel": args.set_kernel,
+                    "batch": args.batch,
+                    "max_len": 64,
+                    "window": args.window,
+                    "stride": args.stride,
+                    "minhash_k": args.minhash_k,
+                    "router_topk": args.router_topk,
+                    "adapter_rank": args.adapter_rank,
+                    "seed": seed,
+                    "rep": rep,
+                    "run_uid": run_uid,
+                    "epoch": epoch,
+                    "train_bleu": tr_bleu,
+                    "train_rougeL": tr_rouge,
+                    "train_loss": tr_loss,
+                    "train_ppl": tr_ppl,
+                    "val_bleu": v_bleu if v_bleu is not None else "NA",
+                    "val_rougeL": v_rouge if v_rouge is not None else "NA",
+                    "val_loss": v_loss if v_loss is not None else "NA",
+                    "val_ppl": v_ppl if v_ppl is not None else "NA",
+                    "status": "ok",
+                },
+            )
 
     wandb_run.finish()
 

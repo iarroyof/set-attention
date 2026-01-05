@@ -18,6 +18,10 @@ import torch.nn.functional as F
 
 from common.repro import set_seed
 
+from set_attention.utils.bench_skip import (
+    should_skip_dense,
+    should_skip_ska,
+)
 from set_attention.data import configure_hf_cache, resolve_data_root
 from set_attention.data.wikitext import (
     chunk_tokens,
@@ -499,6 +503,31 @@ def run_lm_benchmark(
     rep,
     run_uid,
 ):
+    attn_impl = _attn_impl_label(args, args.sdpa_baseline)
+    # Pre-skip based on VRAM estimate
+    if args.gpu_vram > 0:
+        if args.sdpa_baseline:
+            decision = should_skip_dense(bench_batch.size(0), max_len, args.d_model, args.nhead, args.precision, args.gpu_vram)
+        else:
+            decision = should_skip_ska(bench_batch.size(0), max_len, args.window, args.stride, args.nhead, args.precision, args.gpu_vram)
+        if decision.skip or args.dry_run:
+            _append_benchmark_row(
+                benchmark_csv,
+                {
+                    "script": "train_toy_lm_banked",
+                    "task": "lm",
+                    "dataset": args.dataset or "custom",
+                    "dataset_id": args.dataset or "custom",
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": attn_impl,
+                    "precision": args.precision,
+                    "status": "skipped",
+                    "skip_reason": decision.reason or ("dry_run" if args.dry_run else ""),
+                    "gpu_vram_gb": args.gpu_vram,
+                },
+            )
+            if args.dry_run or decision.skip:
+                return
     if bench_batch is None:
         print("[benchmark] no data available.")
         return
@@ -535,8 +564,29 @@ def run_lm_benchmark(
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
     t0 = time.perf_counter()
-    for _ in range(args.bench_iters):
-        step()
+    try:
+        for _ in range(args.bench_iters):
+            step()
+    except torch.cuda.OutOfMemoryError:
+        if args.skip_oom:
+            torch.cuda.empty_cache()
+            _append_benchmark_row(
+                benchmark_csv,
+                {
+                    "script": "train_toy_lm_banked",
+                    "task": "lm",
+                    "dataset": args.dataset or "custom",
+                    "dataset_id": args.dataset or "custom",
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": attn_impl,
+                    "precision": args.precision,
+                    "status": "oom",
+                    "skip_reason": "runtime_oom",
+                    "gpu_vram_gb": args.gpu_vram,
+                },
+            )
+            return
+        raise
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     elapsed = time.perf_counter() - t0
@@ -546,7 +596,6 @@ def run_lm_benchmark(
     tokens_total = bench_batch_size * max_len * args.bench_iters
     throughput = tokens_total / elapsed if elapsed > 0 else 0.0
     info = _system_info()
-    attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     if stats_ptrs is not None and stats_sizes is not None:
         avg_sets, avg_atoms, scores_per_batch, min_sets, max_sets = _summarize_ska_batch(
             stats_ptrs, stats_sizes, set_attn.num_heads if set_attn is not None else args.nhead
@@ -624,6 +673,9 @@ def run_lm_benchmark(
             "min_sets_per_seq": min_sets,
             "max_sets_per_seq": max_sets,
             "max_vram_mb": max_vram_mb,
+            "status": "ok",
+            "skip_reason": "",
+            "gpu_vram_gb": args.gpu_vram,
         },
     )
 
@@ -675,6 +727,9 @@ def main():
         default="",
         help="Optional CSV file to append benchmark metrics.",
     )
+    ap.add_argument("--gpu-vram", type=float, default=0.0, help="Approx GPU VRAM in GB for skip estimation (0=disable).")
+    ap.add_argument("--skip-oom", action="store_true", help="Skip configs that OOM or exceed estimated VRAM.")
+    ap.add_argument("--dry-run", action="store_true", help="Print skip/ok decision and write CSV status without running.")
     ap.add_argument(
         "--metrics-csv",
         type=str,
@@ -1115,6 +1170,9 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     "scores_per_s": scores_per_s,
                     "scores_per_1e6": throughput_per_m,
                     "max_vram_mb": max_vram_mb,
+                    "status": "ok",
+                    "skip_reason": "",
+                    "gpu_vram_gb": args.gpu_vram,
                 },
             )
         else:
