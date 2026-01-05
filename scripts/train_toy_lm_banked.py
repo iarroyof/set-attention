@@ -40,10 +40,7 @@ from set_attention.utils.profiling import profiler
 from set_attention.utils.sample_logging import format_text_samples
 from set_attention.utils.wandb import init_wandb
 from set_attention.experiments.nlp_eval import corpus_bleu
-from set_attention.training.text_utils import (
-    ids_to_tokens,
-    text_batch_iterator,
-)
+from set_attention.training.text_utils import ids_to_tokens, text_batch_iterator
 
 
 def make_char_data(n=2000, seq_len=64, vocab=32, seed=3):
@@ -766,6 +763,7 @@ def main():
     ap.add_argument("--wandb-tags", type=str, default="")
     ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log per epoch.")
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed controlling which samples are logged.")
+    ap.add_argument("--eval-seed", type=int, default=1337, help="Seed to make validation evaluation deterministic across variants.")
     ap.add_argument("--seed", type=int, default=2024, help="Base RNG seed used when --seeds is not provided.")
     ap.add_argument(
         "--seeds",
@@ -1200,6 +1198,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         return
 
     def run_epoch(train: bool):
+        if not train:
+            torch.manual_seed(args.eval_seed)
+            random.seed(args.eval_seed)
+            g = torch.Generator(device=device).manual_seed(args.eval_seed)
         model_list = [m for m in (backbone, router, head, adapter) if m is not None]
         for m in model_list:
             m.train(train)
@@ -1218,6 +1220,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 max_len,
                 args.batch,
                 shuffle=train,
+                generator=(torch.Generator(device=device).manual_seed(args.eval_seed) if not train else None),
+                worker_init_fn=(_make_worker_init_fn(args.eval_seed) if not train else None),
             )
         active_cache = train_cache if train else val_cache
         if not args.sdpa_baseline and active_cache is None:
@@ -1335,3 +1339,20 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     wandb_run.finish()
 if __name__ == "__main__":
     main()
+def _make_worker_init_fn(base_seed: int):
+    def _init(worker_id: int):
+        seed = int(base_seed) + int(worker_id)
+        import random
+
+        random.seed(seed)
+        try:
+            import numpy as np
+
+            np.random.seed(seed % (2**32 - 1))
+        except Exception:
+            pass
+        import torch
+
+        torch.manual_seed(seed)
+
+    return _init

@@ -26,6 +26,18 @@ def parse_args():
         default="out/benchmarks/bench_summary.csv",
         help="Output summary CSV path.",
     )
+    ap.add_argument(
+        "--metrics-input",
+        nargs="+",
+        default=[],
+        help="Optional metrics CSVs to aggregate into metrics_summary.csv (per-epoch logs).",
+    )
+    ap.add_argument(
+        "--metrics-output",
+        type=str,
+        default="out/benchmarks/metrics_summary.csv",
+        help="Output metrics summary CSV path.",
+    )
     return ap.parse_args()
 
 
@@ -49,7 +61,7 @@ def detect_numeric_columns(rows: List[Dict[str, str]]) -> Tuple[set, List[str]]:
     for col in header:
         if col in FORCE_STR_COLUMNS:
             continue
-        values = [row[col] for row in rows if row.get(col) not in ("", None)]
+        values = [row[col] for row in rows if row.get(col) not in ("", None, "NA")]
         if not values:
             continue
         is_numeric = True
@@ -71,7 +83,7 @@ def group_rows(rows: List[Dict[str, str]], numeric_cols: set, group_cols: List[s
         metrics = {}
         for col in numeric_cols:
             val = row.get(col, "")
-            if val in ("", None):
+            if val in ("", None, "NA"):
                 continue
             try:
                 metrics[col] = float(val)
@@ -157,16 +169,35 @@ def main():
         input_paths = list(Path("out/benchmarks").glob("*.csv"))
     rows = load_rows(input_paths)
     rows = [r for r in rows if r.get("status", "ok") == "ok"]
-    if not rows:
+    if rows:
+        numeric_cols, header = detect_numeric_columns(rows)
+        numeric_cols -= FORCE_STR_COLUMNS
+        group_cols = [col for col in header if col not in numeric_cols and col not in FORCE_STR_COLUMNS]
+        groups = group_rows(rows, numeric_cols, group_cols)
+        write_summary(groups, Path(args.output), group_cols, [col for col in header if col in numeric_cols])
+        print(f"Aggregated {len(rows)} rows into {len(groups)} groups -> {args.output}")
+    else:
         write_summary({}, Path(args.output), [], [])
         print("No rows found; nothing to aggregate.")
-        return
-    numeric_cols, header = detect_numeric_columns(rows)
-    numeric_cols -= FORCE_STR_COLUMNS
-    group_cols = [col for col in header if col not in numeric_cols and col not in FORCE_STR_COLUMNS]
-    groups = group_rows(rows, numeric_cols, group_cols)
-    write_summary(groups, Path(args.output), group_cols, [col for col in header if col in numeric_cols])
-    print(f"Aggregated {len(rows)} rows into {len(groups)} groups -> {args.output}")
+
+    # Metrics aggregation (optional)
+    metrics_paths = []
+    if args.metrics_input:
+        for pattern in args.metrics_input:
+            metrics_paths.extend(Path().glob(pattern))
+    if metrics_paths:
+        mrows = load_rows(metrics_paths)
+        mrows = [r for r in mrows if r.get("status", "ok") == "ok"]
+        if mrows:
+            m_numeric, m_header = detect_numeric_columns(mrows)
+            m_numeric -= FORCE_STR_COLUMNS
+            m_group_cols = [col for col in m_header if col not in m_numeric and col not in FORCE_STR_COLUMNS]
+            m_groups = group_rows(mrows, m_numeric, m_group_cols)
+            write_summary(m_groups, Path(args.metrics_output), m_group_cols, [col for col in m_header if col in m_numeric])
+            print(f"Aggregated {len(mrows)} metric rows into {len(m_groups)} groups -> {args.metrics_output}")
+        else:
+            write_summary({}, Path(args.metrics_output), [], [])
+            print("No metric rows found; nothing to aggregate for metrics.")
 
 
 if __name__ == "__main__":

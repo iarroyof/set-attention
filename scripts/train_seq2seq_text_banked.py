@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from set_attention.utils.bench_skip import should_skip_dense, should_skip_ska
+from set_attention.utils.bench_skip import should_skip_dense, should_skip_ska, _make_worker_init_fn
 from set_attention.tokenizers.active_tokenizer import ACTIVE_TOKENIZER_TYPE
 from set_attention.tokenizers.hf_bpe import HF_BPE_TYPE
 from set_attention.tokenizers.hf_unigram import HF_UNIGRAM_TYPE
@@ -306,6 +306,8 @@ def run_seq2seq_benchmark(
         max_len,
         args.batch,
         shuffle=False,
+        generator=torch.Generator(device=device).manual_seed(args.eval_seed),
+        worker_init_fn=_make_worker_init_fn(args.eval_seed),
     )
     try:
         batch_idx_tensor, src_ids, tgt_ids, _ = next(iterator)
@@ -597,6 +599,7 @@ def main():
     )
     parser.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     parser.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
+    parser.add_argument("--eval-seed", type=int, default=1337, help="Seed to make validation evaluation deterministic across variants.")
     parser.add_argument("--seed", type=int, default=2024, help="Base RNG seed used when --seeds is not provided.")
     parser.add_argument(
         "--seeds",
@@ -956,6 +959,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 router.eval()
             if adapter is not None:
                 adapter.eval()
+            torch.manual_seed(args.eval_seed)
+            random.seed(args.eval_seed)
             val_loss_total = 0.0
             val_token_total = 0
             with torch.no_grad():
@@ -967,6 +972,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     max_len,
                     args.batch,
                     shuffle=False,
+                    generator=torch.Generator(device=device).manual_seed(args.eval_seed),
+                    worker_init_fn=_make_worker_init_fn(args.eval_seed),
                 ):
                     batch_idx_tensor = batch_idx_tensor.to(device)
                     src_ids = src_ids.to(device, non_blocking=True)

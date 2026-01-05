@@ -37,6 +37,25 @@ TEXT_SPECIAL_TOKENS = ["<pad>", "<s>", "</s>", "<unk>"]
 EXPLICIT_ATTN_IMPLS = ("pytorch", "explicit")
 
 
+def _make_worker_init_fn(base_seed: int):
+    def _init(worker_id: int):
+        seed = int(base_seed) + int(worker_id)
+        import random
+
+        random.seed(seed)
+        try:
+            import numpy as np
+
+            np.random.seed(seed % (2**32 - 1))
+        except Exception:
+            pass
+        import torch
+
+        torch.manual_seed(seed)
+
+    return _init
+
+
 def _build_text_vocab(tokens: List[str]):
     stoi = {tok: idx for idx, tok in enumerate(TEXT_SPECIAL_TOKENS)}
     itos = list(TEXT_SPECIAL_TOKENS)
@@ -596,7 +615,11 @@ def run_diffusion_benchmark(
 
 
 def tensor_batch_iterator(
-    data: torch.Tensor, batch_size: int, shuffle: bool, generator: Optional[torch.Generator] = None
+    data: torch.Tensor,
+    batch_size: int,
+    shuffle: bool,
+    generator: Optional[torch.Generator] = None,
+    worker_init_fn=None,
 ) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
     if data.numel() == 0:
         return
@@ -605,6 +628,8 @@ def tensor_batch_iterator(
         indices = perm
     else:
         indices = torch.arange(data.size(0), dtype=torch.long)
+    if worker_init_fn:
+        worker_init_fn(0)
     for start in range(0, data.size(0), batch_size):
         batch_idx = indices[start : start + batch_size]
         yield batch_idx.clone(), data[batch_idx]
@@ -695,6 +720,7 @@ def main():
     )
     ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
+    ap.add_argument("--eval-seed", type=int, default=1337, help="Seed to make validation evaluation deterministic across variants.")
     ap.add_argument("--seed", type=int, default=2024, help="Base RNG seed when --seeds is not provided.")
     ap.add_argument(
         "--seeds",
@@ -986,7 +1012,11 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         train_gen = torch.Generator().manual_seed(seed + epoch)
         with profiler(args.profile) as prof:
             for batch_idx, xb in tensor_batch_iterator(
-                train_data, data_cfg.batch_size, shuffle=True, generator=train_gen
+                train_data,
+                data_cfg.batch_size,
+                shuffle=True,
+                generator=train_gen,
+                worker_init_fn=_make_worker_init_fn(args.eval_seed) if not train else None,
             ):
                 xb = xb.to(device)
                 if not args.sdpa_baseline:
@@ -1006,12 +1036,21 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         sample_lookup = {idx: order for order, idx in enumerate(sample_indices)}
         captured_samples: dict[int, dict] = {}
         with torch.no_grad():
+            torch.manual_seed(args.eval_seed)
+            random.seed(args.eval_seed)
             mmds, chamfers, nn1s = [], [], []
             text_token_matches = 0.0
             text_token_total = 0.0
             text_refs_all: List[List[str]] = []
             text_hyps_all: List[List[str]] = []
-            for batch_idx, xb in tensor_batch_iterator(val_data, data_cfg.batch_size, shuffle=False):
+            val_gen = torch.Generator().manual_seed(args.eval_seed)
+            for batch_idx, xb in tensor_batch_iterator(
+                val_data,
+                data_cfg.batch_size,
+                shuffle=False,
+                generator=val_gen,
+                worker_init_fn=_make_worker_init_fn(args.eval_seed),
+            ):
                 xb_cpu = xb
                 xb = xb_cpu.to(device)
                 if not args.sdpa_baseline:

@@ -35,6 +35,21 @@ from set_attention.utils.bench_skip import should_skip_dense, should_skip_ska
 from common.repro import set_seed
 
 
+def _make_worker_init_fn(base_seed: int):
+    def _init(worker_id: int):
+        seed = int(base_seed) + int(worker_id)
+        import random
+        random.seed(seed)
+        try:
+            import numpy as np
+            np.random.seed(seed % (2**32 - 1))
+        except Exception:
+            pass
+        import torch
+        torch.manual_seed(seed)
+    return _init
+
+
 def _append_benchmark_row(csv_path: str, row: dict) -> None:
     if not csv_path:
         return
@@ -539,6 +554,12 @@ def main():
         default="",
         help="Optional CSV path to append benchmark metrics.",
     )
+    ap.add_argument(
+        "--metrics-csv",
+        type=str,
+        default="",
+        help="Optional CSV path to log training/validation metrics per epoch.",
+    )
     ap.add_argument("--data-root", type=str, default="")
     ap.add_argument("--wandb", action="store_true")
     ap.add_argument("--wandb-project", type=str, default="")
@@ -546,6 +567,7 @@ def main():
     ap.add_argument("--wandb-tags", type=str, default="")
     ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
+    ap.add_argument("--eval-seed", type=int, default=1337, help="Seed to make validation evaluation deterministic across variants.")
     ap.add_argument(
         "--seeds",
         type=str,
@@ -930,6 +952,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "train/acc": avg_acc,
                 "train/top5": avg_top5,
                 "train/sets_per_seq": avg_sets_per_seq,
+                "impl/attn_impl": _attn_impl_label(args, args.sdpa_baseline),
             }
             if not args.sdpa_baseline:
                 payload["train/coverage"] = coverage_ratio
@@ -962,6 +985,38 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 if torch.cuda.is_available():
                     payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
             wandb_run.log(payload, step=ep)
+        if args.metrics_csv:
+            _append_benchmark_row(
+                args.metrics_csv,
+                {
+                    "script": "train_tiny_vit_banked",
+                    "task": "vit",
+                    "dataset": args.data_mode,
+                    "dataset_id": args.data_mode,
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                    "precision": args.precision,
+                    "patch": args.patch,
+                    "window": args.window,
+                    "stride": args.stride,
+                    "minhash_k": args.minhash_k,
+                    "router_topk": args.router_topk,
+                    "batch": args.batch,
+                    "seed": seed,
+                    "rep": rep,
+                    "run_uid": run_uid,
+                    "epoch": ep,
+                    "train_loss": avg_loss,
+                    "train_acc": avg_acc,
+                    "train_top5": avg_top5,
+                    "val_loss": val_metrics["loss"] if val_metrics is not None else "NA",
+                    "val_acc": val_metrics["acc"] if val_metrics is not None else "NA",
+                    "val_top5": val_metrics["top5"] if val_metrics is not None else "NA",
+                    "coverage_sets_per_seq": avg_sets_per_seq if not args.sdpa_baseline else "NA",
+                    "coverage_ratio": coverage_ratio if not args.sdpa_baseline else "NA",
+                    "status": "ok",
+                },
+            )
 
     wandb_run.finish()
 
