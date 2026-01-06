@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
@@ -25,11 +26,14 @@ def load_wikitext_hf_dataset(
         raise ImportError("The 'datasets' package is required for Wikitext loading.") from exc
 
     name, config = _WIKITEXT_CONFIGS[dataset]
+    # Prefer environment-provided cache roots if set
+    env_cache = os.environ.get("HF_DATASETS_CACHE") or os.environ.get("HF_HOME")
+    cache_root = Path(env_cache) if env_cache else cache_dir
     try:
-        return load_dataset(name, config, cache_dir=str(cache_dir), streaming=streaming)
+        return load_dataset(name, config, cache_dir=str(cache_root), streaming=streaming)
     except Exception as exc:
         raise RuntimeError(
-            f"Failed to load {name}:{config} from cache {cache_dir}. "
+            f"Failed to load {name}:{config} from cache {cache_root}. "
             "Prefetch the dataset (scripts/prefetch_datasets.py) or allow network access."
         ) from exc
 

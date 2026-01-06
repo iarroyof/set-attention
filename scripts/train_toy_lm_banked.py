@@ -598,8 +598,10 @@ def run_lm_benchmark(
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         elapsed = time.perf_counter() - t0
-    except torch.cuda.OutOfMemoryError as exc:
-        if args.skip_oom:
+    except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
+        msg = str(exc)
+        is_oom = "out of memory" in msg.lower()
+        if args.skip_oom and is_oom:
             torch.cuda.empty_cache()
             _append_benchmark_row(
                 benchmark_csv,
@@ -612,7 +614,7 @@ def run_lm_benchmark(
                     "attn_impl": attn_impl,
                     "precision": args.precision,
                     "status": "oom",
-                    "skip_reason": str(exc)[:160],
+                    "skip_reason": msg[:160],
                     "gpu_vram_gb": args.gpu_vram,
                     "batch": bench_batch_size or args.batch,
                     "seq_len": max_len,
