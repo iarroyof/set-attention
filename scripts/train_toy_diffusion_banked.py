@@ -1016,7 +1016,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 data_cfg.batch_size,
                 shuffle=True,
                 generator=train_gen,
-                worker_init_fn=_make_worker_init_fn(args.eval_seed) if not train else None,
+                worker_init_fn=None,
             ):
                 xb = xb.to(device)
                 if not args.sdpa_baseline:
