@@ -514,6 +514,7 @@ def main():
     ap.add_argument("--batch", type=int, default=128)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--patch", type=int, default=4)
+    ap.add_argument("--heads", type=int, default=4, help="Number of attention heads in the ViT backbone/router.")
     ap.add_argument(
         "--limit",
         type=int,
@@ -601,7 +602,7 @@ def main():
     args = ap.parse_args()
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
-        _sanity_check_explicit_attention(torch.device(args.device), 128, 4)
+        _sanity_check_explicit_attention(torch.device(args.device), 128, args.heads)
 
     seed_values: List[int] = []
     if args.seeds:
@@ -750,7 +751,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     backbone = TinyViTBackbone(
         dim=128,
         depth=4,
-        heads=4,
+        heads=args.heads,
         patch=args.patch,
         attn_baseline="explicit" if (args.sdpa_baseline and args.attn_baseline == "explicit") else "pytorch",
     ).to(device)
@@ -758,7 +759,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     if not args.sdpa_baseline:
         set_attn = SetBankAttention(
             d_model=128,
-            num_heads=4,
+            num_heads=args.heads,
             tau=1.0,
             gamma=0.3,
             beta=1.0,
@@ -767,7 +768,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             backend=args.ska_backend,
             precision=args.precision,
         ).to(device)
-        router = TokenSetRouter(d_model=128, num_heads=4, topk=args.router_topk).to(device)
+        router = TokenSetRouter(d_model=128, num_heads=args.heads, topk=args.router_topk).to(device)
     head = nn.Linear(128, 10).to(device)
 
     params = list(backbone.parameters()) + list(head.parameters())
