@@ -5,6 +5,7 @@ import os
 import subprocess
 import time
 import math
+import random
 from pathlib import Path
 from typing import List
 
@@ -32,22 +33,9 @@ from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.sample_logging import select_sample_indices
 from set_attention.utils.profiling import profiler
 from set_attention.utils.bench_skip import should_skip_dense, should_skip_ska
+from set_attention.utils.repro_workers import make_worker_init_fn
 from common.repro import set_seed
 
-
-def _make_worker_init_fn(base_seed: int):
-    def _init(worker_id: int):
-        seed = int(base_seed) + int(worker_id)
-        import random
-        random.seed(seed)
-        try:
-            import numpy as np
-            np.random.seed(seed % (2**32 - 1))
-        except Exception:
-            pass
-        import torch
-        torch.manual_seed(seed)
-    return _init
 
 
 def _append_benchmark_row(csv_path: str, row: dict) -> None:

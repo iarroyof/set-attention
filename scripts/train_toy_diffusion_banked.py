@@ -30,30 +30,12 @@ from set_attention.heads.token_router import TokenSetRouter
 from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.data.wikitext import load_wikitext_lines, tokenize_lines, chunk_tokens
+from set_attention.utils.repro_workers import make_worker_init_fn
 from common.repro import set_seed
 
 
 TEXT_SPECIAL_TOKENS = ["<pad>", "<s>", "</s>", "<unk>"]
 EXPLICIT_ATTN_IMPLS = ("pytorch", "explicit")
-
-
-def _make_worker_init_fn(base_seed: int):
-    def _init(worker_id: int):
-        seed = int(base_seed) + int(worker_id)
-        import random
-
-        random.seed(seed)
-        try:
-            import numpy as np
-
-            np.random.seed(seed % (2**32 - 1))
-        except Exception:
-            pass
-        import torch
-
-        torch.manual_seed(seed)
-
-    return _init
 
 
 def _build_text_vocab(tokens: List[str]):
@@ -1049,7 +1031,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 data_cfg.batch_size,
                 shuffle=False,
                 generator=val_gen,
-                worker_init_fn=_make_worker_init_fn(args.eval_seed),
+                worker_init_fn=make_worker_init_fn(args.eval_seed),
             ):
                 xb_cpu = xb
                 xb = xb_cpu.to(device)

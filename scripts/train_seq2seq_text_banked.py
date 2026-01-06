@@ -14,7 +14,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from set_attention.utils.bench_skip import should_skip_dense, should_skip_ska, _make_worker_init_fn
+from set_attention.utils.bench_skip import should_skip_dense, should_skip_ska
+from set_attention.utils.repro_workers import make_worker_init_fn
 from set_attention.tokenizers.active_tokenizer import ACTIVE_TOKENIZER_TYPE
 from set_attention.tokenizers.hf_bpe import HF_BPE_TYPE
 from set_attention.tokenizers.hf_unigram import HF_UNIGRAM_TYPE
@@ -307,7 +308,7 @@ def run_seq2seq_benchmark(
         args.batch,
         shuffle=False,
         generator=torch.Generator(device=device).manual_seed(args.eval_seed),
-        worker_init_fn=_make_worker_init_fn(args.eval_seed),
+        worker_init_fn=make_worker_init_fn(args.eval_seed),
     )
     try:
         batch_idx_tensor, src_ids, tgt_ids, _ = next(iterator)
@@ -973,7 +974,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     args.batch,
                     shuffle=False,
                     generator=torch.Generator(device=device).manual_seed(args.eval_seed),
-                    worker_init_fn=_make_worker_init_fn(args.eval_seed),
+                    worker_init_fn=make_worker_init_fn(args.eval_seed),
                 ):
                     batch_idx_tensor = batch_idx_tensor.to(device)
                     src_ids = src_ids.to(device, non_blocking=True)

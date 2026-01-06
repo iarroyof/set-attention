@@ -23,6 +23,7 @@ from set_attention.utils.bench_skip import (
     should_skip_dense,
     should_skip_ska,
 )
+from set_attention.utils.repro_workers import make_worker_init_fn
 from set_attention.data import configure_hf_cache, resolve_data_root
 from set_attention.data.wikitext import (
     chunk_tokens,
@@ -1314,7 +1315,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 args.batch,
                 shuffle=train,
                 generator=(torch.Generator(device=device).manual_seed(args.eval_seed) if not train else None),
-                worker_init_fn=(_make_worker_init_fn(args.eval_seed) if not train else None),
+                worker_init_fn=(make_worker_init_fn(args.eval_seed) if not train else None),
             )
         active_cache = train_cache if train else val_cache
         if not args.sdpa_baseline and active_cache is None:
@@ -1433,19 +1434,5 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
 if __name__ == "__main__":
     main()
 def _make_worker_init_fn(base_seed: int):
-    def _init(worker_id: int):
-        seed = int(base_seed) + int(worker_id)
-        import random
-
-        random.seed(seed)
-        try:
-            import numpy as np
-
-            np.random.seed(seed % (2**32 - 1))
-        except Exception:
-            pass
-        import torch
-
-        torch.manual_seed(seed)
-
-    return _init
+    # Backwards compat shim; prefer make_worker_init_fn from set_attention.utils.repro_workers
+    return make_worker_init_fn(base_seed)
