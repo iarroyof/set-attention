@@ -27,8 +27,13 @@ def force_online():
     for k in ("HF_DATASETS_OFFLINE", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"):
         if k in os.environ:
             os.environ.pop(k)
-    os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
-    print("[env] offline flags cleared; HF_HUB_ENABLE_HF_TRANSFER=1 set.")
+    try:
+        import hf_transfer  # noqa: F401
+
+        os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+    except Exception:
+        os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+    print(f"[env] offline flags cleared; HF_HUB_ENABLE_HF_TRANSFER={os.environ['HF_HUB_ENABLE_HF_TRANSFER']} set.")
 
 
 def set_cache(cache_dir: Path):
