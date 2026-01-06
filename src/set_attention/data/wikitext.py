@@ -25,7 +25,13 @@ def load_wikitext_hf_dataset(
         raise ImportError("The 'datasets' package is required for Wikitext loading.") from exc
 
     name, config = _WIKITEXT_CONFIGS[dataset]
-    return load_dataset(name, config, cache_dir=str(cache_dir), streaming=streaming)
+    try:
+        return load_dataset(name, config, cache_dir=str(cache_dir), streaming=streaming)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to load {name}:{config} from cache {cache_dir}. "
+            "Prefetch the dataset (scripts/prefetch_datasets.py) or allow network access."
+        ) from exc
 
 
 def iter_wikitext_lines(

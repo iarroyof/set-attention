@@ -87,10 +87,19 @@ def text_batch_iterator(
     max_len: int,
     batch_size: int,
     shuffle: bool,
+    generator: torch.Generator | None = None,
+    worker_init_fn=None,
 ) -> Iterator[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, List[List[str]]]]:
     indices = list(range(len(pairs)))
+    if worker_init_fn is not None:
+        # mimic DataLoader worker seeding for deterministic eval
+        worker_init_fn(0)
     if shuffle:
-        random.shuffle(indices)
+        if generator is not None:
+            perm = torch.randperm(len(indices), generator=generator).tolist()
+            indices = [indices[i] for i in perm]
+        else:
+            random.shuffle(indices)
     for start in range(0, len(indices), batch_size):
         batch_idx = indices[start : start + batch_size]
         src_batch = torch.stack([encode_sentence(pairs[i][0], src_stoi, max_len) for i in batch_idx], dim=0)

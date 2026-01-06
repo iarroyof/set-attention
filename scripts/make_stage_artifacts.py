@@ -180,16 +180,22 @@ def stage_b_plots(bench_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
 def main():
     ap = argparse.ArgumentParser(description="Generate Stage A tables and Stage B plots from summaries.")
     ap.add_argument("--bench-summary", type=str, required=True, help="Path to bench_summary.csv")
-    ap.add_argument("--metrics-summary", type=str, required=True, help="Path to metrics_summary.csv")
+    ap.add_argument("--metrics-summary", type=str, required=False, help="Path to metrics_summary.csv (optional)")
     ap.add_argument("--output-dir", type=str, default="out/stage_artifacts")
     args = ap.parse_args()
 
     out_dir = Path(args.output_dir)
     bench_df = load_csv(Path(args.bench_summary))
-    metrics_df = load_csv(Path(args.metrics_summary))
 
     artifacts: Dict[str, Path] = {}
-    artifacts.update(stage_a_tables(metrics_df, out_dir))
+    if args.metrics_summary:
+        try:
+            metrics_df = load_csv(Path(args.metrics_summary))
+            artifacts.update(stage_a_tables(metrics_df, out_dir))
+        except FileNotFoundError:
+            print(f"[stage-artifacts] metrics summary missing: {args.metrics_summary} (skipping Stage A tables)")
+    else:
+        print("[stage-artifacts] metrics summary not provided; skipping Stage A tables.")
     artifacts.update(stage_b_plots(bench_df, out_dir))
 
     manifest = {k: str(v) for k, v in artifacts.items()}

@@ -501,13 +501,24 @@ def run_lm_benchmark(
     run_uid,
 ):
     attn_impl = _attn_impl_label(args, args.sdpa_baseline)
-    # Pre-skip based on VRAM estimate
-    if args.gpu_vram > 0:
-        if args.sdpa_baseline:
-            decision = should_skip_dense(bench_batch.size(0), max_len, args.d_model, args.nhead, args.precision, args.gpu_vram)
+    # Normalize benchmark batch
+    batch_idx = src_ids = tgt_ids = None
+    bench_batch_size = None
+    seq_len = max_len
+    if bench_batch is not None:
+        if isinstance(bench_batch, (list, tuple)) and len(bench_batch) >= 3:
+            batch_idx, src_ids, tgt_ids = bench_batch[:3]
         else:
-            decision = should_skip_ska(bench_batch.size(0), max_len, args.window, args.stride, args.nhead, args.precision, args.gpu_vram)
-        if decision.skip or args.dry_run:
+            raise RuntimeError("Unexpected benchmark batch structure for LM.")
+        bench_batch_size = src_ids.size(0)
+        seq_len = tgt_ids.size(1)
+    # Pre-skip based on VRAM estimate or dry-run
+    if args.gpu_vram > 0 and bench_batch_size is not None:
+        if args.sdpa_baseline:
+            decision = should_skip_dense(bench_batch_size, max_len, args.d_model, args.nhead, args.precision, args.gpu_vram)
+        else:
+            decision = should_skip_ska(bench_batch_size, max_len, args.window, args.stride, args.nhead, args.precision, args.gpu_vram)
+        if decision.skip:
             _append_benchmark_row(
                 benchmark_csv,
                 {
@@ -519,17 +530,37 @@ def run_lm_benchmark(
                     "attn_impl": attn_impl,
                     "precision": args.precision,
                     "status": "skipped",
-                    "skip_reason": decision.reason or ("dry_run" if args.dry_run else ""),
+                    "skip_reason": decision.reason,
                     "gpu_vram_gb": args.gpu_vram,
+                    "batch": bench_batch_size,
+                    "seq_len": seq_len,
+                    "seq_stride": args.seq_stride,
                 },
             )
-            if args.dry_run or decision.skip:
-                return
+            return
+    if args.dry_run:
+        _append_benchmark_row(
+            benchmark_csv,
+            {
+                "script": "train_toy_lm_banked",
+                "task": "lm",
+                "dataset": args.dataset or "custom",
+                "dataset_id": args.dataset or "custom",
+                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                "attn_impl": attn_impl,
+                "precision": args.precision,
+                "status": "dry_run",
+                "skip_reason": "dry_run",
+                "gpu_vram_gb": args.gpu_vram,
+                "batch": bench_batch_size or args.batch,
+                "seq_len": seq_len,
+                "seq_stride": args.seq_stride,
+            },
+        )
+        return
     if bench_batch is None:
         print("[benchmark] no data available.")
         return
-    batch_idx, src_ids, tgt_ids, _ = bench_batch
-    bench_batch_size = src_ids.size(0)
     batch_idx = batch_idx.to(device)
     src_ids = src_ids.to(device)
     tgt_ids = tgt_ids.to(device)
@@ -555,16 +586,19 @@ def run_lm_benchmark(
         stats_ptrs = q_ptrs.detach().cpu()
         stats_sizes = Size.detach().cpu()
 
-    for _ in range(args.bench_warmup):
-        step()
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-        torch.cuda.reset_peak_memory_stats()
-    t0 = time.perf_counter()
     try:
+        for _ in range(args.bench_warmup):
+            step()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+        t0 = time.perf_counter()
         for _ in range(args.bench_iters):
             step()
-    except torch.cuda.OutOfMemoryError:
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        elapsed = time.perf_counter() - t0
+    except torch.cuda.OutOfMemoryError as exc:
         if args.skip_oom:
             torch.cuda.empty_cache()
             _append_benchmark_row(
@@ -578,15 +612,15 @@ def run_lm_benchmark(
                     "attn_impl": attn_impl,
                     "precision": args.precision,
                     "status": "oom",
-                    "skip_reason": "runtime_oom",
+                    "skip_reason": str(exc)[:160],
                     "gpu_vram_gb": args.gpu_vram,
+                    "batch": bench_batch_size or args.batch,
+                    "seq_len": max_len,
+                    "seq_stride": args.seq_stride,
                 },
             )
             return
         raise
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-    elapsed = time.perf_counter() - t0
     max_vram_mb = (
         torch.cuda.max_memory_allocated() / (1024**2) if torch.cuda.is_available() else 0.0
     )
@@ -640,7 +674,7 @@ def run_lm_benchmark(
             "attn_impl": attn_impl,
             "precision": args.precision,
             "attn": args.attn,
-            "batch": args.batch,
+            "batch": bench_batch_size or args.batch,
             "seq_len": max_len,
             "seq_stride": args.seq_stride,
             "window": args.window,
@@ -1075,6 +1109,62 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
 
     if args.benchmark:
         sys_info = _system_info()
+        if args.dry_run:
+            dataset_id = args.dataset or "custom"
+            bench_size = None
+            seq_len = args.seq_len
+            if benchmark_batch is not None and isinstance(benchmark_batch, (list, tuple)) and len(benchmark_batch) >= 3:
+                _, src_ids, tgt_ids, _ = benchmark_batch[:4]
+                bench_size = src_ids.size(0)
+                seq_len = tgt_ids.size(1)
+            _append_benchmark_row(
+                args.benchmark_csv,
+                {
+                    "script": "train_toy_lm_banked",
+                    "task": "lm",
+                    "dataset": dataset_id,
+                    "dataset_id": dataset_id,
+                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                    "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                    "precision": args.precision,
+                    "attn": args.attn,
+                    "batch": bench_size or args.batch,
+                    "seq_len": seq_len,
+                    "seq_stride": args.seq_stride,
+                    "window": args.window,
+                    "stride": args.stride,
+                    "minhash_k": args.minhash_k,
+                    "router_topk": args.router_topk,
+                    "bench_warmup": args.bench_warmup,
+                    "bench_iters": args.bench_iters,
+                    "seed": seed,
+                    "rep": rep,
+                    "run_uid": run_uid,
+                    "device": sys_info["device"],
+                    "gpu_name": sys_info["gpu_name"],
+                    "torch_version": sys_info["torch_version"],
+                    "cuda_version": sys_info["cuda_version"],
+                    "git_sha": sys_info["git_sha"],
+                    "tokens_per_s": 0.0,
+                    "elapsed_s": 0.0,
+                    "tokens_total": 0.0,
+                    "avg_sets_per_seq": 0.0,
+                    "avg_atoms_per_set": 0.0,
+                    "scores_total": 0.0,
+                    "scores_per_s": 0.0,
+                    "scores_per_1e6": 0.0,
+                    "scores_per_token": 0.0,
+                    "min_sets_per_seq": 0.0,
+                    "max_sets_per_seq": 0.0,
+                    "max_vram_mb": 0.0,
+                    "status": "dry_run",
+                    "skip_reason": "dry_run",
+                    "gpu_vram_gb": args.gpu_vram,
+                },
+            )
+            if wandb_run.enabled:
+                wandb_run.finish()
+            return
         if args.sdpa_baseline:
             if benchmark_batch is None:
                 print("[benchmark] no data available.")

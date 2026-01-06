@@ -9,6 +9,19 @@ from typing import Optional, Tuple
 
 PRECISION_BYTES = {"fp32": 4, "fp16": 2, "bf16": 2}
 
+def _make_worker_init_fn(base_seed: int):
+    def _init(worker_id: int):
+        seed = int(base_seed) + int(worker_id)
+        import random
+        random.seed(seed)
+        try:
+            import numpy as np
+            np.random.seed(seed % (2**32 - 1))
+        except Exception:
+            pass
+        import torch
+        torch.manual_seed(seed)
+    return _init
 
 def bytes_from_gb(gb: float) -> int:
     return int(float(gb) * (1024**3))

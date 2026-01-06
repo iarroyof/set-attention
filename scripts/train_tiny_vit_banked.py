@@ -667,13 +667,17 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
 
     if args.data_mode == "cifar10":
         if torchvision is None:
-            raise RuntimeError("torchvision is required for CIFAR10 data mode. Install torchvision or use --data-mode synthetic.")
+            raise RuntimeError(
+                "torchvision is required for CIFAR10 data mode. "
+                "Install torchvision (matching torch CUDA version) or run with --data-mode synthetic."
+            )
         transform = T.Compose([T.ToTensor()])
         vision_root = data_root / "vision" / "cifar10"
         vision_root.mkdir(parents=True, exist_ok=True)
         base_dataset = torchvision.datasets.CIFAR10(root=str(vision_root), train=True, download=True, transform=transform)
         dataset_len = len(base_dataset)
-    else:
+    if args.data_mode != "cifar10":
+        transform = T.Compose([T.ToTensor()])
         base_dataset = SyntheticVisionDataset(num_samples=args.demo_samples, img_size=32, num_classes=args.num_classes, seed=seed)
         dataset_len = len(base_dataset)
 
