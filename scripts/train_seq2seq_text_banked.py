@@ -646,6 +646,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     torch.backends.cudnn.benchmark = True
     set_seed(seed, deterministic=args.deterministic, benchmark_mode=args.benchmark_mode)
     print(f"[Run] seed={seed} rep={rep} uid={run_uid}")
+    cache_dir = ensure_hf_cache(args.hf_cache_dir)
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {

@@ -746,6 +746,7 @@ def main():
 
 def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: bool):
     config_label = args.text_dataset if args.data_mode == "text" else args.data_mode
+    hf_cache = ensure_hf_cache(args.text_cache_dir)
     torch.backends.cudnn.benchmark = True
     set_seed(seed, deterministic=args.deterministic, benchmark_mode=args.benchmark_mode)
     print(f"[Run] seed={seed} rep={rep} uid={run_uid}")
