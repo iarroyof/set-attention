@@ -2,6 +2,7 @@ import argparse
 import copy
 import csv
 import json
+import hashlib
 import math
 import os
 import random
@@ -157,6 +158,17 @@ def _normalize_tokenizer_config(config: Dict[str, Any]) -> Dict[str, Any]:
             out[key] = int(out[key])
     return out
 
+
+def _tokenizer_fingerprint(tokenizer_type: str, tokenizer_config: Dict[str, Any], dataset: str, limit: int, max_len: int) -> str:
+    payload = {
+        "tokenizer_type": tokenizer_type,
+        "tokenizer_config": tokenizer_config,
+        "dataset": dataset or "custom",
+        "limit": int(limit) if limit is not None else None,
+        "max_len": int(max_len),
+    }
+    data = json.dumps(payload, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(data).hexdigest()[:12]
 def _explicit_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, scale: float) -> torch.Tensor:
     scores = torch.matmul(q, k.transpose(-2, -1)) * scale
     weights = torch.softmax(scores, dim=-1)
@@ -707,6 +719,12 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     if config_overrides:
         tokenizer_config.update(config_overrides)
     tokenizer_config = _normalize_tokenizer_config(tokenizer_config)
+
+    if not tokenizer_dir:
+        hf_root = Path(os.environ.get("HF_HOME") or str(cache_dir.parent))
+        tok_root = hf_root / "tokenizers"
+        fingerprint = _tokenizer_fingerprint(args.tokenizer_type, tokenizer_config, args.dataset or "custom", args.limit, max_len)
+        tokenizer_dir = str(tok_root / args.dataset / args.tokenizer_type / fingerprint)
 
     if tokenizer_dir and os.path.isdir(tokenizer_dir):
         print(f"[Tokenizer] Loading {args.tokenizer_type} tokenizer from {tokenizer_dir}")
