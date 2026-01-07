@@ -4,9 +4,15 @@ from typing import List, Tuple, Optional
 
 
 def _resolve_cache_dir(cache_dir: Optional[str]) -> Optional[str]:
-    if cache_dir:
-        return os.path.expanduser(cache_dir)
     env_cache = os.environ.get("HF_DATASETS_CACHE") or os.environ.get("HF_HOME")
+    if cache_dir:
+        expanded = os.path.expanduser(cache_dir)
+        if os.path.exists(expanded):
+            return expanded
+        # if provided path missing, fall back to env cache if available
+        if env_cache:
+            return env_cache
+        return expanded
     return env_cache
 
 

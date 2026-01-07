@@ -595,8 +595,8 @@ def main():
     parser.add_argument(
         "--hf-cache-dir",
         type=str,
-        default="~/.cache/set-attention/hf_datasets",
-        help="Shared HF datasets cache (offline is enabled automatically when populated).",
+        default="",
+        help="Shared HF datasets cache (leave empty to use HF_DATASETS_CACHE/HF_HOME).",
     )
     parser.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     parser.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
