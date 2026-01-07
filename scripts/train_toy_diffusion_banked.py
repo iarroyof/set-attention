@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from set_attention.utils.bench_skip import should_skip_dense, should_skip_ska
+from set_attention.data.hf_cache import ensure_hf_cache
 from set_attention.experiments.data_toy import ToyDiffConfig, make_toy_continuous_sequences
 from set_attention.experiments.diffusion_core import SimpleDDPM
 from set_attention.experiments.models import PositionalEncoding, timestep_embedding
