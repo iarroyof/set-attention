@@ -45,6 +45,7 @@ def ensure_hf_cache(user_root: Optional[str] = None) -> Path:
     os.environ.setdefault("HF_HOME", str(root))
     os.environ.setdefault("HF_DATASETS_CACHE", str(datasets_dir))
     os.environ.setdefault("TRANSFORMERS_CACHE", str(hub_dir))
+    os.environ.setdefault("HF_HUB_CACHE", str(hub_dir))
 
     return datasets_dir
 
