@@ -614,8 +614,6 @@ def main():
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), args.atom_dim, args.heads)
-    cache_dir = ensure_hf_cache(args.hf_cache_dir)
-
     if args.benchmark and args.limit is None:
         args.limit = 50000
         print("[benchmark] limiting dataset to 50k pairs for memory safety.")

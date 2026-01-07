@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from set_attention.data.hf_cache import ensure_hf_cache
+
 DEFAULT_DATA_ROOT = Path.home() / ".cache" / "set-attention"
 
 
@@ -16,12 +18,12 @@ def resolve_data_root(user_path: Optional[str]) -> Path:
 
 def configure_hf_cache(data_root: Path, user_cache: Optional[str] = None) -> Path:
     """Set HuggingFace cache directories so datasets are reused across runs."""
-    cache_dir = Path(user_cache).expanduser() if user_cache else data_root / "hf_datasets"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("HF_HOME", str(cache_dir))
-    os.environ.setdefault("HF_DATASETS_CACHE", str(cache_dir))
-    os.environ.setdefault("TRANSFORMERS_CACHE", str(cache_dir))
-    return cache_dir
+    if user_cache:
+        return ensure_hf_cache(user_cache)
+    # If env is already set, respect it; otherwise default under data_root/hf
+    if os.environ.get("HF_HOME") or os.environ.get("HF_DATASETS_CACHE"):
+        return ensure_hf_cache(None)
+    return ensure_hf_cache(str(data_root / "hf"))
 
 
 __all__ = ["resolve_data_root", "configure_hf_cache", "DEFAULT_DATA_ROOT"]

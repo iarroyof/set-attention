@@ -11,7 +11,6 @@ import numpy as np
 
 from set_attention.data.wikitext import _WIKITEXT_CONFIGS, load_wikitext_hf_dataset
 from set_attention.data.hf_cache import ensure_hf_cache
-from set_attention.data.hf_cache import ensure_hf_cache
 
 
 def _load_documents(dataset: str, split: str, cache_dir: Path) -> List[str]:

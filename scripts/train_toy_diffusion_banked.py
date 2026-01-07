@@ -199,10 +199,6 @@ def _configure_dot_naive(dot_naive: bool) -> None:
     print("[SDP] dot-naive enabled: flash/mem-efficient SDP disabled; using math backend.")
 
 
-def _maybe_set_hf_cache(hf_cache_dir: str) -> Path:
-    """Compat shim: delegate to the canonical HF cache helper."""
-    return ensure_hf_cache(hf_cache_dir or None)
-
 
 def _system_info():
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -720,8 +716,6 @@ def main():
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), args.d_model, args.nhead)
-    hf_cache = ensure_hf_cache(args.text_cache_dir)
-
     seed_values: List[int] = []
     if args.seeds:
         for part in args.seeds.replace(",", " ").split():
