@@ -26,6 +26,7 @@ from set_attention.tokenizers.registry import (
     save_tokenizer,
 )
 from set_attention.training.seq_loaders import get_seq2seq_datasets
+from set_attention.data.hf_cache import ensure_hf_cache
 from set_attention.sets.bank_builders import build_windowed_bank_from_texts
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
 from set_attention.heads.banked_attention import SetBankAttention
@@ -126,16 +127,6 @@ def _configure_dot_naive(dot_naive: bool) -> None:
     torch.backends.cuda.matmul.allow_tf32 = False
     print("[SDP] dot-naive enabled: flash/mem-efficient SDP disabled; using math backend.")
 
-
-def _maybe_set_hf_cache(hf_cache_dir: str) -> Path:
-    """Ensure HF cache is shared across runs; if populated, enable offline to avoid repeated downloads."""
-    cache_dir = Path(hf_cache_dir).expanduser() if hf_cache_dir else Path("~/.cache/set-attention/hf_datasets").expanduser()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("HF_DATASETS_CACHE", str(cache_dir))
-    os.environ.setdefault("HF_HOME", str(cache_dir / "hf_home"))
-    if any(cache_dir.glob("*")) and "HF_DATASETS_OFFLINE" not in os.environ:
-        os.environ["HF_DATASETS_OFFLINE"] = "1"
-    return cache_dir
 
 
 def _parse_tokenizer_config_arg(value: str) -> Dict[str, Any]:
@@ -596,7 +587,7 @@ def main():
         "--hf-cache-dir",
         type=str,
         default="",
-        help="Shared HF datasets cache (leave empty to use HF_DATASETS_CACHE/HF_HOME).",
+        help="Shared HF datasets cache root; empty uses HF_HOME/HF_DATASETS_CACHE.",
     )
     parser.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     parser.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
@@ -623,7 +614,7 @@ def main():
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), args.atom_dim, args.heads)
-    _maybe_set_hf_cache(args.hf_cache_dir)
+    cache_dir = ensure_hf_cache(args.hf_cache_dir)
 
     if args.benchmark and args.limit is None:
         args.limit = 50000
@@ -699,7 +690,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         demo=args.demo,
         demo_samples=args.demo_samples,
         max_len=64,
-        cache_dir=args.hf_cache_dir,
+        cache_dir=str(cache_dir),
     )
 
     train_pairs = train_ds.pairs

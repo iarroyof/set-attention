@@ -199,15 +199,8 @@ def _configure_dot_naive(dot_naive: bool) -> None:
 
 
 def _maybe_set_hf_cache(hf_cache_dir: str) -> Path:
-    """Ensure Hugging Face datasets cache is shared across runs and, if present, use offline mode."""
-    cache_dir = Path(hf_cache_dir).expanduser() if hf_cache_dir else Path("~/.cache/set-attention/hf_datasets").expanduser()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("HF_DATASETS_CACHE", str(cache_dir))
-    os.environ.setdefault("HF_HOME", str(cache_dir / "hf_home"))
-    # If cache already populated, allow offline reuse to avoid repeated fetch / 429.
-    if any(cache_dir.glob("*")) and "HF_DATASETS_OFFLINE" not in os.environ:
-        os.environ["HF_DATASETS_OFFLINE"] = "1"
-    return cache_dir
+    """Compat shim: delegate to the canonical HF cache helper."""
+    return ensure_hf_cache(hf_cache_dir or None)
 
 
 def _system_info():
@@ -658,8 +651,8 @@ def main():
     ap.add_argument(
         "--text-cache-dir",
         type=str,
-        default="~/.cache/set-attention/hf_datasets",
-        help="Cache directory for HuggingFace Wikitext data (also used to enable offline cache reuse).",
+        default="",
+        help="Cache directory for HuggingFace Wikitext data; empty uses HF_DATASETS_CACHE/HF_HOME.",
     )
     ap.add_argument("--text-seq-len", type=int, default=128)
     ap.add_argument("--text-stride", type=int, default=128)
@@ -726,7 +719,7 @@ def main():
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), args.d_model, args.nhead)
-    hf_cache = _maybe_set_hf_cache(args.text_cache_dir)
+    hf_cache = ensure_hf_cache(args.text_cache_dir)
 
     seed_values: List[int] = []
     if args.seeds:
@@ -849,7 +842,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
     text_itos: Optional[List[str]] = None
 
     if text_mode:
-        cache_dir = Path(args.text_cache_dir).expanduser()
+        cache_dir = Path(hf_cache)
         stride = args.text_stride if args.text_stride > 0 else args.text_seq_len
         embed_dim = args.data_dim if args.data_dim is not None else args.d_model
         text_payload = prepare_text_diffusion_data(

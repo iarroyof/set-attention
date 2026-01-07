@@ -10,15 +10,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 
 from set_attention.data.wikitext import _WIKITEXT_CONFIGS, load_wikitext_hf_dataset
-
-
-def _maybe_set_hf_cache(hf_cache_dir: str) -> Path:
-    """Set shared HF cache; leave offline mode to caller control."""
-    cache_dir = Path(hf_cache_dir).expanduser()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("HF_DATASETS_CACHE", str(cache_dir))
-    os.environ.setdefault("HF_HOME", str(cache_dir / "hf_home"))
-    return cache_dir
+from set_attention.data.hf_cache import ensure_hf_cache
 
 
 def _load_documents(dataset: str, split: str, cache_dir: Path) -> List[str]:
@@ -140,7 +132,12 @@ def main() -> None:
         required=True,
         help="Token budgets per subset. Values <=1 are treated as fractions; >1 as absolute token counts.",
     )
-    parser.add_argument("--cache-dir", type=str, default="~/.cache/set-attention/hf_datasets")
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default="",
+        help="HF datasets cache root; empty uses HF_HOME/HF_DATASETS_CACHE.",
+    )
     parser.add_argument("--output-dir", type=str, required=True)
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--window", type=int, default=64)
@@ -152,7 +149,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cache_dir = _maybe_set_hf_cache(args.cache_dir)
+    cache_dir = ensure_hf_cache(args.cache_dir)
     if args.force_online:
         os.environ.pop("HF_DATASETS_OFFLINE", None)
         os.environ.pop("HF_HUB_OFFLINE", None)

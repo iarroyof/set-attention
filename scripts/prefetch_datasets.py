@@ -8,6 +8,7 @@ import socket
 from pathlib import Path
 
 from datasets import load_dataset
+from set_attention.data.hf_cache import ensure_hf_cache
 
 
 def print_env():
@@ -36,14 +37,6 @@ def force_online():
     print(f"[env] offline flags cleared; HF_HUB_ENABLE_HF_TRANSFER={os.environ['HF_HUB_ENABLE_HF_TRANSFER']} set.")
 
 
-def set_cache(cache_dir: Path):
-    cache_dir = cache_dir.expanduser()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("HF_DATASETS_CACHE", str(cache_dir))
-    os.environ.setdefault("HF_HOME", str(cache_dir / "hf_home"))
-    return cache_dir
-
-
 def dns_check():
     hosts = ["huggingface.co", "cdn-lfs.huggingface.co"]
     for host in hosts:
@@ -56,7 +49,7 @@ def dns_check():
 
 def main():
     ap = argparse.ArgumentParser(description="Prefetch datasets into HF cache for offline reuse.")
-    ap.add_argument("--cache-dir", type=str, default="~/.cache/set-attention/hf_datasets")
+    ap.add_argument("--cache-dir", type=str, default="", help="HF cache root; empty uses HF_HOME/HF_DATASETS_CACHE.")
     ap.add_argument(
         "--datasets",
         nargs="+",
@@ -66,7 +59,7 @@ def main():
     )
     args = ap.parse_args()
 
-    cache_dir = set_cache(Path(args.cache_dir))
+    cache_dir = ensure_hf_cache(args.cache_dir)
     print_env()
     dns_check()
     force_online()
