@@ -699,6 +699,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         demo=args.demo,
         demo_samples=args.demo_samples,
         max_len=64,
+        cache_dir=args.hf_cache_dir,
     )
 
     train_pairs = train_ds.pairs

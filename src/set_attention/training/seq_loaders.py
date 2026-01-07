@@ -18,14 +18,15 @@ def get_seq2seq_datasets(
     demo: bool = False,
     demo_samples: int = 200,
     max_len: int = 64,
+    cache_dir: Optional[str] = None,
 ):
     """Return (train_dataset, val_dataset) for seq2seq tasks.
 
     Precedence: dataset -> demo -> local files.
     """
     if dataset:
-        src_tr, tgt_tr = load_seq2seq_pairs(dataset, split="train", limit=limit)
-        src_va, tgt_va = load_seq2seq_pairs(dataset, split="validation", limit=val_limit or limit)
+        src_tr, tgt_tr = load_seq2seq_pairs(dataset, split="train", limit=limit, cache_dir=cache_dir)
+        src_va, tgt_va = load_seq2seq_pairs(dataset, split="validation", limit=val_limit or limit, cache_dir=cache_dir)
         train_ds = InMemoryTextPairDataset(src_tr, tgt_tr, max_len=max_len)
         val_ds = InMemoryTextPairDataset(src_va, tgt_va, max_len=max_len)
         return train_ds, val_ds
