@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -13,6 +14,13 @@ from set_attention.tokenizers.active_tokenizer import ACTIVE_TOKENIZER_TYPE
 from set_attention.tokenizers.hf_bpe import HF_BPE_TYPE
 from set_attention.tokenizers.hf_unigram import HF_UNIGRAM_TYPE
 from set_attention.tokenizers.registry import available_tokenizer_types, create_tokenizer, load_tokenizer, save_tokenizer
+from set_attention.tokenizers.cache import (
+    default_tokenizer_dir,
+    meta_matches,
+    save_tokenizer_meta,
+    tokenizer_fingerprint,
+)
+from set_attention.data.hf_cache import ensure_hf_cache
 from set_attention.training.text_utils import (
     build_token_set_store,
     ids_to_tokens,
@@ -154,6 +162,7 @@ def main():
         help="JSON string or path with tokenizer config overrides.",
     )
     args = ap.parse_args()
+    ensure_hf_cache(None)
 
     src_int, tgt_int = make_toy_pairs()
     src_texts = [ints_to_text(row) for row in src_int]
@@ -170,17 +179,48 @@ def main():
             tokenizer_config.update(config_overrides)
         tokenizer_config = _normalize_tokenizer_config(tokenizer_config)
 
-        if tokenizer_dir and Path(tokenizer_dir).is_dir():
+        if not tokenizer_dir:
+            hf_home = Path(os.environ.get("HF_HOME") or "~/.cache/set-attention/hf").expanduser()
+            dataset_id = "toy_seq2seq"
+            fingerprint = tokenizer_fingerprint(
+                args.tokenizer_type,
+                tokenizer_config,
+                dataset_id,
+                dataset.max_len,
+                limit=None,
+                extra={"pairs": len(src_texts)},
+            )
+            tokenizer_dir = str(default_tokenizer_dir(hf_home, dataset_id, args.tokenizer_type, fingerprint))
+
+        expected_meta = {
+            "fingerprint": tokenizer_fingerprint(
+                args.tokenizer_type,
+                tokenizer_config,
+                "toy_seq2seq",
+                dataset.max_len,
+                limit=None,
+                extra={"pairs": len(src_texts)},
+            ),
+            "dataset": "toy_seq2seq",
+            "tokenizer_type": args.tokenizer_type,
+            "tokenizer_config": tokenizer_config,
+            "max_len": dataset.max_len,
+        }
+
+        if tokenizer_dir and Path(tokenizer_dir).is_dir() and meta_matches(Path(tokenizer_dir), expected_meta):
             print(f"[Tokenizer] Loading {args.tokenizer_type} tokenizer from {tokenizer_dir}")
             load_cfg = config_overrides if config_overrides else None
             tokenizer = load_tokenizer(tokenizer_dir, kind=args.tokenizer_type, config=load_cfg)
         else:
+            if tokenizer_dir and Path(tokenizer_dir).is_dir():
+                print("[Tokenizer] Cache mismatch; retraining to avoid inconsistent token IDs.")
             print(f"[Tokenizer] Training new {args.tokenizer_type} tokenizer on synthetic corpus")
             tokenizer = create_tokenizer(args.tokenizer_type, tokenizer_config)
             tokenizer.fit(src_texts)
             if tokenizer_dir:
                 Path(tokenizer_dir).mkdir(parents=True, exist_ok=True)
                 save_tokenizer(tokenizer, tokenizer_dir)
+                save_tokenizer_meta(Path(tokenizer_dir), expected_meta)
                 print(f"[Tokenizer] Saved to {tokenizer_dir}")
 
     device = torch.device(args.device)

@@ -2,7 +2,6 @@ import argparse
 import copy
 import csv
 import json
-import hashlib
 import math
 import os
 import random
@@ -25,6 +24,12 @@ from set_attention.tokenizers.registry import (
     create_tokenizer,
     load_tokenizer,
     save_tokenizer,
+)
+from set_attention.tokenizers.cache import (
+    default_tokenizer_dir,
+    meta_matches,
+    save_tokenizer_meta,
+    tokenizer_fingerprint,
 )
 from set_attention.training.seq_loaders import get_seq2seq_datasets
 from set_attention.data.hf_cache import ensure_hf_cache
@@ -159,16 +164,6 @@ def _normalize_tokenizer_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _tokenizer_fingerprint(tokenizer_type: str, tokenizer_config: Dict[str, Any], dataset: str, limit: int, max_len: int) -> str:
-    payload = {
-        "tokenizer_type": tokenizer_type,
-        "tokenizer_config": tokenizer_config,
-        "dataset": dataset or "custom",
-        "limit": int(limit) if limit is not None else None,
-        "max_len": int(max_len),
-    }
-    data = json.dumps(payload, sort_keys=True).encode("utf-8")
-    return hashlib.sha256(data).hexdigest()[:12]
 def _explicit_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, scale: float) -> torch.Tensor:
     scores = torch.matmul(q, k.transpose(-2, -1)) * scale
     weights = torch.softmax(scores, dim=-1)
@@ -720,23 +715,45 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         tokenizer_config.update(config_overrides)
     tokenizer_config = _normalize_tokenizer_config(tokenizer_config)
 
+    dataset_id = args.dataset or "local"
+    fingerprint = tokenizer_fingerprint(
+        args.tokenizer_type,
+        tokenizer_config,
+        dataset_id,
+        max_len,
+        limit=args.limit,
+        src_path=args.src,
+        tgt_path=args.tgt,
+    )
     if not tokenizer_dir:
         hf_root = Path(os.environ.get("HF_HOME") or str(cache_dir.parent))
-        tok_root = hf_root / "tokenizers"
-        fingerprint = _tokenizer_fingerprint(args.tokenizer_type, tokenizer_config, args.dataset or "custom", args.limit, max_len)
-        tokenizer_dir = str(tok_root / args.dataset / args.tokenizer_type / fingerprint)
+        tokenizer_dir = str(default_tokenizer_dir(hf_root, dataset_id, args.tokenizer_type, fingerprint))
 
-    if tokenizer_dir and os.path.isdir(tokenizer_dir):
+    expected_meta = {
+        "fingerprint": fingerprint,
+        "dataset": dataset_id,
+        "tokenizer_type": args.tokenizer_type,
+        "tokenizer_config": tokenizer_config,
+        "limit": args.limit,
+        "max_len": max_len,
+        "src_path": args.src,
+        "tgt_path": args.tgt,
+    }
+
+    if tokenizer_dir and os.path.isdir(tokenizer_dir) and meta_matches(Path(tokenizer_dir), expected_meta):
         print(f"[Tokenizer] Loading {args.tokenizer_type} tokenizer from {tokenizer_dir}")
         load_cfg = config_overrides if config_overrides else None
         tokenizer = load_tokenizer(tokenizer_dir, kind=args.tokenizer_type, config=load_cfg)
     else:
+        if tokenizer_dir and os.path.isdir(tokenizer_dir):
+            print("[Tokenizer] Cache mismatch; retraining to avoid inconsistent token IDs.")
         print(f"[Tokenizer] Training new {args.tokenizer_type} tokenizer on source corpus")
         tokenizer = create_tokenizer(args.tokenizer_type, tokenizer_config)
         tokenizer.fit(src_texts)
         if tokenizer_dir:
             os.makedirs(tokenizer_dir, exist_ok=True)
             save_tokenizer(tokenizer, tokenizer_dir)
+            save_tokenizer_meta(Path(tokenizer_dir), expected_meta)
             print(f"[Tokenizer] Saved to {tokenizer_dir}")
 
     src_bank = tgt_bank = None
