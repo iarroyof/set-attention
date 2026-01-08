@@ -20,10 +20,8 @@ def configure_hf_cache(data_root: Path, user_cache: Optional[str] = None) -> Pat
     """Set HuggingFace cache directories so datasets are reused across runs."""
     if user_cache:
         return ensure_hf_cache(user_cache)
-    # If env is already set, respect it; otherwise default under data_root/hf
-    if os.environ.get("HF_HOME") or os.environ.get("HF_DATASETS_CACHE"):
-        return ensure_hf_cache(None)
-    return ensure_hf_cache(str(data_root / "hf"))
+    # Respect env if set; otherwise fall back to default HF home.
+    return ensure_hf_cache(None)
 
 
 __all__ = ["resolve_data_root", "configure_hf_cache", "DEFAULT_DATA_ROOT"]

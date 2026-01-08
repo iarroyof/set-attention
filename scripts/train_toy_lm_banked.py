@@ -24,7 +24,25 @@ from set_attention.utils.bench_skip import (
     should_skip_ska,
 )
 from set_attention.utils.repro_workers import make_worker_init_fn
-from set_attention.data import configure_hf_cache, resolve_data_root
+from set_attention.data.hf_cache import ensure_hf_cache
+from set_attention.data.artifact_cache import (
+    ArtifactSpec,
+    artifact_root,
+    assert_meta_compatible,
+    file_signature,
+    fingerprint,
+    resolve_hf_root,
+    write_meta,
+)
+from set_attention.data.ska_artifacts import (
+    BankPack,
+    RoutingPack,
+    cache_from_packs,
+    load_bank_pack,
+    load_routing_pack,
+    save_bank_pack,
+    save_routing_pack,
+)
 from set_attention.data.wikitext import (
     chunk_tokens,
     iter_wikitext_lines,
@@ -295,6 +313,94 @@ def load_wikitext_dataset(args, cache_dir):
     train_Y = torch.roll(train_X, shifts=-1, dims=1)
     val_Y = torch.roll(val_X, shifts=-1, dims=1)
     return train_X, train_Y, val_X, val_Y, stoi, itos
+
+
+def _lm_subset_signature(args) -> Optional[dict]:
+    if args.subset_path:
+        return file_signature(Path(args.subset_path))
+    return None
+
+
+def _lm_token_spec(args, dataset_id: str, subset_sig: Optional[dict]) -> dict:
+    spec = ArtifactSpec(
+        task="lm",
+        dataset_id=dataset_id,
+        split="train+val",
+        subset=subset_sig,
+        tokenizer={
+            "type": "whitespace",
+            "special_tokens": SPECIAL_TOKENS,
+            "hf_tokenizer_name": args.hf_tokenizer_name or "",
+        },
+        sequence={
+            "seq_len": int(args.seq_len),
+            "stride": int(args.seq_stride),
+            "dataset_lines": int(args.dataset_lines),
+        },
+        model={"d_model": int(args.d_model), "nhead": int(args.nhead), "layers": int(args.layers)},
+        routing_depends_on_learned_params=bool(args.adapter_rank > 0),
+    )
+    return spec.to_dict()
+
+
+def _lm_bank_spec(args, dataset_id: str, subset_sig: Optional[dict], tokens_fp: str) -> dict:
+    spec = ArtifactSpec(
+        task="lm",
+        dataset_id=dataset_id,
+        split="train+val",
+        subset=subset_sig,
+        tokenizer={
+            "type": "whitespace",
+            "special_tokens": SPECIAL_TOKENS,
+            "hf_tokenizer_name": args.hf_tokenizer_name or "",
+            "tokens_fp": tokens_fp,
+        },
+        sequence={
+            "seq_len": int(args.seq_len),
+            "stride": int(args.seq_stride),
+            "dataset_lines": int(args.dataset_lines),
+        },
+        ska={
+            "window": int(args.window),
+            "stride": int(args.stride),
+            "minhash_k": int(args.minhash_k),
+            "router_topk": int(args.router_topk),
+            "backend": args.ska_backend,
+            "precision": args.precision,
+            "attn": args.attn,
+        },
+        model={"d_model": int(args.d_model), "nhead": int(args.nhead), "layers": int(args.layers)},
+        routing_depends_on_learned_params=bool(args.adapter_rank > 0),
+    )
+    return spec.to_dict()
+
+
+def _artifact_root_with_override(spec: dict, override_fp: str, hf_root: Path) -> Path:
+    if override_fp:
+        return hf_root / "artifacts" / spec["task"] / spec["dataset_id"] / override_fp
+    return artifact_root(spec, hf_root)
+
+
+def _save_lm_tokens(path: Path, train_X, train_Y, val_X, val_Y, itos) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "train_X": train_X.cpu(),
+            "train_Y": train_Y.cpu(),
+            "val_X": val_X.cpu(),
+            "val_Y": val_Y.cpu(),
+            "itos": itos,
+        },
+        path,
+    )
+
+
+def _load_lm_tokens(path: Path):
+    payload = torch.load(path, map_location="cpu")
+    itos_list = payload.get("itos", [])
+    itos = {idx: tok for idx, tok in enumerate(itos_list)}
+    stoi = {tok: idx for idx, tok in itos.items()}
+    return payload["train_X"], payload["train_Y"], payload["val_X"], payload["val_Y"], stoi, itos
 
 
 def _explicit_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, scale: float) -> torch.Tensor:
@@ -795,6 +901,11 @@ def main():
     ap.add_argument("--seq-stride", type=int, default=128)
     ap.add_argument("--data-root", type=str, default="")
     ap.add_argument("--hf-cache-dir", type=str, default="")
+    ap.add_argument("--cache-mode", choices=["none", "tokens", "full"], default="none")
+    ap.add_argument("--artifact-cache-root", type=str, default="")
+    ap.add_argument("--artifact-fingerprint", type=str, default="")
+    ap.add_argument("--overwrite-cache", action="store_true", help="Overwrite existing token/bank caches.")
+    ap.add_argument("--cache-only", action="store_true", help="Build caches and exit without training/benchmarking.")
     ap.add_argument("--wandb", action="store_true")
     ap.add_argument("--wandb-project", type=str, default="")
     ap.add_argument("--wandb-run-name", type=str, default="")
@@ -903,8 +1014,15 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         wandb_tags,
     )
 
-    data_root = resolve_data_root(args.data_root)
-    hf_cache = configure_hf_cache(data_root, args.hf_cache_dir)
+    hf_cache = ensure_hf_cache(args.hf_cache_dir)
+    hf_root = resolve_hf_root(args.artifact_cache_root or None)
+    cache_mode = args.cache_mode
+    if cache_mode != "none" and (args.streaming or not args.dataset):
+        raise ValueError("--cache-mode requires a non-streaming dataset run.")
+    if cache_mode != "none" and args.hf_tokenizer_name:
+        raise ValueError("--cache-mode is not supported with --hf-tokenizer-name yet.")
+    if cache_mode == "full" and args.adapter_rank > 0:
+        raise ValueError("--cache-mode full is only supported when --adapter-rank 0.")
 
     streaming_data: Optional[WikitextStreamingData] = None
     train_text_pairs = []
@@ -913,6 +1031,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     val_refs = []
     train_X = train_Y = val_X = val_Y = None
     vocab_file_path: Optional[Path] = None
+    tokens_loaded = False
+    subset_sig = _lm_subset_signature(args)
+    token_spec = None
+    token_root = None
 
     hf_tokenizer = None
     hf_special_ids: Optional[set[int]] = None
@@ -984,8 +1106,21 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             )
             max_len = args.seq_len
         else:
-            train_X, train_Y, val_X, val_Y, stoi, itos = load_wikitext_dataset(args, hf_cache)
-            print(f"[Data] Loaded {args.dataset} into cache {hf_cache}")
+            token_spec = _lm_token_spec(args, args.dataset, subset_sig)
+            token_root = _artifact_root_with_override(token_spec, args.artifact_fingerprint, hf_root)
+            tokens_path = token_root / "tokens.pt"
+            if cache_mode in ("tokens", "full") and tokens_path.exists() and not args.overwrite_cache:
+                assert_meta_compatible(token_root, token_spec)
+                train_X, train_Y, val_X, val_Y, stoi, itos = _load_lm_tokens(tokens_path)
+                tokens_loaded = True
+                print(f"[Cache] Loaded LM tokens from {tokens_path}")
+            else:
+                train_X, train_Y, val_X, val_Y, stoi, itos = load_wikitext_dataset(args, hf_cache)
+                print(f"[Data] Loaded {args.dataset} into cache {hf_cache}")
+                if cache_mode in ("tokens", "full"):
+                    _save_lm_tokens(tokens_path, train_X, train_Y, val_X, val_Y, itos)
+                    write_meta(token_root, token_spec)
+                    print(f"[Cache] Saved LM tokens to {tokens_path}")
             train_text_pairs, train_refs = tensors_to_text_pairs(train_X, train_Y, itos)
             val_text_pairs, val_refs = tensors_to_text_pairs(val_X, val_Y, itos)
             max_len = train_X.size(1)
@@ -1012,6 +1147,11 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     vocab_size = len(stoi)
     device = torch.device(args.device)
 
+    if args.cache_only and cache_mode in ("tokens", "full") and (args.sdpa_baseline or cache_mode == "tokens"):
+        print("[Cache] cache-only complete (tokens).")
+        wandb_run.finish()
+        return
+
     if streaming_data is not None:
         benchmark_batch = streaming_data.benchmark_batch(args.batch)
     elif train_X is not None and train_Y is not None:
@@ -1033,8 +1173,76 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         else:
             sequences_train = streaming_data.sequences_for_bank("train")
             sequences_val = streaming_data.sequences_for_bank("validation")
-        train_bank = build_windowed_bank_from_ids(sequences_train, window=args.window, stride=args.stride)
-        val_bank = build_windowed_bank_from_ids(sequences_val, window=args.window, stride=args.stride)
+
+        bank_root = None
+        loaded_bank_cache = False
+        if cache_mode == "full" and token_spec is not None:
+            tokens_fp = fingerprint(token_spec)
+            bank_spec = _lm_bank_spec(args, args.dataset, subset_sig, tokens_fp)
+            bank_root = _artifact_root_with_override(bank_spec, args.artifact_fingerprint, hf_root)
+            bank_train_path = bank_root / "bank_train.pt"
+            bank_val_path = bank_root / "bank_val.pt"
+            routing_train_path = bank_root / "routing_train.pt"
+            routing_val_path = bank_root / "routing_val.pt"
+            if (
+                bank_train_path.exists()
+                and routing_train_path.exists()
+                and bank_val_path.exists()
+                and routing_val_path.exists()
+                and not args.overwrite_cache
+            ):
+                assert_meta_compatible(bank_root, bank_spec)
+                train_pack = load_bank_pack(bank_train_path)
+                val_pack = load_bank_pack(bank_val_path)
+                train_route = load_routing_pack(routing_train_path)
+                val_route = load_routing_pack(routing_val_path)
+                if not torch.equal(train_pack.universe_ids, val_pack.universe_ids):
+                    raise RuntimeError("Cached LM bank packs have mismatched universe ids.")
+                universe = UniversePool(train_pack.universe_ids, metadata={"task": "toy_lm"})
+                train_cache = cache_from_packs(universe, train_pack, train_route)
+                val_cache = cache_from_packs(universe, val_pack, val_route)
+                loaded_bank_cache = True
+                print(f"[Cache] Loaded LM bank+routing from {bank_root}")
+
+        if not loaded_bank_cache:
+            train_bank = build_windowed_bank_from_ids(sequences_train, window=args.window, stride=args.stride)
+            val_bank = build_windowed_bank_from_ids(sequences_val, window=args.window, stride=args.stride)
+            universe_ids = torch.arange(vocab_size, dtype=torch.long)
+            universe = UniversePool(universe_ids, metadata={"task": "toy_lm"})
+            train_minhash = MinHasher(k=args.minhash_k, device=train_bank.values.device)
+            train_cache = SetFeatureCache(
+                universe, train_bank.values, train_bank.set_offsets, train_bank.seq_offsets, minhash=train_minhash
+            )
+            if val_bank.seq_offsets.numel() > 1:
+                val_minhash = MinHasher(k=args.minhash_k, device=val_bank.values.device)
+                val_cache = SetFeatureCache(
+                    universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=val_minhash
+                )
+            else:
+                val_cache = None
+
+            if cache_mode == "full" and token_spec is not None:
+                tokens_fp = fingerprint(token_spec)
+                bank_spec = _lm_bank_spec(args, args.dataset, subset_sig, tokens_fp)
+                bank_root = _artifact_root_with_override(bank_spec, args.artifact_fingerprint, hf_root)
+                save_bank_pack(bank_root / "bank_train.pt", BankPack.from_banked_batch(train_bank, universe_ids))
+                save_bank_pack(bank_root / "bank_val.pt", BankPack.from_banked_batch(val_bank, universe_ids))
+                save_routing_pack(
+                    bank_root / "routing_train.pt",
+                    RoutingPack(train_cache.sig_sets.detach().cpu(), train_cache.size_sets.detach().cpu()),
+                )
+                if val_cache is not None:
+                    save_routing_pack(
+                        bank_root / "routing_val.pt",
+                        RoutingPack(val_cache.sig_sets.detach().cpu(), val_cache.size_sets.detach().cpu()),
+                    )
+                else:
+                    save_routing_pack(
+                        bank_root / "routing_val.pt",
+                        RoutingPack(torch.empty(0, args.minhash_k, dtype=torch.long), torch.empty(0, dtype=torch.long)),
+                    )
+                write_meta(bank_root, bank_spec)
+                print(f"[Cache] Saved LM bank+routing to {bank_root}")
 
         atom_emb = nn.Embedding(vocab_size, args.d_model).to(device)
         adapter = None
@@ -1045,24 +1253,15 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         else:
             phi_snapshot = atom_emb.weight
 
-        universe_ids = torch.arange(vocab_size, dtype=torch.long)
-        universe = UniversePool(universe_ids, metadata={"task": "toy_lm"})
-        train_minhash = MinHasher(k=args.minhash_k, device=train_bank.values.device)
-        train_cache = SetFeatureCache(
-            universe, train_bank.values, train_bank.set_offsets, train_bank.seq_offsets, minhash=train_minhash
-        )
-        if val_bank.seq_offsets.numel() > 1:
-            val_minhash = MinHasher(k=args.minhash_k, device=val_bank.values.device)
-            val_cache = SetFeatureCache(
-                universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=val_minhash
-            )
-        else:
-            val_cache = None
         if args.precompute_bank:
             universe = universe.to(device)
             train_cache = train_cache.to(device)
             if val_cache is not None:
                 val_cache = val_cache.to(device)
+        if args.cache_only and cache_mode == "full":
+            print("[Cache] cache-only complete (full).")
+            wandb_run.finish()
+            return
     else:
         train_cache = val_cache = None
         atom_emb = adapter = None
@@ -1316,6 +1515,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 shuffle=train,
                 generator=(torch.Generator(device=device).manual_seed(args.eval_seed) if not train else None),
                 worker_init_fn=(make_worker_init_fn(args.eval_seed) if not train else None),
+                src_ids=(train_X if train else val_X),
+                tgt_ids=(train_Y if train else val_Y),
             )
         active_cache = train_cache if train else val_cache
         if not args.sdpa_baseline and active_cache is None:

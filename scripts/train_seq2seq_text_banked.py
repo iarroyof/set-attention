@@ -33,6 +33,24 @@ from set_attention.tokenizers.cache import (
 )
 from set_attention.training.seq_loaders import get_seq2seq_datasets
 from set_attention.data.hf_cache import ensure_hf_cache
+from set_attention.data.artifact_cache import (
+    ArtifactSpec,
+    artifact_root,
+    assert_meta_compatible,
+    file_signature,
+    fingerprint,
+    resolve_hf_root,
+    write_meta,
+)
+from set_attention.data.ska_artifacts import (
+    BankPack,
+    RoutingPack,
+    cache_from_packs,
+    load_bank_pack,
+    load_routing_pack,
+    save_bank_pack,
+    save_routing_pack,
+)
 from set_attention.sets.bank_builders import build_windowed_bank_from_texts
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
 from set_attention.heads.banked_attention import SetBankAttention
@@ -83,10 +101,94 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
             writer.writerow({col: row.get(col, "") for col in existing})
     else:
         fieldnames = list(row.keys())
-        with path.open("w", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerow(row)
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow(row)
+
+
+def _seq_data_signature(args) -> Optional[dict]:
+    if args.dataset:
+        val_limit = getattr(args, "val_limit", None)
+        if val_limit is None:
+            val_limit = args.limit
+        return {
+            "dataset": args.dataset,
+            "limit": args.limit,
+            "val_limit": val_limit,
+        }
+    if args.src and args.tgt:
+        return {
+            "src": file_signature(Path(args.src)),
+            "tgt": file_signature(Path(args.tgt)),
+        }
+    return None
+
+
+def _seq_token_spec(args, dataset_id: str, data_sig: Optional[dict], max_len: int) -> dict:
+    spec = ArtifactSpec(
+        task="seq2seq",
+        dataset_id=dataset_id,
+        split="train+val",
+        subset=data_sig,
+        tokenizer={
+            "type": "whitespace",
+            "special_tokens": list(SPECIAL_TOKENS),
+            "max_len": int(max_len),
+        },
+        sequence={"max_len": int(max_len)},
+        model={"d_model": int(args.atom_dim), "heads": int(args.heads), "layers": int(args.layers)},
+        routing_depends_on_learned_params=bool(args.adapter_rank > 0),
+    )
+    return spec.to_dict()
+
+
+def _seq_bank_spec(args, dataset_id: str, data_sig: Optional[dict], max_len: int, tokens_fp: str) -> dict:
+    spec = ArtifactSpec(
+        task="seq2seq",
+        dataset_id=dataset_id,
+        split="train+val",
+        subset=data_sig,
+        tokenizer={
+            "type": args.tokenizer_type,
+            "tokenizer_config": _default_tokenizer_config(args.tokenizer_type, max_len),
+            "tokens_fp": tokens_fp,
+        },
+        sequence={"max_len": int(max_len)},
+        ska={
+            "window": int(args.window),
+            "stride": int(args.stride),
+            "minhash_k": int(args.minhash_k),
+            "router_topk": int(args.router_topk),
+            "backend": args.ska_backend,
+            "precision": args.precision,
+            "attn": args.set_kernel,
+        },
+        model={"d_model": int(args.atom_dim), "heads": int(args.heads), "layers": int(args.layers)},
+        routing_depends_on_learned_params=bool(args.adapter_rank > 0),
+    )
+    return spec.to_dict()
+
+
+def _artifact_root_with_override(spec: dict, override_fp: str, hf_root: Path) -> Path:
+    if override_fp:
+        return hf_root / "artifacts" / spec["task"] / spec["dataset_id"] / override_fp
+    return artifact_root(spec, hf_root)
+
+
+def _encode_pairs_to_ids(pairs: List[Tuple[str, str]], src_stoi: dict, tgt_stoi: dict, max_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    src_ids = torch.stack([encode_sentence(s, src_stoi, max_len) for (s, _) in pairs], dim=0)
+    tgt_ids = torch.stack([encode_sentence(t, tgt_stoi, max_len) for (_, t) in pairs], dim=0)
+    return src_ids, tgt_ids
+
+
+def _save_seq_tokens(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, path)
+
+
+def _load_seq_tokens(path: Path) -> dict:
+    return torch.load(path, map_location="cpu")
 
 
 def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
@@ -295,6 +397,8 @@ def run_seq2seq_benchmark(
     seed,
     rep,
     run_uid,
+    train_src_ids=None,
+    train_tgt_ids=None,
 ):
     attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     iterator = text_batch_iterator(
@@ -307,6 +411,8 @@ def run_seq2seq_benchmark(
         shuffle=False,
         generator=torch.Generator(device=device).manual_seed(args.eval_seed),
         worker_init_fn=make_worker_init_fn(args.eval_seed),
+        src_ids=train_src_ids,
+        tgt_ids=train_tgt_ids,
     )
     try:
         batch_idx_tensor, src_ids, tgt_ids, _ = next(iterator)
@@ -596,6 +702,11 @@ def main():
         default="",
         help="Shared HF datasets cache root; empty uses HF_HOME/HF_DATASETS_CACHE.",
     )
+    parser.add_argument("--cache-mode", choices=["none", "tokens", "full"], default="none")
+    parser.add_argument("--artifact-cache-root", type=str, default="")
+    parser.add_argument("--artifact-fingerprint", type=str, default="")
+    parser.add_argument("--overwrite-cache", action="store_true", help="Overwrite existing token/bank caches.")
+    parser.add_argument("--cache-only", action="store_true", help="Build caches and exit without training/benchmarking.")
     parser.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     parser.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     parser.add_argument("--eval-seed", type=int, default=1337, help="Seed to make validation evaluation deterministic across variants.")
@@ -652,6 +763,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     set_seed(seed, deterministic=args.deterministic, benchmark_mode=args.benchmark_mode)
     print(f"[Run] seed={seed} rep={rep} uid={run_uid}")
     cache_dir = ensure_hf_cache(args.hf_cache_dir)
+    hf_root = resolve_hf_root(args.artifact_cache_root or None)
+    cache_mode = args.cache_mode
+    if cache_mode == "full" and args.adapter_rank > 0:
+        raise ValueError("--cache-mode full is only supported when --adapter-rank 0.")
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {
@@ -704,6 +819,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     tgt_texts = [t for (_, t) in train_pairs]
     train_src_stoi = train_ds.src_stoi
     train_tgt_stoi = train_ds.tgt_stoi
+    train_src_itos = train_ds.src_itos
     train_tgt_itos = train_ds.tgt_itos
     max_len = train_ds.max_len
     train_ref_tokens = [t.split() for _, t in train_pairs]
@@ -769,20 +885,123 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         val_pairs = []
         val_ref_tokens = []
 
+    train_src_ids = train_tgt_ids = None
+    val_src_ids = val_tgt_ids = None
+    token_spec = None
+    if cache_mode in ("tokens", "full"):
+        data_sig = _seq_data_signature(args)
+        token_spec = _seq_token_spec(args, dataset_id, data_sig, max_len)
+        token_root = _artifact_root_with_override(token_spec, args.artifact_fingerprint, hf_root)
+        tokens_path = token_root / "tokens.pt"
+        if tokens_path.exists() and not args.overwrite_cache:
+            assert_meta_compatible(token_root, token_spec)
+            payload = _load_seq_tokens(tokens_path)
+            train_pairs = payload.get("train_pairs", train_pairs)
+            val_pairs = payload.get("val_pairs", val_pairs)
+            train_ref_tokens = payload.get("train_ref_tokens", [t.split() for _, t in train_pairs])
+            val_ref_tokens = payload.get("val_ref_tokens", [t.split() for _, t in val_pairs])
+            train_src_ids = payload.get("train_src_ids")
+            train_tgt_ids = payload.get("train_tgt_ids")
+            val_src_ids = payload.get("val_src_ids")
+            val_tgt_ids = payload.get("val_tgt_ids")
+            src_itos_list = payload.get("src_itos") or []
+            tgt_itos_list = payload.get("tgt_itos") or []
+            if src_itos_list:
+                train_src_stoi = {tok: idx for idx, tok in enumerate(src_itos_list)}
+                train_src_itos = {idx: tok for idx, tok in enumerate(src_itos_list)}
+            if tgt_itos_list:
+                train_tgt_stoi = {tok: idx for idx, tok in enumerate(tgt_itos_list)}
+                train_tgt_itos = {idx: tok for idx, tok in enumerate(tgt_itos_list)}
+            max_len = int(payload.get("max_len", max_len))
+            src_texts = [s for (s, _) in train_pairs]
+            tgt_texts = [t for (_, t) in train_pairs]
+            val_src_texts = [s for (s, _) in val_pairs]
+            val_tgt_texts = [t for (_, t) in val_pairs]
+            print(f"[Cache] Loaded seq2seq tokens from {tokens_path}")
+        else:
+            train_src_ids, train_tgt_ids = _encode_pairs_to_ids(train_pairs, train_src_stoi, train_tgt_stoi, max_len)
+            if val_pairs:
+                val_src_ids, val_tgt_ids = _encode_pairs_to_ids(val_pairs, train_src_stoi, train_tgt_stoi, max_len)
+            payload = {
+                "train_pairs": train_pairs,
+                "val_pairs": val_pairs,
+                "train_ref_tokens": train_ref_tokens,
+                "val_ref_tokens": val_ref_tokens,
+                "train_src_ids": train_src_ids,
+                "train_tgt_ids": train_tgt_ids,
+                "val_src_ids": val_src_ids,
+                "val_tgt_ids": val_tgt_ids,
+                "src_itos": [train_src_itos[i] for i in range(len(train_src_itos))],
+                "tgt_itos": [train_tgt_itos[i] for i in range(len(train_tgt_itos))],
+                "max_len": max_len,
+            }
+            _save_seq_tokens(tokens_path, payload)
+            write_meta(token_root, token_spec)
+            print(f"[Cache] Saved seq2seq tokens to {tokens_path}")
+
+    if args.cache_only and cache_mode in ("tokens", "full") and (args.sdpa_baseline or cache_mode == "tokens"):
+        print("[Cache] cache-only complete (tokens).")
+        wandb_run.finish()
+        return
+
+    loaded_bank_cache = False
+    universe = None
+    cache_src = cache_tgt = None
+    val_cache_src = val_cache_tgt = None
     if not args.sdpa_baseline:
-        src_bank = build_windowed_bank_from_texts(tokenizer, src_texts, window=args.window, stride=args.stride)
-        tgt_bank = build_windowed_bank_from_texts(tokenizer, tgt_texts, window=args.window, stride=args.stride)
-        if has_val:
-            val_src_bank = build_windowed_bank_from_texts(tokenizer, val_src_texts, window=args.window, stride=args.stride)
-            val_tgt_bank = build_windowed_bank_from_texts(tokenizer, val_tgt_texts, window=args.window, stride=args.stride)
+        if cache_mode == "full" and token_spec is not None:
+            tokens_fp = fingerprint(token_spec)
+            data_sig = _seq_data_signature(args)
+            bank_spec = _seq_bank_spec(args, dataset_id, data_sig, max_len, tokens_fp)
+            bank_root = _artifact_root_with_override(bank_spec, args.artifact_fingerprint, hf_root)
+            paths = {
+                "src_train": bank_root / "bank_src_train.pt",
+                "tgt_train": bank_root / "bank_tgt_train.pt",
+                "src_val": bank_root / "bank_src_val.pt",
+                "tgt_val": bank_root / "bank_tgt_val.pt",
+                "r_src_train": bank_root / "routing_src_train.pt",
+                "r_tgt_train": bank_root / "routing_tgt_train.pt",
+                "r_src_val": bank_root / "routing_src_val.pt",
+                "r_tgt_val": bank_root / "routing_tgt_val.pt",
+            }
+            if all(p.exists() for p in paths.values()) and not args.overwrite_cache:
+                assert_meta_compatible(bank_root, bank_spec)
+                src_pack = load_bank_pack(paths["src_train"])
+                tgt_pack = load_bank_pack(paths["tgt_train"])
+                val_src_pack = load_bank_pack(paths["src_val"])
+                val_tgt_pack = load_bank_pack(paths["tgt_val"])
+                r_src_train = load_routing_pack(paths["r_src_train"])
+                r_tgt_train = load_routing_pack(paths["r_tgt_train"])
+                r_src_val = load_routing_pack(paths["r_src_val"])
+                r_tgt_val = load_routing_pack(paths["r_tgt_val"])
+                if not torch.equal(src_pack.universe_ids, tgt_pack.universe_ids):
+                    raise RuntimeError("Cached seq2seq bank packs have mismatched universe ids.")
+                universe = UniversePool(
+                    src_pack.universe_ids,
+                    metadata={
+                        "tokenizer_type": args.tokenizer_type,
+                        "tokenizer_path": tokenizer_dir or "inline",
+                    },
+                )
+                cache_src = cache_from_packs(universe, src_pack, r_src_train)
+                cache_tgt = cache_from_packs(universe, tgt_pack, r_tgt_train)
+                if has_val:
+                    val_cache_src = cache_from_packs(universe, val_src_pack, r_src_val)
+                    val_cache_tgt = cache_from_packs(universe, val_tgt_pack, r_tgt_val)
+                loaded_bank_cache = True
+                print(f"[Cache] Loaded seq2seq bank+routing from {bank_root}")
+
+        if not loaded_bank_cache:
+            src_bank = build_windowed_bank_from_texts(tokenizer, src_texts, window=args.window, stride=args.stride)
+            tgt_bank = build_windowed_bank_from_texts(tokenizer, tgt_texts, window=args.window, stride=args.stride)
+            if has_val:
+                val_src_bank = build_windowed_bank_from_texts(tokenizer, val_src_texts, window=args.window, stride=args.stride)
+                val_tgt_bank = build_windowed_bank_from_texts(tokenizer, val_tgt_texts, window=args.window, stride=args.stride)
 
     device = torch.device(args.device)
     V = tokenizer.vocab_size()
 
     atom_emb = adapter = phi_snapshot = None
-    universe = None
-    cache_src = cache_tgt = None
-    val_cache_src = val_cache_tgt = None
 
     if not args.sdpa_baseline:
         atom_emb = nn.Embedding(V, args.atom_dim).to(device)
@@ -797,32 +1016,62 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             phi_snapshot = atom_emb.weight
             print("[Adapter] disabled (atom pool frozen; Φ pooled from fixed atom_emb)")
 
-        universe_ids = torch.arange(V, dtype=torch.long)
-        universe = UniversePool(
-            universe_ids,
-            metadata={
-                "tokenizer_type": args.tokenizer_type,
-                "tokenizer_path": tokenizer_dir or "inline",
-            },
-        )
-        print(universe.log_summary(prefix="[Universe]"))
-
-        train_minhash = MinHasher(k=args.minhash_k, device=src_bank.values.device)
-        cache_src = SetFeatureCache(
-            universe, src_bank.values, src_bank.set_offsets, src_bank.seq_offsets, minhash=train_minhash
-        )
-        cache_tgt = SetFeatureCache(
-            universe, tgt_bank.values, tgt_bank.set_offsets, tgt_bank.seq_offsets, minhash=train_minhash
-        )
-
-        if has_val and val_src_bank is not None and val_tgt_bank is not None:
-            val_minhash = MinHasher(k=args.minhash_k, device=val_src_bank.values.device)
-            val_cache_src = SetFeatureCache(
-                universe, val_src_bank.values, val_src_bank.set_offsets, val_src_bank.seq_offsets, minhash=val_minhash
+        if not loaded_bank_cache:
+            universe_ids = torch.arange(V, dtype=torch.long)
+            universe = UniversePool(
+                universe_ids,
+                metadata={
+                    "tokenizer_type": args.tokenizer_type,
+                    "tokenizer_path": tokenizer_dir or "inline",
+                },
             )
-            val_cache_tgt = SetFeatureCache(
-                universe, val_tgt_bank.values, val_tgt_bank.set_offsets, val_tgt_bank.seq_offsets, minhash=val_minhash
+            print(universe.log_summary(prefix="[Universe]"))
+
+            train_minhash = MinHasher(k=args.minhash_k, device=src_bank.values.device)
+            cache_src = SetFeatureCache(
+                universe, src_bank.values, src_bank.set_offsets, src_bank.seq_offsets, minhash=train_minhash
             )
+            cache_tgt = SetFeatureCache(
+                universe, tgt_bank.values, tgt_bank.set_offsets, tgt_bank.seq_offsets, minhash=train_minhash
+            )
+
+            if has_val and val_src_bank is not None and val_tgt_bank is not None:
+                val_minhash = MinHasher(k=args.minhash_k, device=val_src_bank.values.device)
+                val_cache_src = SetFeatureCache(
+                    universe, val_src_bank.values, val_src_bank.set_offsets, val_src_bank.seq_offsets, minhash=val_minhash
+                )
+                val_cache_tgt = SetFeatureCache(
+                    universe, val_tgt_bank.values, val_tgt_bank.set_offsets, val_tgt_bank.seq_offsets, minhash=val_minhash
+                )
+
+            if cache_mode == "full" and token_spec is not None:
+                tokens_fp = fingerprint(token_spec)
+                data_sig = _seq_data_signature(args)
+                bank_spec = _seq_bank_spec(args, dataset_id, data_sig, max_len, tokens_fp)
+                bank_root = _artifact_root_with_override(bank_spec, args.artifact_fingerprint, hf_root)
+                save_bank_pack(bank_root / "bank_src_train.pt", BankPack.from_banked_batch(src_bank, universe_ids))
+                save_bank_pack(bank_root / "bank_tgt_train.pt", BankPack.from_banked_batch(tgt_bank, universe_ids))
+                save_routing_pack(
+                    bank_root / "routing_src_train.pt",
+                    RoutingPack(cache_src.sig_sets.detach().cpu(), cache_src.size_sets.detach().cpu()),
+                )
+                save_routing_pack(
+                    bank_root / "routing_tgt_train.pt",
+                    RoutingPack(cache_tgt.sig_sets.detach().cpu(), cache_tgt.size_sets.detach().cpu()),
+                )
+                if has_val and val_cache_src is not None and val_cache_tgt is not None:
+                    save_bank_pack(bank_root / "bank_src_val.pt", BankPack.from_banked_batch(val_src_bank, universe_ids))
+                    save_bank_pack(bank_root / "bank_tgt_val.pt", BankPack.from_banked_batch(val_tgt_bank, universe_ids))
+                    save_routing_pack(
+                        bank_root / "routing_src_val.pt",
+                        RoutingPack(val_cache_src.sig_sets.detach().cpu(), val_cache_src.size_sets.detach().cpu()),
+                    )
+                    save_routing_pack(
+                        bank_root / "routing_tgt_val.pt",
+                        RoutingPack(val_cache_tgt.sig_sets.detach().cpu(), val_cache_tgt.size_sets.detach().cpu()),
+                    )
+                write_meta(bank_root, bank_spec)
+                print(f"[Cache] Saved seq2seq bank+routing to {bank_root}")
         if args.precompute_bank:
             universe = universe.to(device)
             cache_src = cache_src.to(device)
@@ -831,6 +1080,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 val_cache_src = val_cache_src.to(device)
             if val_cache_tgt is not None:
                 val_cache_tgt = val_cache_tgt.to(device)
+        if args.cache_only and cache_mode == "full":
+            print("[Cache] cache-only complete (full).")
+            wandb_run.finish()
+            return
 
     model = TinySeq2SeqBackbone(
         src_vocab=len(train_src_stoi),
@@ -889,6 +1142,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             seed,
             rep,
             run_uid,
+            train_src_ids=train_src_ids,
+            train_tgt_ids=train_tgt_ids,
         )
         wandb_run.finish()
         return
@@ -914,6 +1169,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 max_len,
                 args.batch,
                 shuffle=True,
+                src_ids=train_src_ids,
+                tgt_ids=train_tgt_ids,
             ):
                 batch_idx_tensor = batch_idx_tensor.to(device)
                 src_ids = src_ids.to(device, non_blocking=True)
@@ -1001,6 +1258,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     shuffle=False,
                     generator=torch.Generator(device=device).manual_seed(args.eval_seed),
                     worker_init_fn=make_worker_init_fn(args.eval_seed),
+                    src_ids=val_src_ids,
+                    tgt_ids=val_tgt_ids,
                 ):
                     batch_idx_tensor = batch_idx_tensor.to(device)
                     src_ids = src_ids.to(device, non_blocking=True)

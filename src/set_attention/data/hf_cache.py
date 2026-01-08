@@ -34,7 +34,7 @@ def ensure_hf_cache(user_root: Optional[str] = None) -> Path:
     elif env_ds:
         root = Path(env_ds).expanduser().parent
     else:
-        root = Path("~/.cache/set-attention/hf").expanduser()
+        root = Path("~/.hf").expanduser()
 
     datasets_dir = root / "datasets"
     hub_dir = Path(os.environ.get("TRANSFORMERS_CACHE", root / "hub")).expanduser()

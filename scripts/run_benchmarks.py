@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import csv
 import os
 import subprocess
 import sys
@@ -312,6 +313,32 @@ def main() -> None:
     if args.device:
         env["CUDA_VISIBLE_DEVICES"] = args.device
 
+    def append_status(csv_path: Path, row: dict) -> None:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        fieldnames = list(row.keys())
+        if csv_path.exists():
+            with csv_path.open("r", newline="") as handle:
+                reader = csv.DictReader(handle)
+                existing = reader.fieldnames or []
+                rows = list(reader)
+            extras = [c for c in fieldnames if c not in existing]
+            if extras:
+                new_fields = existing + extras
+                with csv_path.open("w", newline="") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=new_fields)
+                    writer.writeheader()
+                    for prev in rows:
+                        writer.writerow({c: prev.get(c, "") for c in new_fields})
+                existing = new_fields
+            with csv_path.open("a", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=existing)
+                writer.writerow({c: row.get(c, "") for c in existing})
+            return
+        with csv_path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerow(row)
+
     for task in tasks:
         specs = BENCHMARKS[task]
         print(f"\n[bench-suite] task={task} ({len(specs)} runs)")
@@ -344,6 +371,21 @@ def main() -> None:
                         continue
                     result = subprocess.run(cmd, env=env)
                     if result.returncode != 0:
+                        append_status(
+                            csv_path,
+                            {
+                                "script": spec["script"],
+                                "task": task,
+                                "dataset": spec.get("dataset", ""),
+                                "dataset_id": spec.get("dataset", ""),
+                                "seed": seed,
+                                "rep": rep,
+                                "run_uid": f"exitcode-{int(time.time())}-{seed}-{rep}",
+                                "status": "exitcode",
+                                "exit_code": result.returncode,
+                                "skip_reason": f"exitcode={result.returncode}",
+                            },
+                        )
                         print(f"[bench-suite] command failed with code {result.returncode}")
                         sys.exit(result.returncode)
 

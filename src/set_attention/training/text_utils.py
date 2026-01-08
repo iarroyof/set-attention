@@ -89,8 +89,13 @@ def text_batch_iterator(
     shuffle: bool,
     generator: torch.Generator | None = None,
     worker_init_fn=None,
+    src_ids: torch.Tensor | None = None,
+    tgt_ids: torch.Tensor | None = None,
 ) -> Iterator[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, List[List[str]]]]:
     indices = list(range(len(pairs)))
+    use_cached = src_ids is not None and tgt_ids is not None
+    if use_cached and (src_ids.size(0) != len(pairs) or tgt_ids.size(0) != len(pairs)):
+        raise ValueError("Cached src_ids/tgt_ids must match the number of text pairs.")
     if worker_init_fn is not None:
         # mimic DataLoader worker seeding for deterministic eval
         worker_init_fn(0)
@@ -102,7 +107,11 @@ def text_batch_iterator(
             random.shuffle(indices)
     for start in range(0, len(indices), batch_size):
         batch_idx = indices[start : start + batch_size]
-        src_batch = torch.stack([encode_sentence(pairs[i][0], src_stoi, max_len) for i in batch_idx], dim=0)
-        tgt_batch = torch.stack([encode_sentence(pairs[i][1], tgt_stoi, max_len) for i in batch_idx], dim=0)
+        if use_cached:
+            src_batch = src_ids[batch_idx]
+            tgt_batch = tgt_ids[batch_idx]
+        else:
+            src_batch = torch.stack([encode_sentence(pairs[i][0], src_stoi, max_len) for i in batch_idx], dim=0)
+            tgt_batch = torch.stack([encode_sentence(pairs[i][1], tgt_stoi, max_len) for i in batch_idx], dim=0)
         refs = [tgt_refs[i] for i in batch_idx]
         yield torch.tensor(batch_idx, dtype=torch.long), src_batch, tgt_batch, refs

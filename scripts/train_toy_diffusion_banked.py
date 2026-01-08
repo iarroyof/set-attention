@@ -15,6 +15,24 @@ import torch.nn.functional as F
 
 from set_attention.utils.bench_skip import should_skip_dense, should_skip_ska
 from set_attention.data.hf_cache import ensure_hf_cache
+from set_attention.data.artifact_cache import (
+    ArtifactSpec,
+    artifact_root,
+    assert_meta_compatible,
+    file_signature,
+    fingerprint,
+    resolve_hf_root,
+    write_meta,
+)
+from set_attention.data.ska_artifacts import (
+    BankPack,
+    RoutingPack,
+    cache_from_packs,
+    load_bank_pack,
+    load_routing_pack,
+    save_bank_pack,
+    save_routing_pack,
+)
 from set_attention.experiments.data_toy import ToyDiffConfig, make_toy_continuous_sequences
 from set_attention.experiments.diffusion_core import SimpleDDPM
 from set_attention.experiments.models import PositionalEncoding, timestep_embedding
@@ -137,6 +155,70 @@ def prepare_text_diffusion_data(
         "embeddings": embeddings,
         "itos": itos,
     }
+
+
+def _text_data_signature(args) -> dict:
+    return {
+        "dataset": args.text_dataset,
+        "train_line_limit": args.text_train_line_limit,
+        "val_line_limit": args.text_val_line_limit,
+        "train_seq_limit": args.text_train_limit,
+        "val_seq_limit": args.text_val_limit,
+        "embed_seed": args.text_embed_seed,
+        "seq_len": args.text_seq_len,
+        "stride": args.text_stride,
+    }
+
+
+def _text_token_spec(args) -> dict:
+    spec = ArtifactSpec(
+        task="textdiff",
+        dataset_id=args.text_dataset,
+        split="train+val",
+        subset=_text_data_signature(args),
+        tokenizer={"type": "whitespace", "special_tokens": TEXT_SPECIAL_TOKENS},
+        sequence={"seq_len": int(args.text_seq_len), "stride": int(args.text_stride)},
+        model={"d_model": int(args.d_model), "nhead": int(args.nhead), "layers": int(args.layers)},
+        routing_depends_on_learned_params=bool(args.adapter_rank > 0),
+    )
+    return spec.to_dict()
+
+
+def _text_bank_spec(args, tokens_fp: str) -> dict:
+    spec = ArtifactSpec(
+        task="textdiff",
+        dataset_id=args.text_dataset,
+        split="train+val",
+        subset=_text_data_signature(args),
+        tokenizer={"type": "whitespace", "special_tokens": TEXT_SPECIAL_TOKENS, "tokens_fp": tokens_fp},
+        sequence={"seq_len": int(args.text_seq_len), "stride": int(args.text_stride)},
+        ska={
+            "window": int(args.window),
+            "stride": int(args.stride),
+            "minhash_k": int(args.minhash_k),
+            "router_topk": int(args.router_topk),
+            "backend": args.ska_backend,
+            "precision": args.precision,
+        },
+        model={"d_model": int(args.d_model), "nhead": int(args.nhead), "layers": int(args.layers)},
+        routing_depends_on_learned_params=bool(args.adapter_rank > 0),
+    )
+    return spec.to_dict()
+
+
+def _artifact_root_with_override(spec: dict, override_fp: str, hf_root: Path) -> Path:
+    if override_fp:
+        return hf_root / "artifacts" / spec["task"] / spec["dataset_id"] / override_fp
+    return artifact_root(spec, hf_root)
+
+
+def _save_text_tokens(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, path)
+
+
+def _load_text_tokens(path: Path) -> dict:
+    return torch.load(path, map_location="cpu")
 
 
 def _append_benchmark_row(csv_path: str, row: dict) -> None:
@@ -651,6 +733,11 @@ def main():
         default="",
         help="Cache directory for HuggingFace Wikitext data; empty uses HF_DATASETS_CACHE/HF_HOME.",
     )
+    ap.add_argument("--cache-mode", choices=["none", "tokens", "full"], default="none")
+    ap.add_argument("--artifact-cache-root", type=str, default="")
+    ap.add_argument("--artifact-fingerprint", type=str, default="")
+    ap.add_argument("--overwrite-cache", action="store_true", help="Overwrite existing token/bank caches.")
+    ap.add_argument("--cache-only", action="store_true", help="Build caches and exit without training/benchmarking.")
     ap.add_argument("--text-seq-len", type=int, default=128)
     ap.add_argument("--text-stride", type=int, default=128)
     ap.add_argument("--text-train-line-limit", type=int, default=None)
@@ -741,6 +828,10 @@ def main():
 def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: bool):
     config_label = args.text_dataset if args.data_mode == "text" else args.data_mode
     hf_cache = ensure_hf_cache(args.text_cache_dir)
+    hf_root = resolve_hf_root(args.artifact_cache_root or None)
+    cache_mode = args.cache_mode
+    if cache_mode == "full" and args.adapter_rank > 0:
+        raise ValueError("--cache-mode full is only supported when --adapter-rank 0.")
     torch.backends.cudnn.benchmark = True
     set_seed(seed, deterministic=args.deterministic, benchmark_mode=args.benchmark_mode)
     print(f"[Run] seed={seed} rep={rep} uid={run_uid}")
@@ -796,6 +887,8 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
     override_from_cfg("layers", "layers")
 
     text_mode = args.data_mode == "text"
+    if cache_mode != "none" and not text_mode:
+        raise ValueError("--cache-mode is only supported for --data-mode text.")
     cfg_seed = int(cfg_yaml.get("seed", 2024))
     data_seed = cfg_seed
     if args.data_seed is not None:
@@ -836,32 +929,90 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
     text_vocab_size: Optional[int] = None
     text_embeddings: Optional[torch.Tensor] = None
     text_itos: Optional[List[str]] = None
+    token_spec = None
 
     if text_mode:
-        cache_dir = Path(hf_cache)
-        stride = args.text_stride if args.text_stride > 0 else args.text_seq_len
-        embed_dim = args.data_dim if args.data_dim is not None else args.d_model
-        text_payload = prepare_text_diffusion_data(
-            args.text_dataset,
-            cache_dir,
-            args.text_seq_len,
-            stride,
-            args.text_train_line_limit,
-            args.text_val_line_limit,
-            args.text_train_limit,
-            args.text_val_limit,
-            embed_dim,
-            args.text_embed_seed,
-        )
-        train_data = text_payload["train_data"]
-        val_data = text_payload["val_data"]
-        text_train_ids = text_payload["train_ids"]
-        text_val_ids = text_payload["val_ids"]
-        text_train_ids_tensor = text_payload["train_ids_tensor"]
-        text_val_ids_tensor = text_payload["val_ids_tensor"]
-        text_vocab_size = text_payload["vocab_size"]
-        text_embeddings = text_payload["embeddings"]
-        text_itos = text_payload["itos"]
+        if cache_mode != "none":
+            token_spec = _text_token_spec(args)
+            token_root = _artifact_root_with_override(token_spec, args.artifact_fingerprint, hf_root)
+            tokens_path = token_root / "tokens.pt"
+            if tokens_path.exists() and not args.overwrite_cache:
+                assert_meta_compatible(token_root, token_spec)
+                payload = _load_text_tokens(tokens_path)
+                train_data = payload["train_data"]
+                val_data = payload["val_data"]
+                text_train_ids_tensor = payload["train_ids_tensor"]
+                text_val_ids_tensor = payload["val_ids_tensor"]
+                text_vocab_size = payload["vocab_size"]
+                text_embeddings = payload["embeddings"]
+                text_itos = payload["itos"]
+                print(f"[Cache] Loaded text diffusion tokens from {tokens_path}")
+            else:
+                cache_dir = Path(hf_cache)
+                stride = args.text_stride if args.text_stride > 0 else args.text_seq_len
+                embed_dim = args.data_dim if args.data_dim is not None else args.d_model
+                text_payload = prepare_text_diffusion_data(
+                    args.text_dataset,
+                    cache_dir,
+                    args.text_seq_len,
+                    stride,
+                    args.text_train_line_limit,
+                    args.text_val_line_limit,
+                    args.text_train_limit,
+                    args.text_val_limit,
+                    embed_dim,
+                    args.text_embed_seed,
+                )
+                train_data = text_payload["train_data"]
+                val_data = text_payload["val_data"]
+                text_train_ids_tensor = text_payload["train_ids_tensor"]
+                text_val_ids_tensor = text_payload["val_ids_tensor"]
+                text_vocab_size = text_payload["vocab_size"]
+                text_embeddings = text_payload["embeddings"]
+                text_itos = text_payload["itos"]
+                payload = {
+                    "train_data": train_data,
+                    "val_data": val_data,
+                    "train_ids_tensor": text_train_ids_tensor,
+                    "val_ids_tensor": text_val_ids_tensor,
+                    "vocab_size": text_vocab_size,
+                    "embeddings": text_embeddings,
+                    "itos": text_itos,
+                }
+                _save_text_tokens(tokens_path, payload)
+                write_meta(token_root, token_spec)
+                print(f"[Cache] Saved text diffusion tokens to {tokens_path}")
+            text_train_ids = [row.clone() for row in text_train_ids_tensor] if text_train_ids_tensor is not None else None
+            text_val_ids = [row.clone() for row in text_val_ids_tensor] if text_val_ids_tensor is not None else None
+        else:
+            cache_dir = Path(hf_cache)
+            stride = args.text_stride if args.text_stride > 0 else args.text_seq_len
+            embed_dim = args.data_dim if args.data_dim is not None else args.d_model
+            text_payload = prepare_text_diffusion_data(
+                args.text_dataset,
+                cache_dir,
+                args.text_seq_len,
+                stride,
+                args.text_train_line_limit,
+                args.text_val_line_limit,
+                args.text_train_limit,
+                args.text_val_limit,
+                embed_dim,
+                args.text_embed_seed,
+            )
+            train_data = text_payload["train_data"]
+            val_data = text_payload["val_data"]
+            text_train_ids = text_payload["train_ids"]
+            text_val_ids = text_payload["val_ids"]
+            text_train_ids_tensor = text_payload["train_ids_tensor"]
+            text_val_ids_tensor = text_payload["val_ids_tensor"]
+            text_vocab_size = text_payload["vocab_size"]
+            text_embeddings = text_payload["embeddings"]
+            text_itos = text_payload["itos"]
+        if args.cache_only and cache_mode in ("tokens", "full") and (args.sdpa_baseline or cache_mode == "tokens"):
+            print("[Cache] cache-only complete (tokens).")
+            wandb_run.finish()
+            return
         data_cfg.n_samples = train_data.size(0)
         data_cfg.seq_len = train_data.size(1)
         data_cfg.dim = train_data.size(2)
@@ -891,26 +1042,92 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
     text_embedding_table = text_embeddings.to(device) if text_mode and text_embeddings is not None else None
 
     train_cache = val_cache = None
+    loaded_bank_cache = False
     atom_emb = adapter = phi_snapshot = None
     universe = None
     if not args.sdpa_baseline:
-        if text_mode and text_train_ids is not None and text_val_ids is not None:
-            train_ids = text_train_ids
-            val_ids = text_val_ids
-        else:
-            train_ids = [make_id_sequence(x) for x in train_data]
-            val_ids = [make_id_sequence(x) for x in val_data]
-        train_bank = build_windowed_bank_from_ids(train_ids, window=args.window, stride=args.stride)
-        val_bank = build_windowed_bank_from_ids(val_ids, window=args.window, stride=args.stride)
+        if cache_mode == "full" and text_mode and token_spec is not None:
+            tokens_fp = fingerprint(token_spec)
+            bank_spec = _text_bank_spec(args, tokens_fp)
+            bank_root = _artifact_root_with_override(bank_spec, args.artifact_fingerprint, hf_root)
+            bank_train_path = bank_root / "bank_train.pt"
+            bank_val_path = bank_root / "bank_val.pt"
+            routing_train_path = bank_root / "routing_train.pt"
+            routing_val_path = bank_root / "routing_val.pt"
+            if (
+                bank_train_path.exists()
+                and bank_val_path.exists()
+                and routing_train_path.exists()
+                and routing_val_path.exists()
+                and not args.overwrite_cache
+            ):
+                assert_meta_compatible(bank_root, bank_spec)
+                train_pack = load_bank_pack(bank_train_path)
+                val_pack = load_bank_pack(bank_val_path)
+                train_route = load_routing_pack(routing_train_path)
+                val_route = load_routing_pack(routing_val_path)
+                if not torch.equal(train_pack.universe_ids, val_pack.universe_ids):
+                    raise RuntimeError("Cached diffusion bank packs have mismatched universe ids.")
+                universe = UniversePool(train_pack.universe_ids, metadata={"task": "text_diffusion" if text_mode else "toy_diffusion"})
+                train_cache = cache_from_packs(universe, train_pack, train_route)
+                val_cache = cache_from_packs(universe, val_pack, val_route)
+                loaded_bank_cache = True
+                print(f"[Cache] Loaded diffusion bank+routing from {bank_root}")
+
+        if not loaded_bank_cache:
+            if text_mode and text_train_ids is not None and text_val_ids is not None:
+                train_ids = text_train_ids
+                val_ids = text_val_ids
+            else:
+                train_ids = [make_id_sequence(x) for x in train_data]
+                val_ids = [make_id_sequence(x) for x in val_data]
+            train_bank = build_windowed_bank_from_ids(train_ids, window=args.window, stride=args.stride)
+            val_bank = build_windowed_bank_from_ids(val_ids, window=args.window, stride=args.stride)
+
+            if text_mode and text_vocab_size is not None:
+                vocab_size = text_vocab_size
+            else:
+                vocab_size = (
+                    int(max(train_bank.values.max(), val_bank.values.max()).item() + 1)
+                    if train_bank.values.numel() > 0
+                    else data_cfg.seq_len * 2
+                )
+            universe_ids = torch.arange(vocab_size, dtype=torch.long)
+            metadata = {"task": "text_diffusion" if text_mode else "toy_diffusion"}
+            if text_mode:
+                metadata["dataset"] = args.text_dataset
+            universe = UniversePool(universe_ids, metadata=metadata)
+            train_minhash = MinHasher(k=args.minhash_k, device=train_bank.values.device)
+            val_minhash = MinHasher(k=args.minhash_k, device=val_bank.values.device)
+            train_cache = SetFeatureCache(
+                universe, train_bank.values, train_bank.set_offsets, train_bank.seq_offsets, minhash=train_minhash
+            )
+            val_cache = SetFeatureCache(
+                universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=val_minhash
+            )
+            if cache_mode == "full" and text_mode and token_spec is not None:
+                tokens_fp = fingerprint(token_spec)
+                bank_spec = _text_bank_spec(args, tokens_fp)
+                bank_root = _artifact_root_with_override(bank_spec, args.artifact_fingerprint, hf_root)
+                save_bank_pack(bank_root / "bank_train.pt", BankPack.from_banked_batch(train_bank, universe_ids))
+                save_bank_pack(bank_root / "bank_val.pt", BankPack.from_banked_batch(val_bank, universe_ids))
+                save_routing_pack(
+                    bank_root / "routing_train.pt",
+                    RoutingPack(train_cache.sig_sets.detach().cpu(), train_cache.size_sets.detach().cpu()),
+                )
+                save_routing_pack(
+                    bank_root / "routing_val.pt",
+                    RoutingPack(val_cache.sig_sets.detach().cpu(), val_cache.size_sets.detach().cpu()),
+                )
+                write_meta(bank_root, bank_spec)
+                print(f"[Cache] Saved diffusion bank+routing to {bank_root}")
 
         if text_mode and text_vocab_size is not None:
             vocab_size = text_vocab_size
+        elif train_cache is not None:
+            vocab_size = int(train_cache.values.max().item() + 1) if train_cache.values.numel() > 0 else data_cfg.seq_len * 2
         else:
-            vocab_size = (
-                int(max(train_bank.values.max(), val_bank.values.max()).item() + 1)
-                if train_bank.values.numel() > 0
-                else data_cfg.seq_len * 2
-            )
+            vocab_size = data_cfg.seq_len * 2
         atom_emb = nn.Embedding(vocab_size, args.d_model).to(device)
         if args.adapter_rank > 0:
             adapter = AtomFeatureAdapter(args.d_model, rank=args.adapter_rank).to(device)
@@ -919,23 +1136,14 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         else:
             phi_snapshot = atom_emb.weight
 
-        universe_ids = torch.arange(vocab_size, dtype=torch.long)
-        metadata = {"task": "text_diffusion" if text_mode else "toy_diffusion"}
-        if text_mode:
-            metadata["dataset"] = args.text_dataset
-        universe = UniversePool(universe_ids, metadata=metadata)
-        train_minhash = MinHasher(k=args.minhash_k, device=train_bank.values.device)
-        val_minhash = MinHasher(k=args.minhash_k, device=val_bank.values.device)
-        train_cache = SetFeatureCache(
-            universe, train_bank.values, train_bank.set_offsets, train_bank.seq_offsets, minhash=train_minhash
-        )
-        val_cache = SetFeatureCache(
-            universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=val_minhash
-        )
         if args.precompute_bank:
             universe = universe.to(device)
             train_cache = train_cache.to(device)
             val_cache = val_cache.to(device)
+        if args.cache_only and cache_mode == "full" and text_mode:
+            print("[Cache] cache-only complete (full).")
+            wandb_run.finish()
+            return
 
     model = BankedDenoiser(
         in_dim=data_cfg.dim,
