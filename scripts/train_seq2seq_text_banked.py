@@ -101,10 +101,10 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
             writer.writerow({col: row.get(col, "") for col in existing})
     else:
         fieldnames = list(row.keys())
-    with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerow(row)
+        with path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerow(row)
 
 
 def _seq_data_signature(args) -> Optional[dict]:
