@@ -1,6 +1,7 @@
 import argparse
 import copy
 import csv
+import gc
 import json
 import math
 import os
@@ -755,6 +756,9 @@ def main():
             run_args = copy.deepcopy(args)
             run_uid = f"{int(time.time() * 1e6)}-{os.getpid()}-{seed}-{rep}"
             run_single(run_args, seed, rep, run_uid, multi_run)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
     return
 
 

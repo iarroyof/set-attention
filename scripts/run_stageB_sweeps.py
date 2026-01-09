@@ -5,6 +5,7 @@ Runs length/budget/capacity grids for the benchmark scripts and respects skip/oo
 """
 import argparse
 import csv
+import os
 import subprocess
 import sys
 import time
@@ -27,10 +28,76 @@ def _parse_seeds(text: str, default: int) -> List[int]:
     return seeds or [default]
 
 
-def _run(cmd: List[str], dry_run: bool) -> int:
+def _visible_gpu_indices() -> List[int]:
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    if not visible:
+        return []
+    indices: List[int] = []
+    for part in visible.split(","):
+        part = part.strip()
+        if not part or part == "-1":
+            continue
+        try:
+            indices.append(int(part))
+        except ValueError:
+            continue
+    return indices
+
+
+def _gpu_free_gb() -> float | None:
+    try:
+        output = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            text=True,
+        )
+    except Exception as exc:
+        print(f"[sweep] warn: nvidia-smi unavailable ({exc}); skipping GPU wait.")
+        return None
+    values: List[float] = []
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        part = line.split()[0].replace(",", "")
+        try:
+            values.append(float(part))
+        except ValueError:
+            continue
+    if not values:
+        return None
+    visible = _visible_gpu_indices()
+    if visible:
+        selected = [values[i] for i in visible if i < len(values)]
+        if selected:
+            return min(selected) / 1024.0
+    return values[0] / 1024.0
+
+
+def _wait_for_gpu(min_free_gb: float, interval_s: float, timeout_s: float) -> bool:
+    if min_free_gb <= 0:
+        return True
+    start = time.time()
+    while True:
+        free_gb = _gpu_free_gb()
+        if free_gb is None:
+            return True
+        if free_gb >= min_free_gb:
+            return True
+        if timeout_s > 0 and (time.time() - start) >= timeout_s:
+            print(
+                f"[sweep] warn: GPU free {free_gb:.2f} GB < {min_free_gb:.2f} GB (timeout)."
+            )
+            return False
+        print(f"[sweep] waiting for GPU free {free_gb:.2f} GB < {min_free_gb:.2f} GB")
+        time.sleep(interval_s)
+
+
+def _run(cmd: List[str], dry_run: bool, min_free_gb: float, wait_interval: float, wait_timeout: float) -> int:
     print("[sweep]", " ".join(cmd))
     if dry_run:
         return 0
+    if not _wait_for_gpu(min_free_gb, wait_interval, wait_timeout):
+        return 1
     return subprocess.call(cmd)
 
 
@@ -72,6 +139,9 @@ def main():
     ap.add_argument("--artifact-cache-root", type=str, default="")
     ap.add_argument("--overwrite-cache", action="store_true")
     ap.add_argument("--precache", action="store_true", help="Precompute caches before running Stage B.")
+    ap.add_argument("--min-free-gb", type=float, default=0.0, help="Wait for this much free GPU memory before running each job (0=disable).")
+    ap.add_argument("--wait-gpu-interval", type=float, default=10.0, help="Seconds between GPU free-memory checks.")
+    ap.add_argument("--wait-gpu-timeout", type=float, default=0.0, help="Timeout in seconds for GPU wait (0=wait forever).")
 
     # LM length sweep defaults
     ap.add_argument("--lm-lengths", type=int, nargs="+", default=[256, 512, 1024])
@@ -213,7 +283,7 @@ def main():
                                 "4",
                             ]
                         )
-                    rc = _run(cmd, args.dry_run)
+                    rc = _run(cmd, args.dry_run, args.min_free_gb, args.wait_gpu_interval, args.wait_gpu_timeout)
                     if rc != 0:
                         _append_status_row(
                             out_dir / csv_name,
@@ -288,7 +358,7 @@ def main():
                                 "4",
                             ]
                         )
-                    rc = _run(cmd, args.dry_run)
+                    rc = _run(cmd, args.dry_run, args.min_free_gb, args.wait_gpu_interval, args.wait_gpu_timeout)
                     if rc != 0:
                         _append_status_row(
                             out_dir / csv_name,
@@ -369,7 +439,7 @@ def main():
                                 "4",
                             ]
                         )
-                    rc = _run(cmd, args.dry_run)
+                    rc = _run(cmd, args.dry_run, args.min_free_gb, args.wait_gpu_interval, args.wait_gpu_timeout)
                     if rc != 0:
                         _append_status_row(
                             out_dir / csv_name,
@@ -437,7 +507,7 @@ def main():
                             "0",
                         ]
                     )
-                rc = _run(cmd, args.dry_run)
+                rc = _run(cmd, args.dry_run, args.min_free_gb, args.wait_gpu_interval, args.wait_gpu_timeout)
                 if rc != 0:
                     _append_status_row(
                         out_dir / csv_name,
