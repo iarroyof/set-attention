@@ -1567,16 +1567,50 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
 
         return total_loss / max(1, total_tokens), refs_epoch, hyps_epoch
 
+    attn_impl = "dot_explicit" if (args.sdpa_baseline and args.attn_baseline == "explicit") else "dot_builtin"
     for epoch in range(1, args.epochs + 1):
-        with profiler(args.profile) as prof:
-            train_loss, train_refs_epoch, train_hyps_epoch = run_epoch(train=True)
-            val_loss, val_refs_epoch, val_hyps_epoch = run_epoch(train=False)
+        try:
+            with profiler(args.profile) as prof:
+                train_loss, train_refs_epoch, train_hyps_epoch = run_epoch(train=True)
+                val_loss, val_refs_epoch, val_hyps_epoch = run_epoch(train=False)
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
+            is_oom = "out of memory" in str(exc).lower()
+            if args.skip_oom and is_oom:
+                torch.cuda.empty_cache()
+                if args.metrics_csv:
+                    _append_benchmark_row(
+                        args.metrics_csv,
+                        {
+                            "script": "train_toy_lm_banked",
+                            "task": "lm",
+                            "dataset": args.dataset or "custom",
+                            "dataset_id": args.dataset or "custom",
+                            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                            "attn_impl": attn_impl,
+                            "precision": args.precision,
+                            "attn": args.attn,
+                            "batch": args.batch,
+                            "seq_len": args.seq_len,
+                            "seq_stride": args.seq_stride,
+                            "window": args.window,
+                            "stride": args.stride,
+                            "minhash_k": args.minhash_k,
+                            "router_topk": args.router_topk,
+                            "adapter_rank": args.adapter_rank,
+                            "epoch": epoch,
+                            "status": "oom",
+                            "skip_reason": str(exc)[:160],
+                        },
+                    )
+                if wandb_run.enabled:
+                    wandb_run.finish()
+                return
+            raise
 
         train_bleu = corpus_bleu(train_refs_epoch, train_hyps_epoch) if train_refs_epoch else 0.0
         val_bleu = corpus_bleu(val_refs_epoch, val_hyps_epoch) if val_refs_epoch else 0.0
         train_ppl = math.exp(min(train_loss, 20.0))
         val_ppl = math.exp(min(val_loss, 20.0))
-        attn_impl = "dot_explicit" if (args.sdpa_baseline and args.attn_baseline == "explicit") else "dot_builtin"
         mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
         if args.sdpa_baseline:
             mode_tag = f"{mode_tag}/{attn_impl}"

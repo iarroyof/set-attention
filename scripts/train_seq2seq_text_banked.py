@@ -1148,6 +1148,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         wandb_run.finish()
         return
 
+    attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     for epoch in range(1, args.epochs + 1):
         model.train()
         if set_attn is not None:
@@ -1160,50 +1161,82 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         train_refs, train_hyps = [], []
         train_loss_total = 0.0
         train_token_total = 0
-        with profiler(True) as prof:
-            for batch_idx_tensor, src_ids, tgt_ids, ref_tokens in text_batch_iterator(
-                train_pairs,
-                train_src_stoi,
-                train_tgt_stoi,
-                train_ref_tokens,
-                max_len,
-                args.batch,
-                shuffle=True,
-                src_ids=train_src_ids,
-                tgt_ids=train_tgt_ids,
-            ):
-                batch_idx_tensor = batch_idx_tensor.to(device)
-                src_ids = src_ids.to(device, non_blocking=True)
-                tgt_ids = tgt_ids.to(device, non_blocking=True)
-                tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
+        try:
+            with profiler(True) as prof:
+                for batch_idx_tensor, src_ids, tgt_ids, ref_tokens in text_batch_iterator(
+                    train_pairs,
+                    train_src_stoi,
+                    train_tgt_stoi,
+                    train_ref_tokens,
+                    max_len,
+                    args.batch,
+                    shuffle=True,
+                    src_ids=train_src_ids,
+                    tgt_ids=train_tgt_ids,
+                ):
+                    batch_idx_tensor = batch_idx_tensor.to(device)
+                    src_ids = src_ids.to(device, non_blocking=True)
+                    tgt_ids = tgt_ids.to(device, non_blocking=True)
+                    tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
 
-                dec_h, _ = model(src_ids, tgt_in)
-                if args.sdpa_baseline:
-                    tok_out = dec_h
-                else:
-                    phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                    Phi_q, Sig_q, Size_q, q_ptrs = cache_tgt.gather_flat(batch_idx_tensor, phi_dynamic)
-                    Phi_k, Sig_k, Size_k, k_ptrs = cache_src.gather_flat(batch_idx_tensor, phi_dynamic)
-                    Z_sets, q_ptrs = set_attn(Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
-                    tok_out = router(dec_h, Z_sets, Phi_q, q_ptrs)
-                logits = out_proj(tok_out)
+                    dec_h, _ = model(src_ids, tgt_in)
+                    if args.sdpa_baseline:
+                        tok_out = dec_h
+                    else:
+                        phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+                        Phi_q, Sig_q, Size_q, q_ptrs = cache_tgt.gather_flat(batch_idx_tensor, phi_dynamic)
+                        Phi_k, Sig_k, Size_k, k_ptrs = cache_src.gather_flat(batch_idx_tensor, phi_dynamic)
+                        Z_sets, q_ptrs = set_attn(Phi_q, Sig_q, Size_q, q_ptrs, Phi_k, Sig_k, Size_k, k_ptrs)
+                        tok_out = router(dec_h, Z_sets, Phi_q, q_ptrs)
+                    logits = out_proj(tok_out)
 
-                loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
-                opt.zero_grad(set_to_none=True)
-                loss.backward()
-                opt.step()
+                    loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
+                    opt.zero_grad(set_to_none=True)
+                    loss.backward()
+                    opt.step()
 
-                train_loss_total += float(loss.detach()) * tgt_ids.numel()
-                train_token_total += tgt_ids.numel()
-                preds = logits.argmax(dim=-1)
-                train_refs.extend(ref_tokens)
-                train_hyps.extend([ids_to_tokens(row, train_tgt_itos) for row in preds.detach().cpu()])
+                    train_loss_total += float(loss.detach()) * tgt_ids.numel()
+                    train_token_total += tgt_ids.numel()
+                    preds = logits.argmax(dim=-1)
+                    train_refs.extend(ref_tokens)
+                    train_hyps.extend([ids_to_tokens(row, train_tgt_itos) for row in preds.detach().cpu()])
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
+            is_oom = "out of memory" in str(exc).lower()
+            if args.skip_oom and is_oom:
+                torch.cuda.empty_cache()
+                if args.metrics_csv:
+                    _append_benchmark_row(
+                        args.metrics_csv,
+                        {
+                            "script": "train_seq2seq_text_banked",
+                            "task": "seq2seq",
+                            "dataset": args.dataset or "custom",
+                            "dataset_id": args.dataset or "custom",
+                            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                            "attn_impl": attn_impl,
+                            "precision": args.precision,
+                            "set_kernel": args.set_kernel,
+                            "batch": args.batch,
+                            "max_len": max_len,
+                            "window": args.window,
+                            "stride": args.stride,
+                            "minhash_k": args.minhash_k,
+                            "router_topk": args.router_topk,
+                            "adapter_rank": args.adapter_rank,
+                            "epoch": epoch,
+                            "status": "oom",
+                            "skip_reason": str(exc)[:160],
+                        },
+                    )
+                if wandb_run.enabled:
+                    wandb_run.finish()
+                return
+            raise
 
         tr_loss = train_loss_total / max(1, train_token_total)
         tr_ppl = math.exp(min(tr_loss, 20.0))
         tr_bleu = corpus_bleu(train_refs, train_hyps)
         tr_rouge = rouge_l(train_refs, train_hyps)
-        attn_impl = _attn_impl_label(args, args.sdpa_baseline)
         mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
         if args.sdpa_baseline:
             mode_tag = f"{mode_tag}/{attn_impl}"

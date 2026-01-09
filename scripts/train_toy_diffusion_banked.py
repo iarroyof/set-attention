@@ -1185,98 +1185,131 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         wandb_run.finish()
         return
 
+    attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     for epoch in range(1, args.epochs + 1):
         model.train()
         total_loss = 0.0
         count = 0
         train_gen = torch.Generator().manual_seed(seed + epoch)
-        with profiler(args.profile) as prof:
-            for batch_idx, xb in tensor_batch_iterator(
-                train_data,
-                data_cfg.batch_size,
-                shuffle=True,
-                generator=train_gen,
-                worker_init_fn=None,
-            ):
-                xb = xb.to(device)
-                if not args.sdpa_baseline:
-                    phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                    Phi, Sig, Size, q_ptrs = train_cache.gather_flat(batch_idx.to(device), phi_dynamic)
-                    model.set_current_bank(Phi, Sig, Size, q_ptrs)
-                loss = ddpm.loss(model, xb, lambda t, dim: timestep_embedding(t, args.d_model), args.d_model)
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                optimizer.step()
-                total_loss += float(loss.detach()) * xb.size(0)
-                count += xb.size(0)
-        train_loss = total_loss / max(1, count)
+        try:
+            with profiler(args.profile) as prof:
+                for batch_idx, xb in tensor_batch_iterator(
+                    train_data,
+                    data_cfg.batch_size,
+                    shuffle=True,
+                    generator=train_gen,
+                    worker_init_fn=None,
+                ):
+                    xb = xb.to(device)
+                    if not args.sdpa_baseline:
+                        phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+                        Phi, Sig, Size, q_ptrs = train_cache.gather_flat(batch_idx.to(device), phi_dynamic)
+                        model.set_current_bank(Phi, Sig, Size, q_ptrs)
+                    loss = ddpm.loss(model, xb, lambda t, dim: timestep_embedding(t, args.d_model), args.d_model)
+                    optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += float(loss.detach()) * xb.size(0)
+                    count += xb.size(0)
+            train_loss = total_loss / max(1, count)
 
-        model.eval()
-        sample_indices = select_sample_indices(val_data.size(0), args.sample_count, args.sample_seed + epoch)
-        sample_lookup = {idx: order for order, idx in enumerate(sample_indices)}
-        captured_samples: dict[int, dict] = {}
-        with torch.no_grad():
-            torch.manual_seed(args.eval_seed)
-            random.seed(args.eval_seed)
-            mmds, chamfers, nn1s = [], [], []
-            text_token_matches = 0.0
-            text_token_total = 0.0
-            text_refs_all: List[List[str]] = []
-            text_hyps_all: List[List[str]] = []
-            val_gen = torch.Generator().manual_seed(args.eval_seed)
-            for batch_idx, xb in tensor_batch_iterator(
-                val_data,
-                data_cfg.batch_size,
-                shuffle=False,
-                generator=val_gen,
-                worker_init_fn=make_worker_init_fn(args.eval_seed),
-            ):
-                xb_cpu = xb
-                xb = xb_cpu.to(device)
-                if not args.sdpa_baseline:
-                    phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                    Phi, Sig, Size, q_ptrs = val_cache.gather_flat(batch_idx.to(device), phi_dynamic)
-                    model.set_current_bank(Phi, Sig, Size, q_ptrs)
-                batch_indices = batch_idx.detach().cpu().tolist()
-                need_samples = any(idx in sample_lookup for idx in batch_indices)
-                want_generated = need_samples or text_mode
-                val_mmd, val_chamfer, val_nn1, gen_batch = eval_suite(
-                    ddpm, model, xb, args.d_model, return_generated=want_generated
-                )
-                mmds.append(val_mmd)
-                chamfers.append(val_chamfer)
-                nn1s.append(val_nn1)
-                ref_token_batch = None
-                hyp_token_batch = None
-                if text_mode and gen_batch is not None and text_embedding_table is not None:
-                    if text_val_ids_tensor is not None:
-                        tgt_ids = text_val_ids_tensor[batch_idx].to(device)
-                    else:
-                        tgt_ids = decode_embeddings_to_ids(xb, text_embedding_table)
-                    pred_ids = decode_embeddings_to_ids(gen_batch.to(device), text_embedding_table)
-                    text_token_matches += float((pred_ids == tgt_ids).sum().item())
-                    text_token_total += float(pred_ids.numel())
-                    ref_token_batch = [
-                        [text_itos[int(tok)] for tok in seq.tolist()] for seq in tgt_ids.detach().cpu()
-                    ]
-                    hyp_token_batch = [
-                        [text_itos[int(tok)] for tok in seq.tolist()] for seq in pred_ids.detach().cpu()
-                    ]
-                    text_refs_all.extend(ref_token_batch)
-                    text_hyps_all.extend(hyp_token_batch)
-                if need_samples and gen_batch is not None:
-                    for local_pos, global_idx in enumerate(batch_indices):
-                        order = sample_lookup.get(int(global_idx))
-                        if order is None or order in captured_samples:
-                            continue
-                        entry = {"idx": int(global_idx)}
-                        if text_mode and ref_token_batch is not None and hyp_token_batch is not None:
-                            entry["ref_text"] = " ".join(ref_token_batch[local_pos])
-                            entry["gen_text"] = " ".join(hyp_token_batch[local_pos])
+            model.eval()
+            sample_indices = select_sample_indices(val_data.size(0), args.sample_count, args.sample_seed + epoch)
+            sample_lookup = {idx: order for order, idx in enumerate(sample_indices)}
+            captured_samples: dict[int, dict] = {}
+            with torch.no_grad():
+                torch.manual_seed(args.eval_seed)
+                random.seed(args.eval_seed)
+                mmds, chamfers, nn1s = [], [], []
+                text_token_matches = 0.0
+                text_token_total = 0.0
+                text_refs_all: List[List[str]] = []
+                text_hyps_all: List[List[str]] = []
+                val_gen = torch.Generator().manual_seed(args.eval_seed)
+                for batch_idx, xb in tensor_batch_iterator(
+                    val_data,
+                    data_cfg.batch_size,
+                    shuffle=False,
+                    generator=val_gen,
+                    worker_init_fn=make_worker_init_fn(args.eval_seed),
+                ):
+                    xb_cpu = xb
+                    xb = xb_cpu.to(device)
+                    if not args.sdpa_baseline:
+                        phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+                        Phi, Sig, Size, q_ptrs = val_cache.gather_flat(batch_idx.to(device), phi_dynamic)
+                        model.set_current_bank(Phi, Sig, Size, q_ptrs)
+                    batch_indices = batch_idx.detach().cpu().tolist()
+                    need_samples = any(idx in sample_lookup for idx in batch_indices)
+                    want_generated = need_samples or text_mode
+                    val_mmd, val_chamfer, val_nn1, gen_batch = eval_suite(
+                        ddpm, model, xb, args.d_model, return_generated=want_generated
+                    )
+                    mmds.append(val_mmd)
+                    chamfers.append(val_chamfer)
+                    nn1s.append(val_nn1)
+                    ref_token_batch = None
+                    hyp_token_batch = None
+                    if text_mode and gen_batch is not None and text_embedding_table is not None:
+                        if text_val_ids_tensor is not None:
+                            tgt_ids = text_val_ids_tensor[batch_idx].to(device)
                         else:
-                            entry["ref_tensor"] = xb_cpu[local_pos].detach().cpu()
-                            entry["gen_tensor"] = gen_batch[local_pos].detach().cpu()
-                        captured_samples[order] = entry
+                            tgt_ids = decode_embeddings_to_ids(xb, text_embedding_table)
+                        pred_ids = decode_embeddings_to_ids(gen_batch.to(device), text_embedding_table)
+                        text_token_matches += float((pred_ids == tgt_ids).sum().item())
+                        text_token_total += float(pred_ids.numel())
+                        ref_token_batch = [
+                            [text_itos[int(tok)] for tok in seq.tolist()] for seq in tgt_ids.detach().cpu()
+                        ]
+                        hyp_token_batch = [
+                            [text_itos[int(tok)] for tok in seq.tolist()] for seq in pred_ids.detach().cpu()
+                        ]
+                        text_refs_all.extend(ref_token_batch)
+                        text_hyps_all.extend(hyp_token_batch)
+                    if need_samples and gen_batch is not None:
+                        for local_pos, global_idx in enumerate(batch_indices):
+                            order = sample_lookup.get(int(global_idx))
+                            if order is None or order in captured_samples:
+                                continue
+                            entry = {"idx": int(global_idx)}
+                            if text_mode and ref_token_batch is not None and hyp_token_batch is not None:
+                                entry["ref_text"] = " ".join(ref_token_batch[local_pos])
+                                entry["gen_text"] = " ".join(hyp_token_batch[local_pos])
+                            else:
+                                entry["ref_tensor"] = xb_cpu[local_pos].detach().cpu()
+                                entry["gen_tensor"] = gen_batch[local_pos].detach().cpu()
+                            captured_samples[order] = entry
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
+            is_oom = "out of memory" in str(exc).lower()
+            if args.skip_oom and is_oom:
+                torch.cuda.empty_cache()
+                if args.metrics_csv:
+                    _append_benchmark_row(
+                        args.metrics_csv,
+                        {
+                            "script": "train_toy_diffusion_banked",
+                            "task": "textdiff" if text_mode else "diffusion",
+                            "dataset": dataset_label,
+                            "config": config_label,
+                            "dataset_id": config_label,
+                            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                            "attn_impl": attn_impl,
+                            "precision": args.precision,
+                            "batch": data_cfg.batch_size,
+                            "window": args.window,
+                            "stride": args.stride,
+                            "minhash_k": args.minhash_k,
+                            "router_topk": args.router_topk,
+                            "adapter_rank": args.adapter_rank,
+                            "epoch": epoch,
+                            "status": "oom",
+                            "skip_reason": str(exc)[:160],
+                        },
+                    )
+                if wandb_run.enabled:
+                    wandb_run.finish()
+                return
+            raise
 
         def safe_mean(values):
             return float(sum(values) / len(values)) if values else float("nan")

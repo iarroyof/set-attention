@@ -867,46 +867,80 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         return metrics
 
     for ep in range(1, args.epochs + 1):
-        set_mode(True)
-        total_loss, total_acc, total_top5, total_n = 0.0, 0.0, 0.0, 0
-        sets_seen_total = 0.0
-        seq_seen_total = 0
-        coverage_mask = torch.zeros(coverage_size, dtype=torch.bool)
-        with profiler(args.profile) as prof:
-            if args.profile and torch.cuda.is_available():
-                torch.cuda.reset_peak_memory_stats()
-            for idx_batch, xb, yb in loader:
-                batch_idx = idx_batch.to(device)
-                xb = xb.to(device, non_blocking=True)
-                yb = yb.to(device, non_blocking=True)
-                tokens = backbone(xb)
-                if args.sdpa_baseline:
-                    routed = tokens
-                else:
-                    phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                    Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
-                    Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
-                    routed = router(tokens, Z, Phi, q_ptrs)
-                cls_repr = routed.mean(dim=1)
-                logits = head(cls_repr)
-                loss = F.cross_entropy(logits, yb)
-                optim.zero_grad(set_to_none=True)
-                loss.backward()
-                optim.step()
-                pred = logits.argmax(dim=-1)
-                topk = logits.topk(min(5, logits.size(-1)), dim=-1).indices
-                batch_top5 = (topk == yb.unsqueeze(-1)).any(dim=-1).sum().item()
-                if not args.sdpa_baseline:
-                    with torch.no_grad():
-                        set_idx_batch, _ = cache.gather_sequence_sets(batch_idx)
-                        _, mask = pad_segments_from_ptrs(Phi.new_zeros(Phi.size(0), 1), q_ptrs)
-                    batch_sets, batch_seqs, coverage_mask = update_coverage_stats(mask, set_idx_batch, coverage_mask)
-                    sets_seen_total += float(batch_sets)
-                    seq_seen_total += batch_seqs
-                total_loss += float(loss.detach()) * xb.size(0)
-                total_acc += float((pred == yb).sum().item())
-                total_top5 += float(batch_top5)
-                total_n += xb.size(0)
+        try:
+            set_mode(True)
+            total_loss, total_acc, total_top5, total_n = 0.0, 0.0, 0.0, 0
+            sets_seen_total = 0.0
+            seq_seen_total = 0
+            coverage_mask = torch.zeros(coverage_size, dtype=torch.bool)
+            with profiler(args.profile) as prof:
+                if args.profile and torch.cuda.is_available():
+                    torch.cuda.reset_peak_memory_stats()
+                for idx_batch, xb, yb in loader:
+                    batch_idx = idx_batch.to(device)
+                    xb = xb.to(device, non_blocking=True)
+                    yb = yb.to(device, non_blocking=True)
+                    tokens = backbone(xb)
+                    if args.sdpa_baseline:
+                        routed = tokens
+                    else:
+                        phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
+                        Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
+                        Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
+                        routed = router(tokens, Z, Phi, q_ptrs)
+                    cls_repr = routed.mean(dim=1)
+                    logits = head(cls_repr)
+                    loss = F.cross_entropy(logits, yb)
+                    optim.zero_grad(set_to_none=True)
+                    loss.backward()
+                    optim.step()
+                    pred = logits.argmax(dim=-1)
+                    topk = logits.topk(min(5, logits.size(-1)), dim=-1).indices
+                    batch_top5 = (topk == yb.unsqueeze(-1)).any(dim=-1).sum().item()
+                    if not args.sdpa_baseline:
+                        with torch.no_grad():
+                            set_idx_batch, _ = cache.gather_sequence_sets(batch_idx)
+                            _, mask = pad_segments_from_ptrs(Phi.new_zeros(Phi.size(0), 1), q_ptrs)
+                        batch_sets, batch_seqs, coverage_mask = update_coverage_stats(mask, set_idx_batch, coverage_mask)
+                        sets_seen_total += float(batch_sets)
+                        seq_seen_total += batch_seqs
+                    total_loss += float(loss.detach()) * xb.size(0)
+                    total_acc += float((pred == yb).sum().item())
+                    total_top5 += float(batch_top5)
+                    total_n += xb.size(0)
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
+            is_oom = "out of memory" in str(exc).lower()
+            if args.skip_oom and is_oom:
+                torch.cuda.empty_cache()
+                if args.metrics_csv:
+                    _append_benchmark_row(
+                        args.metrics_csv,
+                        {
+                            "script": "train_tiny_vit_banked",
+                            "task": "vit",
+                            "dataset": args.data_mode,
+                            "dataset_id": args.data_mode,
+                            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                            "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                            "precision": args.precision,
+                            "patch": args.patch,
+                            "window": args.window,
+                            "stride": args.stride,
+                            "minhash_k": args.minhash_k,
+                            "router_topk": args.router_topk,
+                            "batch": args.batch,
+                            "seed": seed,
+                            "rep": rep,
+                            "run_uid": run_uid,
+                            "epoch": ep,
+                            "status": "oom",
+                            "skip_reason": str(exc)[:160],
+                        },
+                    )
+                if wandb_run.enabled:
+                    wandb_run.finish()
+                return
+            raise
         denom = max(1, total_n)
         avg_loss = total_loss / denom
         avg_acc = total_acc / denom
