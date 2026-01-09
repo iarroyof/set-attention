@@ -192,6 +192,12 @@ def main():
                 ]
                 if args.lm_subset_path:
                     cmd.extend(["--subset-path", args.lm_subset_path])
+                if args.cache_mode != "none":
+                    cmd.extend(["--cache-mode", args.cache_mode])
+                if args.artifact_cache_root:
+                    cmd.extend(["--artifact-cache-root", args.artifact_cache_root])
+                if args.overwrite_cache:
+                    cmd.append("--overwrite-cache")
                 if variant == "dot_explicit":
                     cmd.extend(["--sdpa-baseline", "--attn-baseline", "explicit", "--dot-naive"])
                 else:
@@ -332,12 +338,6 @@ def main():
                     "--reps",
                     str(1),
                 ]
-                if args.cache_mode != "none":
-                    cmd.extend(["--cache-mode", args.cache_mode])
-                if args.artifact_cache_root:
-                    cmd.extend(["--artifact-cache-root", args.artifact_cache_root])
-                if args.overwrite_cache:
-                    cmd.append("--overwrite-cache")
                 if variant == "dot_explicit":
                     cmd.extend(["--sdpa-baseline", "--attn-baseline", "explicit", "--dot-naive"])
                 else:

@@ -383,13 +383,14 @@ def _artifact_root_with_override(spec: dict, override_fp: str, hf_root: Path) ->
 
 def _save_lm_tokens(path: Path, train_X, train_Y, val_X, val_Y, itos) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    ordered = [itos[i] for i in range(len(itos))]
     torch.save(
         {
             "train_X": train_X.cpu(),
             "train_Y": train_Y.cpu(),
             "val_X": val_X.cpu(),
             "val_Y": val_Y.cpu(),
-            "itos": itos,
+            "itos": ordered,
         },
         path,
     )
@@ -397,8 +398,21 @@ def _save_lm_tokens(path: Path, train_X, train_Y, val_X, val_Y, itos) -> None:
 
 def _load_lm_tokens(path: Path):
     payload = torch.load(path, map_location="cpu")
-    itos_list = payload.get("itos", [])
-    itos = {idx: tok for idx, tok in enumerate(itos_list)}
+    itos_payload = payload.get("itos", [])
+    if isinstance(itos_payload, dict):
+        try:
+            ordered = [itos_payload[i] for i in range(len(itos_payload))]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"Invalid tokenizer payload in {path}; rebuild cache with --overwrite-cache."
+            ) from exc
+    else:
+        ordered = list(itos_payload)
+    if not ordered or any(not isinstance(tok, str) for tok in ordered):
+        raise RuntimeError(
+            f"Invalid tokenizer payload in {path}; rebuild cache with --overwrite-cache."
+        )
+    itos = {idx: tok for idx, tok in enumerate(ordered)}
     stoi = {tok: idx for idx, tok in itos.items()}
     return payload["train_X"], payload["train_Y"], payload["val_X"], payload["val_Y"], stoi, itos
 
@@ -1121,8 +1135,9 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     _save_lm_tokens(tokens_path, train_X, train_Y, val_X, val_Y, itos)
                     write_meta(token_root, token_spec)
                     print(f"[Cache] Saved LM tokens to {tokens_path}")
-            train_text_pairs, train_refs = tensors_to_text_pairs(train_X, train_Y, itos)
-            val_text_pairs, val_refs = tensors_to_text_pairs(val_X, val_Y, itos)
+            if not args.cache_only:
+                train_text_pairs, train_refs = tensors_to_text_pairs(train_X, train_Y, itos)
+                val_text_pairs, val_refs = tensors_to_text_pairs(val_X, val_Y, itos)
             max_len = train_X.size(1)
     else:
         X, Y = make_char_data(seq_len=args.seq_len)
