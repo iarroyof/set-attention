@@ -226,6 +226,20 @@ def _system_info():
     }
 
 
+def _gpu_free_gb(device: Optional[torch.device] = None) -> Optional[float]:
+    if not torch.cuda.is_available():
+        return None
+    try:
+        if device is not None and device.type == "cuda":
+            with torch.cuda.device(device):
+                free, total = torch.cuda.mem_get_info()
+        else:
+            free, total = torch.cuda.mem_get_info()
+    except Exception:
+        return None
+    return free / (1024**3)
+
+
 def _configure_dot_naive(dot_naive: bool) -> None:
     if not dot_naive:
         return
@@ -402,6 +416,7 @@ def run_seq2seq_benchmark(
     train_tgt_ids=None,
 ):
     attn_impl = _attn_impl_label(args, args.sdpa_baseline)
+    free_gb_at_start = _gpu_free_gb(device)
     iterator = text_batch_iterator(
         train_pairs,
         train_src_stoi,
@@ -509,6 +524,12 @@ def run_seq2seq_benchmark(
                     "status": "oom",
                     "skip_reason": "runtime_oom",
                     "gpu_vram_gb": args.gpu_vram,
+                    "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
+                    "peak_allocated_mb": (
+                        torch.cuda.max_memory_allocated() / (1024**2)
+                        if torch.cuda.is_available()
+                        else "NA"
+                    ),
                 },
             )
             return
@@ -1003,6 +1024,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 val_tgt_bank = build_windowed_bank_from_texts(tokenizer, val_tgt_texts, window=args.window, stride=args.stride)
 
     device = torch.device(args.device)
+    free_gb_at_start = _gpu_free_gb(device)
     V = tokenizer.vocab_size()
 
     atom_emb = adapter = phi_snapshot = None
@@ -1230,6 +1252,12 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                             "epoch": epoch,
                             "status": "oom",
                             "skip_reason": str(exc)[:160],
+                            "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
+                            "peak_allocated_mb": (
+                                torch.cuda.max_memory_allocated() / (1024**2)
+                                if torch.cuda.is_available()
+                                else "NA"
+                            ),
                         },
                     )
                 if wandb_run.enabled:
