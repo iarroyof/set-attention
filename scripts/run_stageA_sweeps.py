@@ -227,6 +227,7 @@ def main():
     ap.add_argument("--epochs", type=int, default=2)
     ap.add_argument("--eval-seed", type=int, default=1337)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--profile", action="store_true", help="Enable per-epoch profiling (time/VRAM) in task scripts.")
     ap.add_argument(
         "--skip-oom",
         action="store_true",
@@ -386,6 +387,8 @@ def main():
                     cmd.append("--overwrite-cache")
                 if args.skip_oom:
                     cmd.append("--skip-oom")
+                if args.profile:
+                    cmd.append("--profile")
                 if variant == "dot_explicit":
                     cmd.extend(["--sdpa-baseline", "--attn-baseline", "explicit", "--dot-naive"])
                 else:
@@ -467,6 +470,8 @@ def main():
                     cmd.append("--overwrite-cache")
                 if args.skip_oom:
                     cmd.append("--skip-oom")
+                if args.profile:
+                    cmd.append("--profile")
                 if variant == "dot_explicit":
                     cmd.extend(["--sdpa-baseline", "--attn-baseline", "explicit", "--dot-naive"])
                 else:
@@ -554,6 +559,8 @@ def main():
                     cmd.append("--overwrite-cache")
                 if args.skip_oom:
                     cmd.append("--skip-oom")
+                if args.profile:
+                    cmd.append("--profile")
                 if variant == "dot_explicit":
                     cmd.extend(["--sdpa-baseline", "--attn-baseline", "explicit", "--dot-naive"])
                 else:
@@ -629,6 +636,8 @@ def main():
                 ]
                 if args.skip_oom:
                     cmd.append("--skip-oom")
+                if args.profile:
+                    cmd.append("--profile")
                 if variant == "dot_explicit":
                     cmd.extend(["--sdpa-baseline", "--attn-baseline", "explicit", "--dot-naive"])
                 else:
