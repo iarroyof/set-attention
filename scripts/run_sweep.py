@@ -169,6 +169,18 @@ def _wait_for_gpu(min_free_gb: float, interval_s: float, timeout_s: float, requi
         time.sleep(interval_s)
 
 
+def _extract_seed(cmd: List[str]) -> str:
+    if "--seed" not in cmd:
+        return ""
+    try:
+        idx = cmd.index("--seed")
+    except ValueError:
+        return ""
+    if idx + 1 >= len(cmd):
+        return ""
+    return str(cmd[idx + 1])
+
+
 def run(
     cmd,
     csv_path: Path,
@@ -201,7 +213,7 @@ def run(
             {
                 "script": cmd[1] if len(cmd) > 1 else "",
                 "task": "sweep",
-                "seed": cmd[-1] if "--seed" in cmd else "",
+                "seed": _extract_seed(cmd),
                 "run_uid": f"exitcode-{int(time.time())}",
                 "status": "exitcode",
                 "exit_code": returncode,
