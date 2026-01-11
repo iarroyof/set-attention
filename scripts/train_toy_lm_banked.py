@@ -1550,7 +1550,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         if not train:
             torch.manual_seed(args.eval_seed)
             random.seed(args.eval_seed)
-            g = torch.Generator(device=device).manual_seed(args.eval_seed)
+            g = torch.Generator().manual_seed(args.eval_seed)
         model_list = [m for m in (backbone, router, head, adapter) if m is not None]
         for m in model_list:
             m.train(train)
@@ -1580,7 +1580,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 args.batch,
                 shuffle=train,
                 num_workers=args.num_workers,
-                generator=(torch.Generator(device=device).manual_seed(args.eval_seed) if not train else None),
+                generator=(torch.Generator().manual_seed(args.eval_seed) if not train else None),
                 worker_init_fn=(make_worker_init_fn(args.eval_seed) if not train else None),
                 src_ids=(train_X if train else val_X),
                 tgt_ids=(train_Y if train else val_Y),
