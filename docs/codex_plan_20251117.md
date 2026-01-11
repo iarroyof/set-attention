@@ -2,6 +2,17 @@
 
 Here’s a tight, ready-to-run ablation plan that uses **proper datasets**, your new **--benchmark** path, and full-training runs where needed. It’s organized by task (LM, Diffusion, ViT), with **commands, grids, metrics, and outputs** so you can drop results into JMLR/ICML tables.
 Bellow are the ideas to run ablations, but we need to log metrics (only metrics and relevant attention matrices, not models or other things that may increase memory usage or disk space in useless ways) to W&B.
+
+## Architecture updates (Jan 2026)
+
+These updates supersede earlier assumptions about per-run tokenization and on-the-fly bank/routing construction.
+
+- Artifact cache system added (`src/set_attention/data/artifact_cache.py`, `src/set_attention/data/ska_artifacts.py`) with fingerprinted meta for tokens, banks, and routing. Training scripts support `--cache-mode none|tokens|full`, `--cache-only`, and cache guards (e.g., adapter-rank for full routing). Cache builders: `scripts/cache_tokens.py`, `scripts/cache_ska_artifacts.py`. Sweep runners can `--precache`.
+- HuggingFace cache rooting unified via `ensure_hf_cache`; env-first behavior using `HF_HOME`, `HF_DATASETS_CACHE`, and `HF_HUB_CACHE`, avoiding legacy per-script cache paths.
+- Data loading standardized on DataLoader pipelines with deterministic eval seeding, `worker_init_fn`, and per-task `--num-workers` controls. Full-cache runs force `num_workers=0` to avoid worker churn.
+- Sweep robustness upgrades: GPU idle gate + min-free-GB checks, post-run GPU checks, OOM/exitcode rows in CSVs, and sequential execution defaults.
+- Artifact generation expanded: `scripts/repro_runs.py` aggregates metrics alongside benchmarks; `scripts/make_stage_artifacts.py` emits Stage A/B tables/plots when inputs are available.
+- AUSA tokenizer caching is persistent for Seq2Seq and reused across runs to keep token IDs stable.
 ---
 
 # 0) One-time prep

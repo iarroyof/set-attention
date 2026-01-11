@@ -3,6 +3,7 @@ import csv
 import itertools
 import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import List
@@ -194,8 +195,16 @@ def run(
     print("→", " ".join(cmd))
     if not _wait_for_gpu(min_free_gb, wait_interval, wait_timeout, require_idle):
         return 1
-    proc = subprocess.Popen(cmd)
-    returncode = proc.wait()
+    with tempfile.TemporaryFile(mode="w+") as stderr_file:
+        proc = subprocess.Popen(cmd, stderr=stderr_file)
+        returncode = proc.wait()
+        if returncode != 0:
+            stderr_file.seek(0)
+            tail = stderr_file.read().splitlines()[-20:]
+            if tail:
+                print("[sweep] stderr (tail):")
+                for line in tail:
+                    print(f"[sweep] | {line}")
     if post_run_grace > 0:
         time.sleep(post_run_grace)
     procs = _gpu_compute_procs()

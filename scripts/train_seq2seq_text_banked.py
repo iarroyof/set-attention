@@ -108,6 +108,36 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
             writer.writerow(row)
 
 
+def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception) -> None:
+    row = {
+        "script": "train_seq2seq_text_banked",
+        "task": "seq2seq",
+        "dataset": args.dataset or "custom",
+        "dataset_id": args.dataset or "custom",
+        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+        "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+        "precision": args.precision,
+        "set_kernel": args.set_kernel,
+        "batch": args.batch,
+        "max_len": getattr(args, "max_len", "NA"),
+        "window": args.window,
+        "stride": args.stride,
+        "minhash_k": args.minhash_k,
+        "router_topk": args.router_topk,
+        "adapter_rank": args.adapter_rank,
+        "seed": seed,
+        "rep": rep,
+        "run_uid": run_uid,
+        "status": "exception",
+        "error_type": type(exc).__name__,
+        "error_msg": str(exc)[:200],
+    }
+    if args.metrics_csv:
+        _append_benchmark_row(args.metrics_csv, row)
+    if args.benchmark_csv:
+        _append_benchmark_row(args.benchmark_csv, row)
+
+
 def _seq_data_signature(args) -> Optional[dict]:
     if args.dataset:
         val_limit = getattr(args, "val_limit", None)
@@ -782,7 +812,11 @@ def main():
         for rep in range(1, reps + 1):
             run_args = copy.deepcopy(args)
             run_uid = f"{int(time.time() * 1e6)}-{os.getpid()}-{seed}-{rep}"
-            run_single(run_args, seed, rep, run_uid, multi_run)
+            try:
+                run_single(run_args, seed, rep, run_uid, multi_run)
+            except Exception as exc:
+                _append_exception_rows(run_args, seed, rep, run_uid, exc)
+                raise
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             gc.collect()

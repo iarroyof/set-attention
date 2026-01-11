@@ -7,6 +7,7 @@ import argparse
 import csv
 import os
 import subprocess
+import tempfile
 import sys
 import time
 from pathlib import Path
@@ -176,8 +177,16 @@ def _run(
         return 0
     if not _wait_for_gpu(min_free_gb, wait_interval, wait_timeout, require_idle):
         return 1
-    proc = subprocess.Popen(cmd)
-    rc = proc.wait()
+    with tempfile.TemporaryFile(mode="w+") as stderr_file:
+        proc = subprocess.Popen(cmd, stderr=stderr_file)
+        rc = proc.wait()
+        if rc != 0:
+            stderr_file.seek(0)
+            tail = stderr_file.read().splitlines()[-20:]
+            if tail:
+                print("[stageA] stderr (tail):")
+                for line in tail:
+                    print(f"[stageA] | {line}")
     if post_run_grace > 0:
         time.sleep(post_run_grace)
     procs = _gpu_compute_procs()

@@ -4,6 +4,17 @@ gotcha — here’s a single **merged markdown frame** that keeps the **correct 
 
 # AUSA Implementation Plan (LM, Diffusion, ViT) — **Merged Spec**
 
+## Architecture updates (Jan 2026)
+
+These updates supersede earlier assumptions about per-run tokenization and on-the-fly bank/routing construction.
+
+- Artifact cache system added (`src/set_attention/data/artifact_cache.py`, `src/set_attention/data/ska_artifacts.py`) with fingerprinted meta for tokens, banks, and routing. Training scripts support `--cache-mode none|tokens|full`, `--cache-only`, and cache guards (e.g., adapter-rank for full routing). Cache builders: `scripts/cache_tokens.py`, `scripts/cache_ska_artifacts.py`. Sweep runners can `--precache`.
+- HuggingFace cache rooting unified via `ensure_hf_cache`; env-first behavior using `HF_HOME`, `HF_DATASETS_CACHE`, and `HF_HUB_CACHE`, avoiding legacy per-script cache paths.
+- Data loading standardized on DataLoader pipelines with deterministic eval seeding, `worker_init_fn`, and per-task `--num-workers` controls. Full-cache runs force `num_workers=0` to avoid worker churn.
+- Sweep robustness upgrades: GPU idle gate + min-free-GB checks, post-run GPU checks, OOM/exitcode rows in CSVs, and sequential execution defaults.
+- Artifact generation expanded: `scripts/repro_runs.py` aggregates metrics alongside benchmarks; `scripts/make_stage_artifacts.py` emits Stage A/B tables/plots when inputs are available.
+- AUSA tokenizer caching is persistent for Seq2Seq and reused across runs to keep token IDs stable.
+
 ## 0) Core idea (one paragraph)
 
 We **freeze atom discovery** inside training steps. A tokenizer builds an **Active Universe** (U^*) (atoms). We keep a **Universe Pool** with per-atom features (\phi(u)) and MinHash signatures. Each sequence (or image/patch grid) is represented by a **bank of subsets** (multiple sets per sequence). The model runs **set-level attention** (tiny set×set per example block), then **routes tokens/patches** to those set outputs with light adapters—no “sets per token” replication. Optional **learned set prototypes** act as a global set basis.

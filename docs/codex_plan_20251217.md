@@ -2,6 +2,17 @@ Awesome — here’s a **Codex-ready plan** that reframes the work as **theory +
 
 ---
 
+## Architecture updates (Jan 2026)
+
+These updates supersede earlier assumptions about per-run tokenization and on-the-fly bank/routing construction.
+
+- Artifact cache system added (`src/set_attention/data/artifact_cache.py`, `src/set_attention/data/ska_artifacts.py`) with fingerprinted meta for tokens, banks, and routing. Training scripts support `--cache-mode none|tokens|full`, `--cache-only`, and cache guards (e.g., adapter-rank for full routing). Cache builders: `scripts/cache_tokens.py`, `scripts/cache_ska_artifacts.py`. Sweep runners can `--precache`.
+- HuggingFace cache rooting unified via `ensure_hf_cache`; env-first behavior using `HF_HOME`, `HF_DATASETS_CACHE`, and `HF_HUB_CACHE`, avoiding legacy per-script cache paths.
+- Data loading standardized on DataLoader pipelines with deterministic eval seeding, `worker_init_fn`, and per-task `--num-workers` controls. Full-cache runs force `num_workers=0` to avoid worker churn.
+- Sweep robustness upgrades: GPU idle gate + min-free-GB checks, post-run GPU checks, OOM/exitcode rows in CSVs, and sequential execution defaults.
+- Artifact generation expanded: `scripts/repro_runs.py` aggregates metrics alongside benchmarks; `scripts/make_stage_artifacts.py` emits Stage A/B tables/plots when inputs are available.
+- AUSA tokenizer caching is persistent for Seq2Seq and reused across runs to keep token IDs stable.
+
 # Codex Plan — AUSA (Set-Kernel Attention) for ACL (Text-Only, PyTorch)
 
 **Positioning**: We publish as **theory + algorithm + reference implementation**. Experiments emphasize **algorithmic comparisons** (no custom GPU kernels), **scaling behavior**, and **memory asymptotics**, with clean methodology and reproducibility.

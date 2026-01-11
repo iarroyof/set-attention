@@ -2,6 +2,7 @@ import argparse
 import csv
 import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import List
@@ -209,8 +210,16 @@ def main():
                     },
                 )
                 continue
-            proc = subprocess.Popen(cmd, env=env)
-            returncode = proc.wait()
+            with tempfile.TemporaryFile(mode="w+") as stderr_file:
+                proc = subprocess.Popen(cmd, env=env, stderr=stderr_file)
+                returncode = proc.wait()
+                if returncode != 0:
+                    stderr_file.seek(0)
+                    tail = stderr_file.read().splitlines()[-20:]
+                    if tail:
+                        print("[wandb-sweep] stderr (tail):")
+                        for line in tail:
+                            print(f"[wandb-sweep] | {line}")
             if args.post_run_grace > 0:
                 time.sleep(args.post_run_grace)
             procs = _gpu_compute_procs()

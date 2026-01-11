@@ -7,17 +7,37 @@ Overview
 - Supports standard dot-product, cosine, and RBF similarities; includes Δ-RBF set kernels utilities.
 - One-liner patching to replace `nn.MultiheadAttention` blocks across an existing model.
 - W&B-ready hooks for quick experiment logging (optional dependency).
+- Artifact caching for tokens/banks/routing with reproducible fingerprints to keep runs deterministic and fast.
 
 Install
 -------
 - Editable install: `pip install -e .` (optionally `.[wandb]`)
 
+Architecture Updates (Jan 2026)
+-------------------------------
+- Artifact cache system (tokens + bank + routing) with fingerprinted metadata:
+  `src/set_attention/data/artifact_cache.py`, `src/set_attention/data/ska_artifacts.py`.
+- Cache builders: `scripts/cache_tokens.py`, `scripts/cache_ska_artifacts.py`.
+- Training scripts support `--cache-mode none|tokens|full` and `--cache-only`; sweeps can `--precache`.
+- HF cache routing is env-first (`HF_HOME`, `HF_DATASETS_CACHE`, `HF_HUB_CACHE`), via `ensure_hf_cache`.
+- Data loading standardized on DataLoader pipelines with deterministic eval seeding and `--num-workers` controls.
+- Sweeps now gate on GPU idle/free GB and record OOM/exitcode rows for postmortem.
+
 Datasets
 --------
-- All scripts accept `--data-root` (default `~/.cache/set-attention`) so downloads are reused across experiments.
-- Hugging Face assets default to `~/.cache/set-attention/hf_datasets`; override via `--hf-cache-dir`.
+- HF datasets obey `HF_HOME` / `HF_DATASETS_CACHE` / `HF_HUB_CACHE` if set (recommended).
+- Non-HF assets (e.g., CIFAR-10) use `--data-root` (default `~/.cache/set-attention`).
+- Use `scripts/prefetch_datasets.py` to prefetch HF datasets into the shared cache.
 - Language modeling script now supports `--dataset {wikitext2,wikitext103}` with configurable `--seq-len`/`--seq-stride`.
 - Vision scripts download CIFAR-10 into `data_root/vision/cifar10`.
+
+Cache Modes
+-----------
+- `--cache-mode none`: current behavior (tokenize/build banks per run).
+- `--cache-mode tokens`: use cached tokens; SKA still builds banks/routing.
+- `--cache-mode full`: use cached tokens + bank + routing (requires routing independent of learned params; e.g. adapter disabled).
+- `--cache-only` exits after building cache artifacts.
+- For reproducibility, run `scripts/cache_tokens.py` / `scripts/cache_ska_artifacts.py` before training or set `--precache` in sweeps.
 
 Quickstart
 ----------
@@ -73,6 +93,12 @@ python scripts/run_sweep.py --which diffusion
 python scripts/run_sweep.py --which vit
 ```
 
+Stage A/B Launchers
+-------------------
+- Stage A (quality @ fixed budget): `scripts/run_stageA_sweeps.py`
+- Stage B (scaling curves): `scripts/run_stageB_sweeps.py`
+- Both support GPU idle gating (`--require-idle-gpu`, `--min-free-gb`), `--cache-mode`, `--precache`, and per-task `--num-workers`.
+
 Configs
 -------
 - configs/transformer_toy.yaml
@@ -84,6 +110,7 @@ Profiling
 ---------
 - Add `--profile` to print per-epoch wall time and peak VRAM. W&B can also capture system metrics if enabled.
 - For repeatable timing, most scripts now accept `--benchmark` (with `--bench-warmup`/`--bench-iters`) to run fixed-shape fwd/bwd loops and report throughput.
+- Use `--num-workers` to control DataLoader parallelism; eval loaders are seeded for deterministic order.
 
 Benchmarks
 ----------
