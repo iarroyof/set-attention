@@ -57,9 +57,9 @@ from set_attention.sets.atom_adapter import AtomFeatureAdapter
 from set_attention.heads.banked_attention import SetBankAttention
 from set_attention.heads.token_router import TokenSetRouter
 from set_attention.training.text_utils import (
+    build_text_dataloader,
     encode_sentence,
     ids_to_tokens,
-    text_batch_iterator,
     SPECIAL_TOKENS,
 )
 from set_attention.utils.sample_logging import format_text_samples
@@ -417,7 +417,7 @@ def run_seq2seq_benchmark(
 ):
     attn_impl = _attn_impl_label(args, args.sdpa_baseline)
     free_gb_at_start = _gpu_free_gb(device)
-    iterator = text_batch_iterator(
+    iterator = build_text_dataloader(
         train_pairs,
         train_src_stoi,
         train_tgt_stoi,
@@ -425,13 +425,14 @@ def run_seq2seq_benchmark(
         max_len,
         args.batch,
         shuffle=False,
+        num_workers=args.num_workers,
         generator=torch.Generator(device=device).manual_seed(args.eval_seed),
         worker_init_fn=make_worker_init_fn(args.eval_seed),
         src_ids=train_src_ids,
         tgt_ids=train_tgt_ids,
     )
     try:
-        batch_idx_tensor, src_ids, tgt_ids, _ = next(iterator)
+        batch_idx_tensor, src_ids, tgt_ids, _ = next(iter(iterator))
     except StopIteration:
         print("[benchmark] insufficient data for benchmark batch.")
         return
@@ -636,6 +637,7 @@ def main():
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--batch", type=int, default=64)
+    parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--demo", action="store_true")
     parser.add_argument("--demo-samples", type=int, default=200)
     parser.add_argument("--dataset", choices=["", "wmt16_en_ro", "cnn_dailymail"], default="")
@@ -696,6 +698,7 @@ def main():
         action="store_true",
         help="Move banks/universe to the training device (default: keep on CPU).",
     )
+    parser.add_argument("--profile", "--prof", action="store_true", dest="profile")
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--wandb-project", type=str, default="")
     parser.add_argument("--wandb-run-name", type=str, default="")
@@ -757,6 +760,9 @@ def main():
     if args.benchmark and args.limit is None:
         args.limit = 50000
         print("[benchmark] limiting dataset to 50k pairs for memory safety.")
+    if args.cache_mode == "full" and args.num_workers > 0:
+        print("[Data] cache-mode=full forces num_workers=0 to avoid duplicating cached tensors.")
+        args.num_workers = 0
 
     seed_values = []
     if args.seeds:
@@ -1188,8 +1194,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         train_loss_total = 0.0
         train_token_total = 0
         try:
-            with profiler(True) as prof:
-                for batch_idx_tensor, src_ids, tgt_ids, ref_tokens in text_batch_iterator(
+            with profiler(args.profile) as prof:
+                for batch_idx_tensor, src_ids, tgt_ids, ref_tokens in build_text_dataloader(
                     train_pairs,
                     train_src_stoi,
                     train_tgt_stoi,
@@ -1197,6 +1203,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     max_len,
                     args.batch,
                     shuffle=True,
+                    num_workers=args.num_workers,
                     src_ids=train_src_ids,
                     tgt_ids=train_tgt_ids,
                 ):
@@ -1313,7 +1320,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             val_loss_total = 0.0
             val_token_total = 0
             with torch.no_grad():
-                for batch_idx_tensor, src_ids, tgt_ids, ref_tokens in text_batch_iterator(
+                for batch_idx_tensor, src_ids, tgt_ids, ref_tokens in build_text_dataloader(
                     val_pairs,
                     train_src_stoi,
                     train_tgt_stoi,
@@ -1321,6 +1328,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     max_len,
                     args.batch,
                     shuffle=False,
+                    num_workers=args.num_workers,
                     generator=torch.Generator(device=device).manual_seed(args.eval_seed),
                     worker_init_fn=make_worker_init_fn(args.eval_seed),
                     src_ids=val_src_ids,

@@ -237,6 +237,12 @@ def main():
     ap.add_argument("--no-require-idle-gpu", dest="require_idle_gpu", action="store_false", help="Disable GPU process-idle gating.")
     ap.add_argument("--post-run-grace", type=float, default=2.0, help="Seconds to wait after each job before checking GPU processes.")
     ap.add_argument("--post-run-wait", action="store_true", help="Wait for GPU idle after each job (in addition to warnings).")
+    ap.add_argument(
+        "--cpu-threads",
+        type=int,
+        default=0,
+        help="If >0, set OMP/MKL/OPENBLAS/NUMEXPR threads for child runs.",
+    )
 
     # LM length sweep defaults
     ap.add_argument("--lm-lengths", type=int, nargs="+", default=[256, 512, 1024])
@@ -244,27 +250,38 @@ def main():
     ap.add_argument("--lm-dataset", type=str, default="wikitext103")
     ap.add_argument("--lm-subset-path", type=str, default="subsets/wikitext103_train_10pct.json")
     ap.add_argument("--lm-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--lm-num-workers", type=int, default=0)
 
     # Seq2Seq lengths (optional; default empty)
     ap.add_argument("--seq-lengths", type=int, nargs="+", default=[])
     ap.add_argument("--seq-batch", type=int, default=16)
     ap.add_argument("--seq-dataset", type=str, default="wmt16_en_ro")
     ap.add_argument("--seq-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--seq-num-workers", type=int, default=0)
 
     # Diffusion/text lengths (optional; default empty)
     ap.add_argument("--textdiff-lengths", type=int, nargs="+", default=[])
     ap.add_argument("--textdiff-batch", type=int, default=64)
     ap.add_argument("--textdiff-dataset", type=str, default="wikitext2")
     ap.add_argument("--textdiff-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--textdiff-num-workers", type=int, default=0)
 
     # ViT (no length sweep; uses patch-based)
     ap.add_argument("--vit-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--vit-num-workers", type=int, default=0)
 
     args = ap.parse_args()
     seeds = _parse_seeds(args.seeds, default=2024)
     reps = max(1, int(args.reps))
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.cpu_threads > 0:
+        value = str(args.cpu_threads)
+        os.environ["OMP_NUM_THREADS"] = value
+        os.environ["MKL_NUM_THREADS"] = value
+        os.environ["OPENBLAS_NUM_THREADS"] = value
+        os.environ["NUMEXPR_NUM_THREADS"] = value
 
     if args.precache and args.cache_mode != "none":
         cache_script = "scripts/cache_tokens.py" if args.cache_mode == "tokens" else "scripts/cache_ska_artifacts.py"
@@ -381,6 +398,8 @@ def main():
                         str(seed),
                         "--reps",
                         str(1),
+                        "--num-workers",
+                        str(args.lm_num_workers),
                     ]
                     if args.cache_mode != "none":
                         cmd.extend(["--cache-mode", args.cache_mode])
@@ -465,6 +484,8 @@ def main():
                         str(seed),
                         "--reps",
                         str(1),
+                        "--num-workers",
+                        str(args.seq_num_workers),
                     ]
                     if args.cache_mode != "none":
                         cmd.extend(["--cache-mode", args.cache_mode])
@@ -555,6 +576,8 @@ def main():
                         str(seed),
                         "--reps",
                         str(1),
+                        "--num-workers",
+                        str(args.textdiff_num_workers),
                     ]
                     if args.cache_mode != "none":
                         cmd.extend(["--cache-mode", args.cache_mode])
@@ -639,6 +662,7 @@ def main():
                     "--reps",
                     str(1),
                 ]
+                cmd.extend(["--num-workers", str(args.vit_num_workers)])
                 if mode == "dot_explicit":
                     cmd.extend(["--sdpa-baseline", "--attn-baseline", "explicit", "--dot-naive"])
                 else:

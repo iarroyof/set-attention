@@ -251,6 +251,12 @@ def main():
     ap.add_argument("--no-require-idle-gpu", dest="require_idle_gpu", action="store_false", help="Disable GPU process-idle gating.")
     ap.add_argument("--post-run-grace", type=float, default=2.0, help="Seconds to wait after each job before checking GPU processes.")
     ap.add_argument("--post-run-wait", action="store_true", help="Wait for GPU idle after each job (in addition to warnings).")
+    ap.add_argument(
+        "--cpu-threads",
+        type=int,
+        default=0,
+        help="If >0, set OMP/MKL/OPENBLAS/NUMEXPR threads for child runs.",
+    )
 
     # LM defaults
     ap.add_argument("--lm-dataset", type=str, default="wikitext2")
@@ -259,11 +265,13 @@ def main():
     ap.add_argument("--lm-batch", type=int, default=8)
     ap.add_argument("--lm-seq-len", type=int, default=256)
     ap.add_argument("--lm-seq-stride", type=int, default=256)
+    ap.add_argument("--lm-num-workers", type=int, default=0)
 
     # Seq2Seq defaults
     ap.add_argument("--seq-dataset", type=str, default="wmt16_en_ro")
     ap.add_argument("--seq-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--seq-batch", type=int, default=32)
+    ap.add_argument("--seq-num-workers", type=int, default=0)
 
     # Diffusion text defaults
     ap.add_argument("--textdiff-dataset", type=str, default="wikitext2")
@@ -271,16 +279,25 @@ def main():
     ap.add_argument("--textdiff-batch", type=int, default=64)
     ap.add_argument("--textdiff-seq-len", type=int, default=64)
     ap.add_argument("--textdiff-stride", type=int, default=64)
+    ap.add_argument("--textdiff-num-workers", type=int, default=0)
 
     # ViT defaults
     ap.add_argument("--vit-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--vit-batch", type=int, default=128)
+    ap.add_argument("--vit-num-workers", type=int, default=0)
 
     args = ap.parse_args()
     seeds = _parse_seeds(args.seeds, default=2024)
     reps = max(1, int(args.reps))
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.cpu_threads > 0:
+        value = str(args.cpu_threads)
+        os.environ["OMP_NUM_THREADS"] = value
+        os.environ["MKL_NUM_THREADS"] = value
+        os.environ["OPENBLAS_NUM_THREADS"] = value
+        os.environ["NUMEXPR_NUM_THREADS"] = value
 
     if args.precache and args.cache_mode != "none":
         cache_script = "scripts/cache_tokens.py" if args.cache_mode == "tokens" else "scripts/cache_ska_artifacts.py"
@@ -376,6 +393,8 @@ def main():
                     str(seed),
                     "--reps",
                     str(1),
+                    "--num-workers",
+                    str(args.lm_num_workers),
                 ]
                 if args.lm_subset_path:
                     cmd.extend(["--subset-path", args.lm_subset_path])
@@ -462,6 +481,7 @@ def main():
                     "--reps",
                     str(1),
                 ]
+                cmd.extend(["--num-workers", str(args.seq_num_workers)])
                 if args.cache_mode != "none":
                     cmd.extend(["--cache-mode", args.cache_mode])
                 if args.artifact_cache_root:
@@ -551,6 +571,7 @@ def main():
                     "--reps",
                     str(1),
                 ]
+                cmd.extend(["--num-workers", str(args.textdiff_num_workers)])
                 if args.cache_mode != "none":
                     cmd.extend(["--cache-mode", args.cache_mode])
                 if args.artifact_cache_root:
@@ -634,6 +655,7 @@ def main():
                     "--reps",
                     str(1),
                 ]
+                cmd.extend(["--num-workers", str(args.vit_num_workers)])
                 if args.skip_oom:
                     cmd.append("--skip-oom")
                 if args.profile:

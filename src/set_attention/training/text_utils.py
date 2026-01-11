@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Iterable, Iterator, List, Sequence, Tuple
 
 import torch
+from torch.utils.data import DataLoader, Dataset
 
 from set_attention.experiments.token_sets import build_token_sets_from_texts
 from set_attention.tokenizers.registry import TokenizerProtocol
@@ -115,3 +116,84 @@ def text_batch_iterator(
             tgt_batch = torch.stack([encode_sentence(pairs[i][1], tgt_stoi, max_len) for i in batch_idx], dim=0)
         refs = [tgt_refs[i] for i in batch_idx]
         yield torch.tensor(batch_idx, dtype=torch.long), src_batch, tgt_batch, refs
+
+
+class TextPairDataset(Dataset):
+    def __init__(
+        self,
+        pairs: Sequence[Tuple[str, str]],
+        src_stoi: dict,
+        tgt_stoi: dict,
+        tgt_refs: Sequence[List[str]],
+        max_len: int,
+        src_ids: torch.Tensor | None = None,
+        tgt_ids: torch.Tensor | None = None,
+    ) -> None:
+        self.pairs = pairs
+        self.src_stoi = src_stoi
+        self.tgt_stoi = tgt_stoi
+        self.tgt_refs = tgt_refs
+        self.max_len = max_len
+        self.src_ids = src_ids
+        self.tgt_ids = tgt_ids
+        if src_ids is not None and tgt_ids is not None:
+            if src_ids.size(0) != len(pairs) or tgt_ids.size(0) != len(pairs):
+                raise ValueError("Cached src_ids/tgt_ids must match the number of text pairs.")
+
+    def __len__(self) -> int:
+        return len(self.pairs)
+
+    def __getitem__(self, idx: int):
+        if self.src_ids is not None and self.tgt_ids is not None:
+            src = self.src_ids[idx]
+            tgt = self.tgt_ids[idx]
+        else:
+            src = encode_sentence(self.pairs[idx][0], self.src_stoi, self.max_len)
+            tgt = encode_sentence(self.pairs[idx][1], self.tgt_stoi, self.max_len)
+        return idx, src, tgt, self.tgt_refs[idx]
+
+
+def _collate_text_pairs(batch):
+    idxs, srcs, tgts, refs = zip(*batch)
+    return (
+        torch.tensor(idxs, dtype=torch.long),
+        torch.stack(srcs, dim=0),
+        torch.stack(tgts, dim=0),
+        list(refs),
+    )
+
+
+def build_text_dataloader(
+    pairs: Sequence[Tuple[str, str]],
+    src_stoi: dict,
+    tgt_stoi: dict,
+    tgt_refs: Sequence[List[str]],
+    max_len: int,
+    batch_size: int,
+    shuffle: bool,
+    num_workers: int = 0,
+    generator: torch.Generator | None = None,
+    worker_init_fn=None,
+    src_ids: torch.Tensor | None = None,
+    tgt_ids: torch.Tensor | None = None,
+) -> DataLoader:
+    dataset = TextPairDataset(
+        pairs,
+        src_stoi,
+        tgt_stoi,
+        tgt_refs,
+        max_len,
+        src_ids=src_ids,
+        tgt_ids=tgt_ids,
+    )
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=max(0, int(num_workers)),
+        generator=generator,
+        worker_init_fn=worker_init_fn,
+        collate_fn=_collate_text_pairs,
+        drop_last=False,
+        persistent_workers=False,
+    )

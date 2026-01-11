@@ -13,6 +13,7 @@ from typing import Iterator, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
 
 from set_attention.utils.bench_skip import should_skip_dense, should_skip_ska
 from set_attention.data.hf_cache import ensure_hf_cache
@@ -690,25 +691,44 @@ def run_diffusion_benchmark(
     )
 
 
-def tensor_batch_iterator(
+class TensorBatchDataset(Dataset):
+    def __init__(self, data: torch.Tensor) -> None:
+        self.data = data
+
+    def __len__(self) -> int:
+        return self.data.size(0)
+
+    def __getitem__(self, idx: int):
+        return idx, self.data[idx]
+
+
+def _collate_tensor_batch(batch):
+    idxs, rows = zip(*batch)
+    return torch.tensor(idxs, dtype=torch.long), torch.stack(rows, dim=0)
+
+
+def build_tensor_dataloader(
     data: torch.Tensor,
     batch_size: int,
     shuffle: bool,
+    num_workers: int = 0,
     generator: Optional[torch.Generator] = None,
     worker_init_fn=None,
-) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
+) -> DataLoader:
     if data.numel() == 0:
-        return
-    if shuffle:
-        perm = torch.randperm(data.size(0), generator=generator)
-        indices = perm
-    else:
-        indices = torch.arange(data.size(0), dtype=torch.long)
-    if worker_init_fn:
-        worker_init_fn(0)
-    for start in range(0, data.size(0), batch_size):
-        batch_idx = indices[start : start + batch_size]
-        yield batch_idx.clone(), data[batch_idx]
+        return DataLoader([])
+    dataset = TensorBatchDataset(data)
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=max(0, int(num_workers)),
+        generator=generator,
+        worker_init_fn=worker_init_fn,
+        collate_fn=_collate_tensor_batch,
+        drop_last=False,
+        persistent_workers=False,
+    )
 
 
 def main():
@@ -740,6 +760,7 @@ def main():
     )
     ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
     ap.add_argument("--batch", type=int, default=64)
+    ap.add_argument("--num-workers", type=int, default=0)
     ap.add_argument("--samples", type=int, default=None, help="Override number of synthetic sequences.")
     ap.add_argument("--data-seq-len", type=int, default=None, help="Override synthetic sequence length.")
     ap.add_argument("--data-dim", type=int, default=None, help="Override synthetic feature dimensionality.")
@@ -825,6 +846,9 @@ def main():
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), args.d_model, args.nhead)
+    if args.cache_mode == "full" and args.num_workers > 0:
+        print("[Data] cache-mode=full forces num_workers=0 to avoid duplicating cached tensors.")
+        args.num_workers = 0
     seed_values: List[int] = []
     if args.seeds:
         for part in args.seeds.replace(",", " ").split():
@@ -1219,10 +1243,11 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         train_gen = torch.Generator().manual_seed(seed + epoch)
         try:
             with profiler(args.profile) as prof:
-                for batch_idx, xb in tensor_batch_iterator(
+                for batch_idx, xb in build_tensor_dataloader(
                     train_data,
                     data_cfg.batch_size,
                     shuffle=True,
+                    num_workers=args.num_workers,
                     generator=train_gen,
                     worker_init_fn=None,
                 ):
@@ -1252,10 +1277,11 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 text_refs_all: List[List[str]] = []
                 text_hyps_all: List[List[str]] = []
                 val_gen = torch.Generator().manual_seed(args.eval_seed)
-                for batch_idx, xb in tensor_batch_iterator(
+                for batch_idx, xb in build_tensor_dataloader(
                     val_data,
                     data_cfg.batch_size,
                     shuffle=False,
+                    num_workers=args.num_workers,
                     generator=val_gen,
                     worker_init_fn=make_worker_init_fn(args.eval_seed),
                 ):

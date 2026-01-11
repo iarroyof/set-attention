@@ -17,6 +17,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader, IterableDataset
 
 from common.repro import set_seed
 
@@ -61,7 +62,7 @@ from set_attention.utils.profiling import profiler
 from set_attention.utils.sample_logging import format_text_samples
 from set_attention.utils.wandb import init_wandb
 from set_attention.experiments.nlp_eval import corpus_bleu
-from set_attention.training.text_utils import ids_to_tokens, text_batch_iterator
+from set_attention.training.text_utils import build_text_dataloader, ids_to_tokens
 
 
 def make_char_data(n=2000, seq_len=64, vocab=32, seed=3):
@@ -280,6 +281,16 @@ class WikitextStreamingData:
             return next(iterator)
         except StopIteration:
             return None
+
+
+class StreamingBatchDataset(IterableDataset):
+    def __init__(self, streaming_data: WikitextStreamingData, split: str, batch_size: int) -> None:
+        self.streaming_data = streaming_data
+        self.split = split
+        self.batch_size = batch_size
+
+    def __iter__(self):
+        yield from self.streaming_data.batch_iterator(self.split, self.batch_size)
 
 
 def save_vocab_file(path: Path, itos: dict) -> None:
@@ -935,6 +946,7 @@ def main():
     )
     ap.add_argument("--seq-len", type=int, default=128)
     ap.add_argument("--seq-stride", type=int, default=128)
+    ap.add_argument("--num-workers", type=int, default=0)
     ap.add_argument("--data-root", type=str, default="")
     ap.add_argument("--hf-cache-dir", type=str, default="")
     ap.add_argument("--cache-mode", choices=["none", "tokens", "full"], default="none")
@@ -961,6 +973,9 @@ def main():
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), args.d_model, args.nhead)
+    if args.cache_mode == "full" and args.num_workers > 0:
+        print("[Data] cache-mode=full forces num_workers=0 to avoid duplicating cached tensors.")
+        args.num_workers = 0
     seed_values = []
     if args.seeds:
         for part in args.seeds.replace(",", " ").split():
@@ -1544,9 +1559,19 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         total_tokens = 0
         if streaming_data is not None and args.dataset:
             split = "train" if train else "validation"
-            iterator = streaming_data.batch_iterator(split, args.batch)
+            if args.num_workers > 0:
+                print("[Data] streaming mode forces num_workers=0 for deterministic iteration.")
+            stream_dataset = StreamingBatchDataset(streaming_data, split, args.batch)
+            iterator = DataLoader(
+                stream_dataset,
+                batch_size=1,
+                shuffle=False,
+                num_workers=0,
+                collate_fn=lambda batch: batch[0],
+                persistent_workers=False,
+            )
         else:
-            iterator = text_batch_iterator(
+            iterator = build_text_dataloader(
                 train_text_pairs if train else val_text_pairs,
                 stoi,
                 stoi,
@@ -1554,6 +1579,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 max_len,
                 args.batch,
                 shuffle=train,
+                num_workers=args.num_workers,
                 generator=(torch.Generator(device=device).manual_seed(args.eval_seed) if not train else None),
                 worker_init_fn=(make_worker_init_fn(args.eval_seed) if not train else None),
                 src_ids=(train_X if train else val_X),
