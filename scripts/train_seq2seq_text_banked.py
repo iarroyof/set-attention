@@ -1092,7 +1092,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
 
     device = torch.device(args.device)
     free_gb_at_start = _gpu_free_gb(device)
-    V = tokenizer.vocab_size()
+    if train_src_stoi and train_tgt_stoi:
+        V = max(len(train_src_stoi), len(train_tgt_stoi))
+    else:
+        V = tokenizer.vocab_size()
 
     atom_emb = adapter = phi_snapshot = None
 
