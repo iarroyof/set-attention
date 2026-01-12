@@ -28,10 +28,13 @@ def encode_sentence(text: str, stoi: dict, max_len: int) -> torch.Tensor:
     return torch.tensor(ids[:max_len], dtype=torch.long)
 
 
-def ids_to_tokens(ids: torch.Tensor, itos: dict) -> List[str]:
+def ids_to_tokens(ids: torch.Tensor, itos) -> List[str]:
     tokens: List[str] = []
     for idx in ids.tolist():
-        tok = itos.get(int(idx), "<unk>")
+        if hasattr(itos, "get"):
+            tok = itos.get(int(idx), "<unk>")
+        else:
+            tok = itos[int(idx)] if int(idx) < len(itos) else "<unk>"
         if tok in SPECIAL_TOKENS:
             continue
         tokens.append(tok)
@@ -121,36 +124,50 @@ def text_batch_iterator(
 class TextPairDataset(Dataset):
     def __init__(
         self,
-        pairs: Sequence[Tuple[str, str]],
+        pairs: Sequence[Tuple[str, str]] | None,
         src_stoi: dict,
         tgt_stoi: dict,
-        tgt_refs: Sequence[List[str]],
+        tgt_refs: Sequence[List[str]] | None,
         max_len: int,
+        tgt_itos: dict | None = None,
         src_ids: torch.Tensor | None = None,
         tgt_ids: torch.Tensor | None = None,
     ) -> None:
-        self.pairs = pairs
+        self.pairs = pairs or []
         self.src_stoi = src_stoi
         self.tgt_stoi = tgt_stoi
         self.tgt_refs = tgt_refs
         self.max_len = max_len
+        self.tgt_itos = tgt_itos
         self.src_ids = src_ids
         self.tgt_ids = tgt_ids
         if src_ids is not None and tgt_ids is not None:
-            if src_ids.size(0) != len(pairs) or tgt_ids.size(0) != len(pairs):
+            if self.pairs and (src_ids.size(0) != len(self.pairs) or tgt_ids.size(0) != len(self.pairs)):
                 raise ValueError("Cached src_ids/tgt_ids must match the number of text pairs.")
 
     def __len__(self) -> int:
+        if self.src_ids is not None and self.tgt_ids is not None:
+            return int(self.src_ids.size(0))
         return len(self.pairs)
 
     def __getitem__(self, idx: int):
         if self.src_ids is not None and self.tgt_ids is not None:
             src = self.src_ids[idx]
             tgt = self.tgt_ids[idx]
+            if self.tgt_refs is not None:
+                refs = self.tgt_refs[idx]
+            elif self.tgt_itos is not None:
+                refs = ids_to_tokens(tgt, self.tgt_itos)
+            else:
+                refs = []
         else:
             src = encode_sentence(self.pairs[idx][0], self.src_stoi, self.max_len)
             tgt = encode_sentence(self.pairs[idx][1], self.tgt_stoi, self.max_len)
-        return idx, src, tgt, self.tgt_refs[idx]
+            if self.tgt_refs is not None:
+                refs = self.tgt_refs[idx]
+            else:
+                refs = self.pairs[idx][1].split()
+        return idx, src, tgt, refs
 
 
 def _collate_text_pairs(batch):
@@ -164,10 +181,10 @@ def _collate_text_pairs(batch):
 
 
 def build_text_dataloader(
-    pairs: Sequence[Tuple[str, str]],
+    pairs: Sequence[Tuple[str, str]] | None,
     src_stoi: dict,
     tgt_stoi: dict,
-    tgt_refs: Sequence[List[str]],
+    tgt_refs: Sequence[List[str]] | None,
     max_len: int,
     batch_size: int,
     shuffle: bool,
@@ -176,6 +193,7 @@ def build_text_dataloader(
     worker_init_fn=None,
     src_ids: torch.Tensor | None = None,
     tgt_ids: torch.Tensor | None = None,
+    tgt_itos: dict | None = None,
 ) -> DataLoader:
     dataset = TextPairDataset(
         pairs,
@@ -183,6 +201,7 @@ def build_text_dataloader(
         tgt_stoi,
         tgt_refs,
         max_len,
+        tgt_itos=tgt_itos,
         src_ids=src_ids,
         tgt_ids=tgt_ids,
     )

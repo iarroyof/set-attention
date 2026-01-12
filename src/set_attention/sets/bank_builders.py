@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Tuple
+from typing import List
 
 import torch
 
@@ -48,27 +48,44 @@ def build_windowed_bank_from_texts(
 
 
 def build_windowed_bank_from_ids(
-    sequences: List[torch.Tensor],
+    sequences: torch.Tensor | List[torch.Tensor],
     window: int = 8,
     stride: int = 4,
+    pad_id: int | None = None,
 ) -> BankedSetBatch:
-    """Construct a banked CSR from sequences of integer IDs (1-D tensors)."""
+    """Construct a banked CSR from token ID sequences.
+
+    Supports either a list of 1-D tensors or a 2-D tensor [N, L].
+    When pad_id is provided, PAD tokens are ignored.
+    """
     all_vals: List[torch.Tensor] = []
     set_offsets = [0]
     seq_offsets = [0]
-    for seq in sequences:
+    step = max(1, stride)
+
+    if isinstance(sequences, torch.Tensor):
+        if sequences.ndim == 1:
+            seq_iter = [sequences]
+        elif sequences.ndim == 2:
+            seq_iter = [row for row in sequences]
+        else:
+            raise ValueError("sequences tensor must be 1-D or 2-D.")
+    else:
+        seq_iter = sequences
+
+    for seq in seq_iter:
         seq = seq.to(torch.long)
+        if pad_id is not None:
+            seq = seq[seq != pad_id]
         L = seq.numel()
         sets_this_seq = 0
         if L == 0:
             set_offsets.append(set_offsets[-1])
             seq_offsets.append(seq_offsets[-1] + 1)
             continue
-        step = max(1, stride)
-        if window <= 0:
-            window = L
-        for start in range(0, max(1, L - window + 1), step):
-            end = min(L, start + window)
+        win = window if window > 0 else L
+        for start in range(0, max(1, L - win + 1), step):
+            end = min(L, start + win)
             ids = torch.unique(seq[start:end])
             if ids.numel() == 0:
                 continue
@@ -80,6 +97,7 @@ def build_windowed_bank_from_ids(
             set_offsets.append(set_offsets[-1])
             sets_this_seq = 1
         seq_offsets.append(seq_offsets[-1] + sets_this_seq)
+
     if all_vals:
         values = torch.cat(all_vals, dim=0)
     else:

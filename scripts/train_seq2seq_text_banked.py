@@ -434,6 +434,7 @@ def run_seq2seq_benchmark(
     train_src_stoi,
     train_tgt_stoi,
     train_ref_tokens,
+    train_tgt_itos,
     max_len,
     opt,
     device,
@@ -460,6 +461,7 @@ def run_seq2seq_benchmark(
         worker_init_fn=make_worker_init_fn(args.eval_seed),
         src_ids=train_src_ids,
         tgt_ids=train_tgt_ids,
+        tgt_itos=train_tgt_itos,
     )
     try:
         batch_idx_tensor, src_ids, tgt_ids, _ = next(iter(iterator))
@@ -961,10 +963,6 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         if tokens_path.exists() and not args.overwrite_cache:
             assert_meta_compatible(token_root, token_spec)
             payload = _load_seq_tokens(tokens_path)
-            train_pairs = payload.get("train_pairs", train_pairs)
-            val_pairs = payload.get("val_pairs", val_pairs)
-            train_ref_tokens = payload.get("train_ref_tokens", [t.split() for _, t in train_pairs])
-            val_ref_tokens = payload.get("val_ref_tokens", [t.split() for _, t in val_pairs])
             train_src_ids = payload.get("train_src_ids")
             train_tgt_ids = payload.get("train_tgt_ids")
             val_src_ids = payload.get("val_src_ids")
@@ -978,20 +976,20 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 train_tgt_stoi = {tok: idx for idx, tok in enumerate(tgt_itos_list)}
                 train_tgt_itos = {idx: tok for idx, tok in enumerate(tgt_itos_list)}
             max_len = int(payload.get("max_len", max_len))
-            src_texts = [s for (s, _) in train_pairs]
-            tgt_texts = [t for (_, t) in train_pairs]
-            val_src_texts = [s for (s, _) in val_pairs]
-            val_tgt_texts = [t for (_, t) in val_pairs]
+            train_pairs = None
+            val_pairs = None
+            train_ref_tokens = None
+            val_ref_tokens = None
+            src_texts = None
+            tgt_texts = None
+            val_src_texts = None
+            val_tgt_texts = None
             print(f"[Cache] Loaded seq2seq tokens from {tokens_path}")
         else:
             train_src_ids, train_tgt_ids = _encode_pairs_to_ids(train_pairs, train_src_stoi, train_tgt_stoi, max_len)
             if val_pairs:
                 val_src_ids, val_tgt_ids = _encode_pairs_to_ids(val_pairs, train_src_stoi, train_tgt_stoi, max_len)
             payload = {
-                "train_pairs": train_pairs,
-                "val_pairs": val_pairs,
-                "train_ref_tokens": train_ref_tokens,
-                "val_ref_tokens": val_ref_tokens,
                 "train_src_ids": train_src_ids,
                 "train_tgt_ids": train_tgt_ids,
                 "val_src_ids": val_src_ids,
@@ -999,10 +997,22 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "src_itos": [train_src_itos[i] for i in range(len(train_src_itos))],
                 "tgt_itos": [train_tgt_itos[i] for i in range(len(train_tgt_itos))],
                 "max_len": max_len,
+                "dataset_id": dataset_id,
+                "limit": args.limit,
+                "tokenizer_type": args.tokenizer_type,
             }
             _save_seq_tokens(tokens_path, payload)
             write_meta(token_root, token_spec)
             print(f"[Cache] Saved seq2seq tokens to {tokens_path}")
+            train_pairs = None
+            val_pairs = None
+            train_ref_tokens = None
+            val_ref_tokens = None
+            src_texts = None
+            tgt_texts = None
+            val_src_texts = None
+            val_tgt_texts = None
+            gc.collect()
 
     if args.cache_only and cache_mode in ("tokens", "full") and (args.sdpa_baseline or cache_mode == "tokens"):
         print("[Cache] cache-only complete (tokens).")
@@ -1057,11 +1067,28 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 print(f"[Cache] Loaded seq2seq bank+routing from {bank_root}")
 
         if not loaded_bank_cache:
-            src_bank = build_windowed_bank_from_texts(tokenizer, src_texts, window=args.window, stride=args.stride)
-            tgt_bank = build_windowed_bank_from_texts(tokenizer, tgt_texts, window=args.window, stride=args.stride)
-            if has_val:
-                val_src_bank = build_windowed_bank_from_texts(tokenizer, val_src_texts, window=args.window, stride=args.stride)
-                val_tgt_bank = build_windowed_bank_from_texts(tokenizer, val_tgt_texts, window=args.window, stride=args.stride)
+            pad_id_src = train_src_stoi.get("<pad>", 0)
+            pad_id_tgt = train_tgt_stoi.get("<pad>", 0)
+            if train_src_ids is not None and train_tgt_ids is not None:
+                src_bank = build_windowed_bank_from_ids(
+                    train_src_ids, window=args.window, stride=args.stride, pad_id=pad_id_src
+                )
+                tgt_bank = build_windowed_bank_from_ids(
+                    train_tgt_ids, window=args.window, stride=args.stride, pad_id=pad_id_tgt
+                )
+                if has_val and val_src_ids is not None and val_tgt_ids is not None:
+                    val_src_bank = build_windowed_bank_from_ids(
+                        val_src_ids, window=args.window, stride=args.stride, pad_id=pad_id_src
+                    )
+                    val_tgt_bank = build_windowed_bank_from_ids(
+                        val_tgt_ids, window=args.window, stride=args.stride, pad_id=pad_id_tgt
+                    )
+            else:
+                src_bank = build_windowed_bank_from_texts(tokenizer, src_texts, window=args.window, stride=args.stride)
+                tgt_bank = build_windowed_bank_from_texts(tokenizer, tgt_texts, window=args.window, stride=args.stride)
+                if has_val:
+                    val_src_bank = build_windowed_bank_from_texts(tokenizer, val_src_texts, window=args.window, stride=args.stride)
+                    val_tgt_bank = build_windowed_bank_from_texts(tokenizer, val_tgt_texts, window=args.window, stride=args.stride)
 
     device = torch.device(args.device)
     free_gb_at_start = _gpu_free_gb(device)
@@ -1200,6 +1227,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             train_src_stoi,
             train_tgt_stoi,
             train_ref_tokens,
+            train_tgt_itos,
             max_len,
             opt,
             device,
@@ -1240,6 +1268,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     num_workers=args.num_workers,
                     src_ids=train_src_ids,
                     tgt_ids=train_tgt_ids,
+                    tgt_itos=train_tgt_itos,
                 ):
                     batch_idx_tensor = batch_idx_tensor.to(device)
                     src_ids = src_ids.to(device, non_blocking=True)
@@ -1367,6 +1396,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     worker_init_fn=make_worker_init_fn(args.eval_seed),
                     src_ids=val_src_ids,
                     tgt_ids=val_tgt_ids,
+                    tgt_itos=train_tgt_itos,
                 ):
                     batch_idx_tensor = batch_idx_tensor.to(device)
                     src_ids = src_ids.to(device, non_blocking=True)
@@ -1390,7 +1420,11 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     val_refs.extend(ref_tokens)
                     val_hyps.extend([ids_to_tokens(row, train_tgt_itos) for row in preds.detach().cpu()])
                     batch_indices = batch_idx_tensor.detach().cpu().tolist()
-                    val_src.extend(val_pairs[i][0] for i in batch_indices)
+                    if val_pairs:
+                        val_src.extend(val_pairs[i][0] for i in batch_indices)
+                    elif val_src_ids is not None:
+                        for i in batch_indices:
+                            val_src.append(" ".join(ids_to_tokens(val_src_ids[i], train_src_itos)))
 
             v_loss = val_loss_total / max(1, val_token_total)
             v_ppl = math.exp(min(v_loss, 20.0))
