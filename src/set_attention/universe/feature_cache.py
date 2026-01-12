@@ -90,18 +90,29 @@ class SetFeatureCache:
         if self.seq_offsets is None:
             raise RuntimeError("seq_offsets is not available for this cache.")
         device = batch_indices.device
-        idx_rows = []
-        ptrs = [0]
-        total = 0
-        for b in batch_indices.tolist():
-            a = int(self.seq_offsets[b].item())
-            c = int(self.seq_offsets[b + 1].item())
-            idx_rows.append(torch.arange(a, c, device=device, dtype=torch.long))
-            total += c - a
-            ptrs.append(total)
-        set_idx = torch.cat(idx_rows, dim=0) if idx_rows else torch.empty(0, dtype=torch.long, device=device)
-        ptr_tensor = torch.tensor(ptrs, dtype=torch.long, device=device)
-        return set_idx, ptr_tensor
+        seq_offsets = self.seq_offsets
+        if seq_offsets.device != device:
+            seq_offsets = seq_offsets.to(device)
+        batch_indices = batch_indices.to(device)
+        if batch_indices.numel() == 0:
+            return (
+                torch.empty(0, dtype=torch.long, device=device),
+                torch.zeros(1, dtype=torch.long, device=device),
+            )
+        starts = seq_offsets.index_select(0, batch_indices)
+        ends = seq_offsets.index_select(0, batch_indices + 1)
+        counts = (ends - starts).to(torch.long)
+        ptrs = torch.zeros(counts.numel() + 1, dtype=torch.long, device=device)
+        ptrs[1:] = torch.cumsum(counts, dim=0)
+        total = int(ptrs[-1].item()) if ptrs.numel() > 0 else 0
+        if total == 0:
+            return torch.empty(0, dtype=torch.long, device=device), ptrs
+        prefix = ptrs[:-1]
+        base = torch.repeat_interleave(starts, counts)
+        local = torch.arange(total, device=device, dtype=base.dtype)
+        local = local - torch.repeat_interleave(prefix, counts)
+        set_idx = base + local
+        return set_idx, ptrs
 
     def gather_flat(
         self,
@@ -114,22 +125,26 @@ class SetFeatureCache:
         if self.sig_sets is None:
             raise RuntimeError("MinHash signatures not built; call build_minhash() first.")
 
-        seq_device = self.seq_offsets.device
-        batch_indices_seq = batch_indices.to(seq_device)
-        set_idx, ptrs = self.gather_sequence_sets(batch_indices_seq)
-        ptrs = ptrs.to(phi_cur.device)
+        device = phi_cur.device
+        batch_indices_dev = batch_indices.to(device)
+        set_idx, ptrs = self.gather_sequence_sets(batch_indices_dev)
         if set_idx.numel() == 0:
             atom_dim = phi_cur.shape[1]
             k = int(self.sig_sets.shape[1])
-            empty_phi = torch.zeros(0, atom_dim, device=phi_cur.device, dtype=phi_cur.dtype)
-            empty_sig = torch.zeros(0, k, dtype=self.sig_sets.dtype, device=phi_cur.device)
-            empty_size = torch.zeros(0, dtype=self.size_sets.dtype, device=phi_cur.device)
+            empty_phi = torch.zeros(0, atom_dim, device=device, dtype=phi_cur.dtype)
+            empty_sig = torch.zeros(0, k, dtype=self.sig_sets.dtype, device=device)
+            empty_size = torch.zeros(0, dtype=self.size_sets.dtype, device=device)
             return empty_phi, empty_sig, empty_size, ptrs
 
-        set_idx_dev = set_idx.to(phi_cur.device)
-        phi_sets = self.compute_phi_for_indices(set_idx_dev, phi_cur)
-        sig_sets = self.sig_sets.index_select(0, set_idx).to(phi_cur.device)
-        size_sets = self.size_sets.index_select(0, set_idx).to(phi_cur.device)
+        phi_sets = self.compute_phi_for_indices(set_idx, phi_cur)
+        sig_sets = self.sig_sets
+        size_sets = self.size_sets
+        if sig_sets.device != device:
+            sig_sets = sig_sets.to(device)
+        if size_sets.device != device:
+            size_sets = size_sets.to(device)
+        sig_sets = sig_sets.index_select(0, set_idx)
+        size_sets = size_sets.index_select(0, set_idx)
         return phi_sets, sig_sets, size_sets, ptrs
 
     def compute_phi_for_indices(self, set_idx: torch.LongTensor, phi_cur: torch.Tensor) -> torch.Tensor:
@@ -141,26 +156,37 @@ class SetFeatureCache:
             raise ValueError("phi_cur row count must match universe size.")
 
         device = phi_cur.device
-        elem_ids = self._elem_set_ids.to(device)
-        atom_pos = self._values_pos.to(device)
+        set_offsets = self.set_offsets
+        if set_offsets.device != device:
+            set_offsets = set_offsets.to(device)
+        values_pos = self._values_pos
+        if values_pos.device != device:
+            values_pos = values_pos.to(device)
+        size_sets = self.size_sets
+        if size_sets.device != device:
+            size_sets = size_sets.to(device)
 
-        mapping = torch.full((self.num_sets(),), -1, dtype=torch.long, device=device)
-        mapping.index_copy_(0, set_idx.to(device), torch.arange(nsel, device=device, dtype=torch.long))
+        starts = set_offsets.index_select(0, set_idx)
+        ends = set_offsets.index_select(0, set_idx + 1)
+        sizes = (ends - starts).to(torch.long)
+        total = int(sizes.sum().item()) if sizes.numel() > 0 else 0
 
-        local_rows = mapping.index_select(0, elem_ids)
-        mask = local_rows >= 0
         out = torch.zeros(nsel, phi_cur.shape[1], device=device, dtype=phi_cur.dtype)
-        if mask.any():
-            row_ids = local_rows[mask]
-            atom_rows = atom_pos[mask]
-            out.index_add_(0, row_ids, phi_cur.index_select(0, atom_rows))
-        # Normalize by set size to keep magnitudes comparable across windows.
-        size_device = self.size_sets.device
-        sizes = self.size_sets.index_select(0, set_idx.to(size_device)).to(
-            phi_cur.device, dtype=phi_cur.dtype
-        )
-        sizes = sizes.clamp_min(1).unsqueeze(1)
-        out = out / sizes
+        if total == 0:
+            sizes_norm = sizes.clamp_min(1).to(phi_cur.dtype).unsqueeze(1)
+            return out / sizes_norm
+
+        prefix = torch.cumsum(sizes, dim=0) - sizes
+        base = torch.repeat_interleave(starts, sizes)
+        local = torch.arange(total, device=device, dtype=base.dtype)
+        local = local - torch.repeat_interleave(prefix, sizes)
+        flat_vals_idx = base + local
+        atom_pos = values_pos.index_select(0, flat_vals_idx)
+
+        row_ids = torch.repeat_interleave(torch.arange(nsel, device=device, dtype=torch.long), sizes)
+        out.index_add_(0, row_ids, phi_cur.index_select(0, atom_pos))
+        sizes_norm = sizes.clamp_min(1).to(phi_cur.dtype).unsqueeze(1)
+        out = out / sizes_norm
         return out
 
     def gather_padded(

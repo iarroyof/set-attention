@@ -56,7 +56,7 @@ def build_windowed_bank_from_ids(
     """Construct a banked CSR from token ID sequences.
 
     Supports either a list of 1-D tensors or a 2-D tensor [N, L].
-    When pad_id is provided, PAD tokens are ignored.
+    When pad_id is provided, PAD tokens are ignored per window.
     """
     all_vals: List[torch.Tensor] = []
     set_offsets = [0]
@@ -76,8 +76,16 @@ def build_windowed_bank_from_ids(
     for seq in seq_iter:
         seq = seq.to(torch.long)
         if pad_id is not None:
-            seq = seq[seq != pad_id]
-        L = seq.numel()
+            keep = (seq != pad_id).nonzero(as_tuple=False)
+            if keep.numel() == 0:
+                L = 0
+                seq = seq[:0]
+            else:
+                last = int(keep[-1].item())
+                seq = seq[: last + 1]
+                L = seq.numel()
+        else:
+            L = seq.numel()
         sets_this_seq = 0
         if L == 0:
             set_offsets.append(set_offsets[-1])
@@ -86,10 +94,9 @@ def build_windowed_bank_from_ids(
         win = window if window > 0 else L
         for start in range(0, max(1, L - win + 1), step):
             end = min(L, start + win)
-            ids = torch.unique(seq[start:end])
-            if ids.numel() == 0:
-                continue
-            ids, _ = torch.sort(ids)
+            ids = seq[start:end]
+            if pad_id is not None:
+                ids = ids[ids != pad_id]
             all_vals.append(ids)
             set_offsets.append(set_offsets[-1] + ids.numel())
             sets_this_seq += 1
