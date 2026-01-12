@@ -52,7 +52,7 @@ from set_attention.data.ska_artifacts import (
     save_bank_pack,
     save_routing_pack,
 )
-from set_attention.sets.bank_builders import build_windowed_bank_from_texts
+from set_attention.sets.bank_builders import build_windowed_bank_from_ids, build_windowed_bank_from_texts
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
 from set_attention.heads.banked_attention import SetBankAttention
 from set_attention.heads.token_router import TokenSetRouter
