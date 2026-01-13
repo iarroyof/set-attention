@@ -899,7 +899,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     tokenizer_config = _normalize_tokenizer_config(tokenizer_config)
 
     dataset_id = args.dataset or "local"
-    fingerprint = tokenizer_fingerprint(
+    tokenizer_fp = tokenizer_fingerprint(
         args.tokenizer_type,
         tokenizer_config,
         dataset_id,
@@ -910,10 +910,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     )
     if not tokenizer_dir:
         hf_root = Path(os.environ.get("HF_HOME") or str(cache_dir.parent))
-        tokenizer_dir = str(default_tokenizer_dir(hf_root, dataset_id, args.tokenizer_type, fingerprint))
+        tokenizer_dir = str(default_tokenizer_dir(hf_root, dataset_id, args.tokenizer_type, tokenizer_fp))
 
     expected_meta = {
-        "fingerprint": fingerprint,
+        "fingerprint": tokenizer_fp,
         "dataset": dataset_id,
         "tokenizer_type": args.tokenizer_type,
         "tokenizer_config": tokenizer_config,
