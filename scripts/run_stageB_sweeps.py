@@ -371,6 +371,8 @@ def main():
                 args.post_run_grace,
                 args.post_run_wait,
             )
+        print("[sweep] precache complete; exiting.")
+        return
 
     # LM sweeps
     for L in args.lm_lengths:
@@ -433,6 +435,8 @@ def main():
                                 "4",
                             ]
                         )
+                    if "--precompute-bank" in cmd:
+                        raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
                     rc = _run(
                         cmd,
                         args.dry_run,
@@ -519,6 +523,8 @@ def main():
                                 "4",
                             ]
                         )
+                    if "--precompute-bank" in cmd:
+                        raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
                     rc = _run(
                         cmd,
                         args.dry_run,
@@ -611,6 +617,8 @@ def main():
                                 "4",
                             ]
                         )
+                    if "--precompute-bank" in cmd:
+                        raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
                     rc = _run(
                         cmd,
                         args.dry_run,
@@ -689,6 +697,8 @@ def main():
                             "0",
                         ]
                     )
+                if "--precompute-bank" in cmd:
+                    raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
                 rc = _run(
                     cmd,
                     args.dry_run,

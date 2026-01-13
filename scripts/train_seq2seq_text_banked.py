@@ -40,6 +40,7 @@ from set_attention.data.artifact_cache import (
     assert_meta_compatible,
     file_signature,
     fingerprint,
+    require_cached_artifacts,
     resolve_hf_root,
     write_meta,
 )
@@ -834,6 +835,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     cache_mode = args.cache_mode
     if cache_mode == "full" and args.adapter_rank > 0:
         raise ValueError("--cache-mode full is only supported when --adapter-rank 0.")
+    if args.precompute_bank and cache_mode != "full":
+        raise RuntimeError("--precompute-bank requires --cache-mode full.")
+    if args.precompute_bank and args.benchmark:
+        raise RuntimeError("--precompute-bank must not be used in benchmark mode.")
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {
@@ -1039,6 +1044,14 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "r_src_val": bank_root / "routing_src_val.pt",
                 "r_tgt_val": bank_root / "routing_tgt_val.pt",
             }
+            if not args.precompute_bank:
+                if args.overwrite_cache:
+                    raise RuntimeError("--overwrite-cache requires --precompute-bank in cache-mode full.")
+                require_cached_artifacts(
+                    bank_root,
+                    list(paths.values()),
+                    "seq2seq",
+                )
             if all(p.exists() for p in paths.values()) and not args.overwrite_cache:
                 assert_meta_compatible(bank_root, bank_spec)
                 src_pack = load_bank_pack(paths["src_train"])
@@ -1065,6 +1078,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     val_cache_tgt = cache_from_packs(universe, val_tgt_pack, r_tgt_val)
                 loaded_bank_cache = True
                 print(f"[Cache] Loaded seq2seq bank+routing from {bank_root}")
+                bank_fp = bank_root.name
+                print(f"[CacheReuse] bank+routing loaded | fp={bank_fp} | task=seq2seq")
 
         if not loaded_bank_cache:
             pad_id_src = train_src_stoi.get("<pad>", 0)
@@ -1168,6 +1183,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     )
                 write_meta(bank_root, bank_spec)
                 print(f"[Cache] Saved seq2seq bank+routing to {bank_root}")
+                bank_fp = bank_root.name
+                print(f"[CacheCreate] bank+routing created | fp={bank_fp} | task=seq2seq")
         if args.precompute_bank:
             universe = universe.to(device)
             cache_src = cache_src.to(device)

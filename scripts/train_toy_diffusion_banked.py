@@ -23,6 +23,7 @@ from set_attention.data.artifact_cache import (
     assert_meta_compatible,
     file_signature,
     fingerprint,
+    require_cached_artifacts,
     resolve_hf_root,
     write_meta,
 )
@@ -916,6 +917,10 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
     cache_mode = args.cache_mode
     if cache_mode == "full" and args.adapter_rank > 0:
         raise ValueError("--cache-mode full is only supported when --adapter-rank 0.")
+    if args.precompute_bank and cache_mode != "full":
+        raise RuntimeError("--precompute-bank requires --cache-mode full.")
+    if args.precompute_bank and args.benchmark:
+        raise RuntimeError("--precompute-bank must not be used in benchmark mode.")
     torch.backends.cudnn.benchmark = True
     set_seed(seed, deterministic=args.deterministic, benchmark_mode=args.benchmark_mode)
     print(f"[Run] seed={seed} rep={rep} uid={run_uid}")
@@ -1139,6 +1144,14 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
             bank_val_path = bank_root / "bank_val.pt"
             routing_train_path = bank_root / "routing_train.pt"
             routing_val_path = bank_root / "routing_val.pt"
+            if not args.precompute_bank:
+                if args.overwrite_cache:
+                    raise RuntimeError("--overwrite-cache requires --precompute-bank in cache-mode full.")
+                require_cached_artifacts(
+                    bank_root,
+                    [bank_train_path, bank_val_path, routing_train_path, routing_val_path],
+                    "textdiff",
+                )
             if (
                 bank_train_path.exists()
                 and bank_val_path.exists()
@@ -1158,6 +1171,8 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 val_cache = cache_from_packs(universe, val_pack, val_route)
                 loaded_bank_cache = True
                 print(f"[Cache] Loaded diffusion bank+routing from {bank_root}")
+                bank_fp = bank_root.name
+                print(f"[CacheReuse] bank+routing loaded | fp={bank_fp} | task=textdiff")
 
         if not loaded_bank_cache:
             if text_mode and text_train_ids is not None and text_val_ids is not None:
@@ -1206,6 +1221,8 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 )
                 write_meta(bank_root, bank_spec)
                 print(f"[Cache] Saved diffusion bank+routing to {bank_root}")
+                bank_fp = bank_root.name
+                print(f"[CacheCreate] bank+routing created | fp={bank_fp} | task=textdiff")
 
         if text_mode and text_vocab_size is not None:
             vocab_size = text_vocab_size

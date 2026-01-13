@@ -66,6 +66,7 @@ def main() -> int:
             "--cache-mode",
             "full",
             "--cache-only",
+            "--precompute-bank",
         ]
         if args.lm_subset_path:
             cmd.extend(["--subset-path", args.lm_subset_path])
@@ -88,6 +89,7 @@ def main() -> int:
             "--cache-mode",
             "full",
             "--cache-only",
+            "--precompute-bank",
         ]
         if args.seq_limit is not None:
             cmd.extend(["--limit", str(args.seq_limit)])
@@ -114,6 +116,7 @@ def main() -> int:
             "--cache-mode",
             "full",
             "--cache-only",
+            "--precompute-bank",
         ]
 
     if args.artifact_cache_root:

@@ -676,6 +676,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     torch.backends.cudnn.benchmark = True
     set_seed(seed, deterministic=args.deterministic, benchmark_mode=args.benchmark_mode)
     print(f"[Run] seed={seed} rep={rep} uid={run_uid}")
+    if args.precompute_bank and args.benchmark:
+        raise RuntimeError("--precompute-bank must not be used in benchmark mode.")
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {

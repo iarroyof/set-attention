@@ -33,6 +33,7 @@ from set_attention.data.artifact_cache import (
     assert_meta_compatible,
     file_signature,
     fingerprint,
+    require_cached_artifacts,
     resolve_hf_root,
     write_meta,
 )
@@ -1112,6 +1113,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         raise ValueError("--cache-mode is not supported with --hf-tokenizer-name yet.")
     if cache_mode == "full" and args.adapter_rank > 0:
         raise ValueError("--cache-mode full is only supported when --adapter-rank 0.")
+    if args.precompute_bank and cache_mode != "full":
+        raise RuntimeError("--precompute-bank requires --cache-mode full.")
+    if args.precompute_bank and args.benchmark:
+        raise RuntimeError("--precompute-bank must not be used in benchmark mode.")
 
     streaming_data: Optional[WikitextStreamingData] = None
     train_text_pairs = []
@@ -1275,6 +1280,14 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             bank_val_path = bank_root / "bank_val.pt"
             routing_train_path = bank_root / "routing_train.pt"
             routing_val_path = bank_root / "routing_val.pt"
+            if not args.precompute_bank:
+                if args.overwrite_cache:
+                    raise RuntimeError("--overwrite-cache requires --precompute-bank in cache-mode full.")
+                require_cached_artifacts(
+                    bank_root,
+                    [bank_train_path, bank_val_path, routing_train_path, routing_val_path],
+                    "lm",
+                )
             if (
                 bank_train_path.exists()
                 and routing_train_path.exists()
@@ -1293,7 +1306,9 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 train_cache = cache_from_packs(universe, train_pack, train_route)
                 val_cache = cache_from_packs(universe, val_pack, val_route)
                 loaded_bank_cache = True
+                bank_fp = bank_root.name
                 print(f"[Cache] Loaded LM bank+routing from {bank_root}")
+                print(f"[CacheReuse] bank+routing loaded | fp={bank_fp} | task=lm")
 
         if not loaded_bank_cache:
             train_bank = build_windowed_bank_from_ids(sequences_train, window=args.window, stride=args.stride)
@@ -1334,6 +1349,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     )
                 write_meta(bank_root, bank_spec)
                 print(f"[Cache] Saved LM bank+routing to {bank_root}")
+                bank_fp = bank_root.name
+                print(f"[CacheCreate] bank+routing created | fp={bank_fp} | task=lm")
 
         atom_emb = nn.Embedding(vocab_size, args.d_model).to(device)
         adapter = None

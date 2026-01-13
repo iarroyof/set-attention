@@ -105,6 +105,17 @@ def assert_meta_compatible(root: Path, spec: Dict[str, Any]) -> None:
         )
 
 
+def require_cached_artifacts(root: Path, paths: Iterable[Path], task: str) -> None:
+    missing = [p.name for p in paths if not p.exists()]
+    if missing:
+        missing_str = ", ".join(missing)
+        raise RuntimeError(
+            f"Missing bank+routing artifacts for {task}. "
+            "Run once with --precompute-bank to create them. "
+            f"root={root} missing=[{missing_str}]"
+        )
+
+
 __all__ = [
     "ArtifactSpec",
     "BANK_FORMAT_VERSION",
@@ -115,4 +126,5 @@ __all__ = [
     "read_meta",
     "resolve_hf_root",
     "write_meta",
+    "require_cached_artifacts",
 ]

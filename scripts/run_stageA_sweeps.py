@@ -369,6 +369,8 @@ def main():
                 args.post_run_grace,
                 args.post_run_wait,
             )
+        print("[stageA] precache complete; exiting.")
+        return
 
     # Helper to build a metrics filename
     def mpath(task: str, dataset: str, variant: str, precision: str, seed: int, rep: int) -> Path:
@@ -434,6 +436,8 @@ def main():
                             "4",
                         ]
                     )
+            if "--precompute-bank" in cmd:
+                raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
             rc = _run(
                 cmd,
                 args.dry_run,
@@ -518,12 +522,14 @@ def main():
                             "4",
                         ]
                     )
-                rc = _run(
-                    cmd,
-                    args.dry_run,
-                    args.min_free_gb,
-                    args.wait_gpu_interval,
-                    args.wait_gpu_timeout,
+            if "--precompute-bank" in cmd:
+                raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
+            rc = _run(
+                cmd,
+                args.dry_run,
+                args.min_free_gb,
+                args.wait_gpu_interval,
+                args.wait_gpu_timeout,
                     args.require_idle_gpu,
                     args.post_run_grace,
                     args.post_run_wait,
@@ -608,12 +614,14 @@ def main():
                             "4",
                         ]
                     )
-                rc = _run(
-                    cmd,
-                    args.dry_run,
-                    args.min_free_gb,
-                    args.wait_gpu_interval,
-                    args.wait_gpu_timeout,
+            if "--precompute-bank" in cmd:
+                raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
+            rc = _run(
+                cmd,
+                args.dry_run,
+                args.min_free_gb,
+                args.wait_gpu_interval,
+                args.wait_gpu_timeout,
                     args.require_idle_gpu,
                     args.post_run_grace,
                     args.post_run_wait,
@@ -686,12 +694,14 @@ def main():
                             "0",
                         ]
                     )
-                rc = _run(
-                    cmd,
-                    args.dry_run,
-                    args.min_free_gb,
-                    args.wait_gpu_interval,
-                    args.wait_gpu_timeout,
+            if "--precompute-bank" in cmd:
+                raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
+            rc = _run(
+                cmd,
+                args.dry_run,
+                args.min_free_gb,
+                args.wait_gpu_interval,
+                args.wait_gpu_timeout,
                     args.require_idle_gpu,
                     args.post_run_grace,
                     args.post_run_wait,
