@@ -164,7 +164,7 @@ def _seq_token_spec(args, dataset_id: str, data_sig: Optional[dict], max_len: in
         subset=data_sig,
         tokenizer={
             "type": "whitespace",
-            "special_tokens": list(SPECIAL_TOKENS),
+            "special_tokens": ["<pad>", "<s>", "</s>"],
             "max_len": int(max_len),
         },
         sequence={"max_len": int(max_len)},
