@@ -1,9 +1,11 @@
 import argparse
 import csv
+import json
 import os
 import subprocess
 import tempfile
 import time
+import itertools
 from pathlib import Path
 from typing import List
 import yaml
@@ -155,11 +157,40 @@ def main():
 
     cfg = yaml.safe_load(open(args.sweep, "r", encoding="utf-8"))
     program = cfg["program"]
-    params = cfg["parameters"]
+    params = cfg.get("parameters", {})
 
-    attns = params.get("attn", {}).get("values", ["dot"])  # type: ignore
-    seeds = params.get("seed", {}).get("values", ["1337"])  # type: ignore
-    fixed = {k: v for k, v in params.items() if isinstance(v, dict) and "value" in v}
+    ordered_keys = list(params.keys())
+    fixed: dict[str, object] = {}
+    sweep_keys: List[str] = []
+    sweep_values: List[list] = []
+    for key in ordered_keys:
+        spec = params.get(key, {})
+        if not isinstance(spec, dict):
+            continue
+        if "value" in spec:
+            fixed[key] = spec["value"]
+            continue
+        if "values" in spec:
+            values = spec["values"]
+            if not isinstance(values, list):
+                values = [values]
+            sweep_keys.append(key)
+            sweep_values.append(values)
+
+    def _param_to_cli(key: str, value: object) -> list[str]:
+        if value is None:
+            return []
+        flag = key if key.startswith("-") else f"--{key}"
+        if isinstance(value, bool):
+            return [flag] if value else []
+        if isinstance(value, (list, tuple)):
+            return [flag, *[str(v) for v in value]]
+        return [flag, str(value)]
+
+    def _param_to_row(key: str, value: object) -> str:
+        if isinstance(value, (list, tuple, dict)):
+            return json.dumps(value, sort_keys=True)
+        return str(value)
 
     def append_status(csv_path: Path, row: dict) -> None:
         csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,65 +219,70 @@ def main():
             writer.writerow(row)
 
     csv_path = Path("out/sweeps/wandb.csv")
-    for a in attns:
-        for s in seeds:
-            cmd = ["python", program, "--attn", a]
-            if "epochs" in fixed:
-                cmd += ["--epochs", str(fixed["epochs"]["value"])]
-            cmd += ["--seed", str(s)] if program.endswith("transformer.py") else []
-            print("→", " ".join(cmd))
-            env = os.environ.copy()
-            base_row = {"script": program, "task": "wandb_sweep", "seed": s, "attn": a}
-            if not _wait_for_gpu(
-                args.min_free_gb, args.wait_gpu_interval, args.wait_gpu_timeout, args.require_idle_gpu
-            ):
-                append_status(
-                    csv_path,
-                    {
-                        **base_row,
-                        "run_uid": f"skip-{int(time.time())}-{s}",
-                        "status": "skipped",
-                        "skip_reason": "gpu_busy",
-                    },
-                )
+    combos = list(itertools.product(*sweep_values)) if sweep_keys else [()]
+    for combo in combos:
+        sweep_params = {k: v for k, v in zip(sweep_keys, combo)}
+        all_params = {**fixed, **sweep_params}
+        cmd = ["python", program]
+        for key in ordered_keys:
+            if key not in all_params:
                 continue
-            with tempfile.TemporaryFile(mode="w+") as stderr_file:
-                proc = subprocess.Popen(cmd, env=env, stderr=stderr_file)
-                returncode = proc.wait()
-                if returncode != 0:
-                    stderr_file.seek(0)
-                    tail = stderr_file.read().splitlines()[-20:]
-                    if tail:
-                        print("[wandb-sweep] stderr (tail):")
-                        for line in tail:
-                            print(f"[wandb-sweep] | {line}")
-            if args.post_run_grace > 0:
-                time.sleep(args.post_run_grace)
-            procs = _gpu_compute_procs()
-            if procs:
-                still = _format_procs(procs)
-                if proc.pid in {p["pid"] for p in procs}:
-                    print(f"[wandb-sweep] warn: job pid {proc.pid} still on GPU: {still}")
-                else:
-                    print(f"[wandb-sweep] warn: GPU still busy after run: {still}")
-                if args.post_run_wait:
-                    _wait_for_gpu(
-                        args.min_free_gb,
-                        args.wait_gpu_interval,
-                        args.wait_gpu_timeout,
-                        args.require_idle_gpu,
-                    )
+            cmd.extend(_param_to_cli(key, all_params[key]))
+        print("→", " ".join(cmd))
+        env = os.environ.copy()
+        base_row = {"script": program, "task": "wandb_sweep"}
+        for key, value in all_params.items():
+            base_row[key] = _param_to_row(key, value)
+        if not _wait_for_gpu(
+            args.min_free_gb, args.wait_gpu_interval, args.wait_gpu_timeout, args.require_idle_gpu
+        ):
+            append_status(
+                csv_path,
+                {
+                    **base_row,
+                    "run_uid": f"skip-{int(time.time())}",
+                    "status": "skipped",
+                    "skip_reason": "gpu_busy",
+                },
+            )
+            continue
+        with tempfile.TemporaryFile(mode="w+") as stderr_file:
+            proc = subprocess.Popen(cmd, env=env, stderr=stderr_file)
+            returncode = proc.wait()
             if returncode != 0:
-                append_status(
-                    csv_path,
-                    {
-                        **base_row,
-                        "run_uid": f"exitcode-{int(time.time())}-{s}",
-                        "status": "exitcode",
-                        "exit_code": returncode,
-                        "skip_reason": f"exitcode={returncode}",
-                    },
+                stderr_file.seek(0)
+                tail = stderr_file.read().splitlines()[-20:]
+                if tail:
+                    print("[wandb-sweep] stderr (tail):")
+                    for line in tail:
+                        print(f"[wandb-sweep] | {line}")
+        if args.post_run_grace > 0:
+            time.sleep(args.post_run_grace)
+        procs = _gpu_compute_procs()
+        if procs:
+            still = _format_procs(procs)
+            if proc.pid in {p["pid"] for p in procs}:
+                print(f"[wandb-sweep] warn: job pid {proc.pid} still on GPU: {still}")
+            else:
+                print(f"[wandb-sweep] warn: GPU still busy after run: {still}")
+            if args.post_run_wait:
+                _wait_for_gpu(
+                    args.min_free_gb,
+                    args.wait_gpu_interval,
+                    args.wait_gpu_timeout,
+                    args.require_idle_gpu,
                 )
+        if returncode != 0:
+            append_status(
+                csv_path,
+                {
+                    **base_row,
+                    "run_uid": f"exitcode-{int(time.time())}",
+                    "status": "exitcode",
+                    "exit_code": returncode,
+                    "skip_reason": f"exitcode={returncode}",
+                },
+            )
 
 
 if __name__ == "__main__":

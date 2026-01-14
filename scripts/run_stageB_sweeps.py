@@ -380,6 +380,7 @@ def main():
             ]
             if args.cache_mode == "full":
                 lm_cmd.extend(["--lm-window", "64", "--lm-stride", "32", "--lm-minhash-k", "128", "--lm-router-topk", "4"])
+                lm_cmd.extend(["--precision", args.lm_precision, "--ska-backend", "python"])
             if lm_cache_args:
                 lm_cmd.extend(lm_cache_args)
             _run(
@@ -402,6 +403,7 @@ def main():
             ]
             if args.cache_mode == "full":
                 seq_cmd.extend(["--seq-window", "64", "--seq-stride", "32", "--seq-minhash-k", "128", "--seq-router-topk", "4"])
+                seq_cmd.extend(["--precision", args.seq_precision, "--ska-backend", "python"])
             if seq_cache_args:
                 seq_cmd.extend(seq_cache_args)
             _run(
@@ -430,6 +432,7 @@ def main():
                 text_cmd.extend(
                     ["--textdiff-window", "64", "--textdiff-bank-stride", "32", "--textdiff-minhash-k", "128", "--textdiff-router-topk", "4"]
                 )
+                text_cmd.extend(["--precision", args.textdiff_precision, "--ska-backend", "python"])
             if textdiff_cache_args:
                 text_cmd.extend(textdiff_cache_args)
             _run(

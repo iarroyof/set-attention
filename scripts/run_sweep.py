@@ -1,6 +1,7 @@
 import argparse
 import csv
 import itertools
+import json
 import os
 import subprocess
 import tempfile
@@ -8,6 +9,7 @@ import time
 from pathlib import Path
 from typing import List
 
+import yaml
 
 def append_status(csv_path: Path, row: dict) -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -191,9 +193,23 @@ def run(
     require_idle: bool,
     post_run_grace: float,
     post_run_wait: bool,
+    base_row: dict | None = None,
 ):
     print("→", " ".join(cmd))
     if not _wait_for_gpu(min_free_gb, wait_interval, wait_timeout, require_idle):
+        if base_row is not None:
+            row = dict(base_row)
+            row.setdefault("script", cmd[1] if len(cmd) > 1 else "")
+            row.setdefault("task", "sweep")
+            row.setdefault("seed", _extract_seed(cmd))
+            row.update(
+                {
+                    "run_uid": f"skip-{int(time.time())}",
+                    "status": "skipped",
+                    "skip_reason": "gpu_busy",
+                }
+            )
+            append_status(csv_path, row)
         return 1
     with tempfile.TemporaryFile(mode="w+") as stderr_file:
         proc = subprocess.Popen(cmd, stderr=stderr_file)
@@ -217,23 +233,40 @@ def run(
         if post_run_wait:
             _wait_for_gpu(min_free_gb, wait_interval, wait_timeout, require_idle)
     if returncode != 0:
-        append_status(
-            csv_path,
-            {
-                "script": cmd[1] if len(cmd) > 1 else "",
-                "task": "sweep",
-                "seed": _extract_seed(cmd),
-                "run_uid": f"exitcode-{int(time.time())}",
-                "status": "exitcode",
-                "exit_code": returncode,
-                "skip_reason": f"exitcode={returncode}",
-            },
-        )
+        if base_row is None:
+            append_status(
+                csv_path,
+                {
+                    "script": cmd[1] if len(cmd) > 1 else "",
+                    "task": "sweep",
+                    "seed": _extract_seed(cmd),
+                    "run_uid": f"exitcode-{int(time.time())}",
+                    "status": "exitcode",
+                    "exit_code": returncode,
+                    "skip_reason": f"exitcode={returncode}",
+                },
+            )
+        else:
+            row = dict(base_row)
+            row.setdefault("script", cmd[1] if len(cmd) > 1 else "")
+            row.setdefault("task", "sweep")
+            row.setdefault("seed", _extract_seed(cmd))
+            row.update(
+                {
+                    "run_uid": f"exitcode-{int(time.time())}",
+                    "status": "exitcode",
+                    "exit_code": returncode,
+                    "skip_reason": f"exitcode={returncode}",
+                }
+            )
+            append_status(csv_path, row)
     return returncode
 
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--sweep", help="Optional YAML sweep definition (same schema as run_wandb_sweep.py).")
+    ap.add_argument("--csv", help="Optional CSV path for sweep results.")
     ap.add_argument("--which", choices=["transformer", "diffusion", "vit"], default="transformer")
     ap.add_argument("--attn", nargs="*", default=["dot", "cosine", "rbf", "intersect", "ska", "ska_true"])  # ska alias to rbf
     ap.add_argument("--seeds", nargs="*", default=["1337", "2024", "7"])  # strings for convenience
@@ -245,6 +278,70 @@ def main():
     ap.add_argument("--post-run-grace", type=float, default=2.0, help="Seconds to wait after each job before checking GPU processes.")
     ap.add_argument("--post-run-wait", action="store_true", help="Wait for GPU idle after each job (in addition to warnings).")
     args = ap.parse_args()
+
+    if args.sweep:
+        cfg = yaml.safe_load(open(args.sweep, "r", encoding="utf-8"))
+        program = cfg["program"]
+        params = cfg.get("parameters", {})
+
+        ordered_keys = list(params.keys())
+        fixed: dict[str, object] = {}
+        sweep_keys: List[str] = []
+        sweep_values: List[list] = []
+        for key in ordered_keys:
+            spec = params.get(key, {})
+            if not isinstance(spec, dict):
+                continue
+            if "value" in spec:
+                fixed[key] = spec["value"]
+                continue
+            if "values" in spec:
+                values = spec["values"]
+                if not isinstance(values, list):
+                    values = [values]
+                sweep_keys.append(key)
+                sweep_values.append(values)
+
+        def _param_to_cli(key: str, value: object) -> list[str]:
+            if value is None:
+                return []
+            flag = key if key.startswith("-") else f"--{key}"
+            if isinstance(value, bool):
+                return [flag] if value else []
+            if isinstance(value, (list, tuple)):
+                return [flag, *[str(v) for v in value]]
+            return [flag, str(value)]
+
+        def _param_to_row(key: str, value: object) -> str:
+            if isinstance(value, (list, tuple, dict)):
+                return json.dumps(value, sort_keys=True)
+            return str(value)
+
+        csv_path = Path(args.csv) if args.csv else Path("out/sweeps") / f"{Path(program).stem}.csv"
+        combos = list(itertools.product(*sweep_values)) if sweep_keys else [()]
+        for combo in combos:
+            sweep_params = {k: v for k, v in zip(sweep_keys, combo)}
+            all_params = {**fixed, **sweep_params}
+            cmd = ["python", program]
+            for key in ordered_keys:
+                if key not in all_params:
+                    continue
+                cmd.extend(_param_to_cli(key, all_params[key]))
+            base_row = {"script": program, "task": "sweep"}
+            for key, value in all_params.items():
+                base_row[key] = _param_to_row(key, value)
+            run(
+                cmd,
+                csv_path,
+                args.min_free_gb,
+                args.wait_gpu_interval,
+                args.wait_gpu_timeout,
+                args.require_idle_gpu,
+                args.post_run_grace,
+                args.post_run_wait,
+                base_row,
+            )
+        return
 
     if args.which == "transformer":
         csv_path = Path("out/sweeps/transformer.csv")
@@ -258,6 +355,7 @@ def main():
                 args.require_idle_gpu,
                 args.post_run_grace,
                 args.post_run_wait,
+                {"script": "scripts/train_toy_transformer.py", "task": "sweep", "attn": a, "seed": s},
             )
     elif args.which == "diffusion":
         csv_path = Path("out/sweeps/diffusion.csv")
@@ -271,6 +369,7 @@ def main():
                 args.require_idle_gpu,
                 args.post_run_grace,
                 args.post_run_wait,
+                {"script": "scripts/train_toy_diffusion.py", "task": "sweep", "attn": a, "seed": s},
             )
     else:
         csv_path = Path("out/sweeps/vit.csv")
@@ -284,6 +383,7 @@ def main():
                 args.require_idle_gpu,
                 args.post_run_grace,
                 args.post_run_wait,
+                {"script": "scripts/train_tiny_vit_cifar.py", "task": "sweep", "attn": a, "seed": s},
             )
 
 
