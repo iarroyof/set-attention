@@ -4,6 +4,7 @@ import csv
 import os
 import subprocess
 import tempfile
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -463,7 +464,52 @@ def main() -> None:
         help="Wait for GPU idle after each job (in addition to warnings).",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print commands without executing.")
+    parser.add_argument(
+        "--common-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to all task runs (repeatable, quoted string).",
+    )
+    parser.add_argument(
+        "--lm-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to LM runs (repeatable, quoted string).",
+    )
+    parser.add_argument(
+        "--seq-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to Seq2Seq runs (repeatable, quoted string).",
+    )
+    parser.add_argument(
+        "--diff-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to Diffusion runs (repeatable, quoted string).",
+    )
+    parser.add_argument(
+        "--vit-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to ViT runs (repeatable, quoted string).",
+    )
     args = parser.parse_args()
+
+    def _parse_extra(values: list[str]) -> list[str]:
+        extra: list[str] = []
+        for value in values:
+            if value:
+                extra.extend(shlex.split(value))
+        return extra
+
+    common_args = _parse_extra(args.common_args)
+    task_args = {
+        "lm": _parse_extra(args.lm_args),
+        "seq2seq": _parse_extra(args.seq_args),
+        "diffusion": _parse_extra(args.diff_args),
+        "vit": _parse_extra(args.vit_args),
+    }
 
     seed_values: List[int] = []
     if args.seeds:
@@ -532,7 +578,7 @@ def main() -> None:
                         )
                     cmd = _cmd(
                         spec["script"],
-                        spec["args"],
+                        list(spec["args"]) + common_args + task_args.get(task, []),
                         csv_path,
                         seed,
                         rep,

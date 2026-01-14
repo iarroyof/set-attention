@@ -8,6 +8,7 @@ import csv
 import os
 import subprocess
 import tempfile
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -294,8 +295,72 @@ def main():
     ap.add_argument("--vit-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--vit-batch", type=int, default=128)
     ap.add_argument("--vit-num-workers", type=int, default=0)
+    ap.add_argument(
+        "--common-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to all task runs (repeatable, quoted string).",
+    )
+    ap.add_argument(
+        "--lm-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to LM runs (repeatable, quoted string).",
+    )
+    ap.add_argument(
+        "--seq-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to Seq2Seq runs (repeatable, quoted string).",
+    )
+    ap.add_argument(
+        "--textdiff-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to TextDiff runs (repeatable, quoted string).",
+    )
+    ap.add_argument(
+        "--vit-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to ViT runs (repeatable, quoted string).",
+    )
+    ap.add_argument(
+        "--lm-cache-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to LM cache commands (repeatable, quoted string).",
+    )
+    ap.add_argument(
+        "--seq-cache-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to Seq2Seq cache commands (repeatable, quoted string).",
+    )
+    ap.add_argument(
+        "--textdiff-cache-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to TextDiff cache commands (repeatable, quoted string).",
+    )
 
     args = ap.parse_args()
+
+    def _parse_extra(values: list[str]) -> list[str]:
+        extra: list[str] = []
+        for value in values:
+            if value:
+                extra.extend(shlex.split(value))
+        return extra
+
+    common_args = _parse_extra(args.common_args)
+    lm_args = _parse_extra(args.lm_args)
+    seq_args = _parse_extra(args.seq_args)
+    textdiff_args = _parse_extra(args.textdiff_args)
+    vit_args = _parse_extra(args.vit_args)
+    lm_cache_args = _parse_extra(args.lm_cache_args)
+    seq_cache_args = _parse_extra(args.seq_cache_args)
+    textdiff_cache_args = _parse_extra(args.textdiff_cache_args)
     seeds = _parse_seeds(args.seeds, default=2024)
     reps = max(1, int(args.reps))
     out_dir = Path(args.output_dir)
@@ -331,6 +396,8 @@ def main():
         ]
         if args.cache_mode == "full":
             lm_cmd.extend(["--lm-window", "64", "--lm-stride", "32", "--lm-minhash-k", "128", "--lm-router-topk", "4"])
+        if lm_cache_args:
+            lm_cmd.extend(lm_cache_args)
         cache_cmds.append(lm_cmd)
 
         seq_cmd = common + [
@@ -341,6 +408,8 @@ def main():
         ]
         if args.cache_mode == "full":
             seq_cmd.extend(["--seq-window", "64", "--seq-stride", "32", "--seq-minhash-k", "128", "--seq-router-topk", "4"])
+        if seq_cache_args:
+            seq_cmd.extend(seq_cache_args)
         cache_cmds.append(seq_cmd)
 
         text_cmd = common + [
@@ -357,6 +426,8 @@ def main():
             text_cmd.extend(
                 ["--textdiff-window", "64", "--textdiff-bank-stride", "32", "--textdiff-minhash-k", "128", "--textdiff-router-topk", "4"]
             )
+        if textdiff_cache_args:
+            text_cmd.extend(textdiff_cache_args)
         cache_cmds.append(text_cmd)
         for cmd in cache_cmds:
             _run(
@@ -436,6 +507,10 @@ def main():
                             "4",
                         ]
                     )
+                if common_args:
+                    cmd.extend(common_args)
+                if lm_args:
+                    cmd.extend(lm_args)
                 if "--precompute-bank" in cmd:
                     raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
                 rc = _run(
@@ -522,6 +597,10 @@ def main():
                             "4",
                         ]
                     )
+                if common_args:
+                    cmd.extend(common_args)
+                if seq_args:
+                    cmd.extend(seq_args)
                 if "--precompute-bank" in cmd:
                     raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
                 rc = _run(
@@ -614,6 +693,10 @@ def main():
                             "4",
                         ]
                     )
+                if common_args:
+                    cmd.extend(common_args)
+                if textdiff_args:
+                    cmd.extend(textdiff_args)
                 if "--precompute-bank" in cmd:
                     raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
                 rc = _run(
@@ -694,6 +777,10 @@ def main():
                             "0",
                         ]
                     )
+                if common_args:
+                    cmd.extend(common_args)
+                if vit_args:
+                    cmd.extend(vit_args)
                 if "--precompute-bank" in cmd:
                     raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
                 rc = _run(
