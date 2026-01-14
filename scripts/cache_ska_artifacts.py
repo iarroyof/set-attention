@@ -52,6 +52,7 @@ def main() -> int:
     # Seq2Seq args
     ap.add_argument("--seq-dataset", type=str, default="wmt16_en_ro")
     ap.add_argument("--seq-limit", type=int, default=None)
+    ap.add_argument("--limit", type=int, default=None, help="Alias for --seq-limit.")
     ap.add_argument("--seq-tokenizer-type", type=str, default="whitespace")
     ap.add_argument("--seq-window", type=int, default=64)
     ap.add_argument("--seq-stride", type=int, default=32)
@@ -67,7 +68,9 @@ def main() -> int:
     ap.add_argument("--textdiff-minhash-k", type=int, default=128)
     ap.add_argument("--textdiff-router-topk", type=int, default=4)
 
-    args = ap.parse_args()
+    args, unknown = ap.parse_known_args()
+    if args.limit is not None and args.seq_limit is None:
+        args.seq_limit = args.limit
 
     def _parse_extra(values: list[str]) -> list[str]:
         extra: list[str] = []
@@ -168,6 +171,8 @@ def main() -> int:
         cmd.extend(seq_args)
     if args.task == "textdiff" and textdiff_args:
         cmd.extend(textdiff_args)
+    if unknown:
+        cmd.extend(unknown)
 
     print("[cache_ska_artifacts]", " ".join(cmd))
     if args.dry_run:

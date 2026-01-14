@@ -763,11 +763,11 @@ def main():
                     str(1),
                 ]
                 cmd.extend(["--num-workers", str(args.vit_num_workers)])
-            if mode == "dot_explicit":
-                cmd.extend(["--sdpa-baseline", "--attn-baseline", "explicit", "--dot-naive"])
-            else:
-                cmd.extend(
-                    [
+                if mode == "dot_explicit":
+                    cmd.extend(["--sdpa-baseline", "--attn-baseline", "explicit", "--dot-naive"])
+                else:
+                    cmd.extend(
+                        [
                             "--ska-backend",
                             "python",
                             "--window",
@@ -776,17 +776,17 @@ def main():
                             "4",
                             "--minhash-k",
                             "64",
-                        "--router-topk",
-                        "0",
-                    ]
-                )
-            if common_args:
-                cmd.extend(common_args)
-            if vit_args:
-                cmd.extend(vit_args)
-            if "--precompute-bank" in cmd:
-                raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
-            rc = _run(
+                            "--router-topk",
+                            "0",
+                        ]
+                    )
+                if common_args:
+                    cmd.extend(common_args)
+                if vit_args:
+                    cmd.extend(vit_args)
+                if "--precompute-bank" in cmd:
+                    raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
+                rc = _run(
                     cmd,
                     args.dry_run,
                     args.min_free_gb,
