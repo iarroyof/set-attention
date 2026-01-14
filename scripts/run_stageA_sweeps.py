@@ -436,19 +436,19 @@ def main():
                             "4",
                         ]
                     )
-            if "--precompute-bank" in cmd:
-                raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
-            rc = _run(
-                cmd,
-                args.dry_run,
-                args.min_free_gb,
-                args.wait_gpu_interval,
-                args.wait_gpu_timeout,
-                args.require_idle_gpu,
-                args.post_run_grace,
-                args.post_run_wait,
-            )
-            if rc != 0:
+                if "--precompute-bank" in cmd:
+                    raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
+                rc = _run(
+                    cmd,
+                    args.dry_run,
+                    args.min_free_gb,
+                    args.wait_gpu_interval,
+                    args.wait_gpu_timeout,
+                    args.require_idle_gpu,
+                    args.post_run_grace,
+                    args.post_run_wait,
+                )
+                if rc != 0:
                     _append_status_row(
                         csv_path,
                         {
@@ -522,14 +522,14 @@ def main():
                             "4",
                         ]
                     )
-            if "--precompute-bank" in cmd:
-                raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
-            rc = _run(
-                cmd,
-                args.dry_run,
-                args.min_free_gb,
-                args.wait_gpu_interval,
-                args.wait_gpu_timeout,
+                if "--precompute-bank" in cmd:
+                    raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
+                rc = _run(
+                    cmd,
+                    args.dry_run,
+                    args.min_free_gb,
+                    args.wait_gpu_interval,
+                    args.wait_gpu_timeout,
                     args.require_idle_gpu,
                     args.post_run_grace,
                     args.post_run_wait,
@@ -614,14 +614,14 @@ def main():
                             "4",
                         ]
                     )
-            if "--precompute-bank" in cmd:
-                raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
-            rc = _run(
-                cmd,
-                args.dry_run,
-                args.min_free_gb,
-                args.wait_gpu_interval,
-                args.wait_gpu_timeout,
+                if "--precompute-bank" in cmd:
+                    raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
+                rc = _run(
+                    cmd,
+                    args.dry_run,
+                    args.min_free_gb,
+                    args.wait_gpu_interval,
+                    args.wait_gpu_timeout,
                     args.require_idle_gpu,
                     args.post_run_grace,
                     args.post_run_wait,
@@ -694,14 +694,14 @@ def main():
                             "0",
                         ]
                     )
-            if "--precompute-bank" in cmd:
-                raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
-            rc = _run(
-                cmd,
-                args.dry_run,
-                args.min_free_gb,
-                args.wait_gpu_interval,
-                args.wait_gpu_timeout,
+                if "--precompute-bank" in cmd:
+                    raise RuntimeError("BUG: --precompute-bank must not appear in Stage A runs")
+                rc = _run(
+                    cmd,
+                    args.dry_run,
+                    args.min_free_gb,
+                    args.wait_gpu_interval,
+                    args.wait_gpu_timeout,
                     args.require_idle_gpu,
                     args.post_run_grace,
                     args.post_run_wait,
