@@ -1288,7 +1288,21 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     [bank_train_path, bank_val_path, routing_train_path, routing_val_path],
                     "lm",
                 )
-            if (
+                assert_meta_compatible(bank_root, bank_spec)
+                train_pack = load_bank_pack(bank_train_path)
+                val_pack = load_bank_pack(bank_val_path)
+                train_route = load_routing_pack(routing_train_path)
+                val_route = load_routing_pack(routing_val_path)
+                if not torch.equal(train_pack.universe_ids, val_pack.universe_ids):
+                    raise RuntimeError("Cached LM bank packs have mismatched universe ids.")
+                universe = UniversePool(train_pack.universe_ids, metadata={"task": "toy_lm"})
+                train_cache = cache_from_packs(universe, train_pack, train_route)
+                val_cache = cache_from_packs(universe, val_pack, val_route)
+                loaded_bank_cache = True
+                bank_fp = bank_root.name
+                print(f"[Cache] Loaded LM bank+routing from {bank_root}")
+                print(f"[CacheReuse] bank+routing loaded | fp={bank_fp} | task=lm")
+            elif (
                 bank_train_path.exists()
                 and routing_train_path.exists()
                 and bank_val_path.exists()
