@@ -44,6 +44,7 @@ def main() -> int:
     ap.add_argument("--lm-subset-path", type=str, default="")
     ap.add_argument("--lm-seq-len", type=int, default=256)
     ap.add_argument("--lm-seq-stride", type=int, default=256)
+    ap.add_argument("--lm-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--lm-window", type=int, default=64)
     ap.add_argument("--lm-stride", type=int, default=32)
     ap.add_argument("--lm-minhash-k", type=int, default=128)
@@ -54,6 +55,8 @@ def main() -> int:
     ap.add_argument("--seq-limit", type=int, default=None)
     ap.add_argument("--limit", type=int, default=None, help="Alias for --seq-limit.")
     ap.add_argument("--seq-tokenizer-type", type=str, default="whitespace")
+    ap.add_argument("--seq-max-len", type=int, default=256)
+    ap.add_argument("--seq-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--seq-window", type=int, default=64)
     ap.add_argument("--seq-stride", type=int, default=32)
     ap.add_argument("--seq-minhash-k", type=int, default=128)
@@ -61,8 +64,9 @@ def main() -> int:
 
     # TextDiff args
     ap.add_argument("--textdiff-dataset", type=str, default="wikitext2")
-    ap.add_argument("--textdiff-seq-len", type=int, default=64)
-    ap.add_argument("--textdiff-stride", type=int, default=64)
+    ap.add_argument("--textdiff-seq-len", type=int, default=256)
+    ap.add_argument("--textdiff-stride", type=int, default=256)
+    ap.add_argument("--textdiff-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--textdiff-window", type=int, default=64)
     ap.add_argument("--textdiff-bank-stride", type=int, default=32)
     ap.add_argument("--textdiff-minhash-k", type=int, default=128)
@@ -95,6 +99,8 @@ def main() -> int:
             str(args.lm_seq_len),
             "--seq-stride",
             str(args.lm_seq_stride),
+            "--precision",
+            args.lm_precision,
             "--window",
             str(args.lm_window),
             "--stride",
@@ -116,6 +122,8 @@ def main() -> int:
             "scripts/train_seq2seq_text_banked.py",
             "--dataset",
             args.seq_dataset,
+            "--max-len",
+            str(args.seq_max_len),
             "--tokenizer-type",
             args.seq_tokenizer_type,
             "--window",
@@ -126,6 +134,8 @@ def main() -> int:
             str(args.seq_minhash_k),
             "--router-topk",
             str(args.seq_router_topk),
+            "--precision",
+            args.seq_precision,
             "--cache-mode",
             "full",
             "--cache-only",
@@ -145,6 +155,8 @@ def main() -> int:
             str(args.textdiff_seq_len),
             "--text-stride",
             str(args.textdiff_stride),
+            "--precision",
+            args.textdiff_precision,
             "--window",
             str(args.textdiff_window),
             "--stride",

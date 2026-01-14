@@ -13,6 +13,8 @@ These updates supersede earlier assumptions about per-run tokenization and on-th
 - Sweep robustness upgrades: GPU idle gate + min-free-GB checks, post-run GPU checks, OOM/exitcode rows in CSVs, and sequential execution defaults.
 - Artifact generation expanded: `scripts/repro_runs.py` aggregates metrics alongside benchmarks; `scripts/make_stage_artifacts.py` emits Stage A/B tables/plots when inputs are available.
 - AUSA tokenizer caching is persistent for Seq2Seq and reused across runs to keep token IDs stable.
+- Token caches are tensor-only (no string pairs); Seq2Seq banks now build from token IDs, and refs are derived on-the-fly to avoid host RAM blowups.
+- Stage A/B runners and cache scripts expose paper hyperparameters explicitly; cache fingerprints include tokenizer type + seq/window/stride/minhash/router, and full-cache reuse is guarded.
 
 ---
 

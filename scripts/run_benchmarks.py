@@ -463,6 +463,40 @@ def main() -> None:
         action="store_true",
         help="Wait for GPU idle after each job (in addition to warnings).",
     )
+    # LM overrides
+    parser.add_argument("--lm-seq-len", type=int, default=None)
+    parser.add_argument("--lm-seq-stride", type=int, default=None)
+    parser.add_argument("--lm-window", type=int, default=None)
+    parser.add_argument("--lm-stride", type=int, default=None)
+    parser.add_argument("--lm-minhash-k", type=int, default=None)
+    parser.add_argument("--lm-router-topk", type=int, default=None)
+    parser.add_argument("--lm-precision", type=str, default=None)
+    parser.add_argument("--lm-batch", type=int, default=None)
+    # Seq2Seq overrides
+    parser.add_argument("--seq-max-len", type=int, default=None)
+    parser.add_argument("--seq-window", type=int, default=None)
+    parser.add_argument("--seq-stride", type=int, default=None)
+    parser.add_argument("--seq-minhash-k", type=int, default=None)
+    parser.add_argument("--seq-router-topk", type=int, default=None)
+    parser.add_argument("--seq-precision", type=str, default=None)
+    parser.add_argument("--seq-batch", type=int, default=None)
+    parser.add_argument("--seq-tokenizer-type", type=str, default="whitespace")
+    # TextDiff overrides
+    parser.add_argument("--textdiff-seq-len", type=int, default=None)
+    parser.add_argument("--textdiff-stride", type=int, default=None)
+    parser.add_argument("--textdiff-window", type=int, default=None)
+    parser.add_argument("--textdiff-bank-stride", type=int, default=None)
+    parser.add_argument("--textdiff-minhash-k", type=int, default=None)
+    parser.add_argument("--textdiff-router-topk", type=int, default=None)
+    parser.add_argument("--textdiff-precision", type=str, default=None)
+    parser.add_argument("--textdiff-batch", type=int, default=None)
+    # ViT overrides
+    parser.add_argument("--vit-window", type=int, default=None)
+    parser.add_argument("--vit-stride", type=int, default=None)
+    parser.add_argument("--vit-minhash-k", type=int, default=None)
+    parser.add_argument("--vit-router-topk", type=int, default=None)
+    parser.add_argument("--vit-precision", type=str, default=None)
+    parser.add_argument("--vit-batch", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true", help="Print commands without executing.")
     parser.add_argument(
         "--common-args",
@@ -509,6 +543,51 @@ def main() -> None:
         "seq2seq": _parse_extra(args.seq_args),
         "diffusion": _parse_extra(args.diff_args),
         "vit": _parse_extra(args.vit_args),
+    }
+    def _opt(flag: str, value: object) -> list[str]:
+        if value is None:
+            return []
+        return [flag, str(value)]
+
+    task_overrides = {
+        "lm": (
+            _opt("--seq-len", args.lm_seq_len)
+            + _opt("--seq-stride", args.lm_seq_stride)
+            + _opt("--window", args.lm_window)
+            + _opt("--stride", args.lm_stride)
+            + _opt("--minhash-k", args.lm_minhash_k)
+            + _opt("--router-topk", args.lm_router_topk)
+            + _opt("--precision", args.lm_precision)
+            + _opt("--batch", args.lm_batch)
+        ),
+        "seq2seq": (
+            _opt("--max-len", args.seq_max_len)
+            + _opt("--window", args.seq_window)
+            + _opt("--stride", args.seq_stride)
+            + _opt("--minhash-k", args.seq_minhash_k)
+            + _opt("--router-topk", args.seq_router_topk)
+            + _opt("--precision", args.seq_precision)
+            + _opt("--batch", args.seq_batch)
+            + _opt("--tokenizer-type", args.seq_tokenizer_type)
+        ),
+        "diffusion": (
+            _opt("--text-seq-len", args.textdiff_seq_len)
+            + _opt("--text-stride", args.textdiff_stride)
+            + _opt("--window", args.textdiff_window)
+            + _opt("--stride", args.textdiff_bank_stride)
+            + _opt("--minhash-k", args.textdiff_minhash_k)
+            + _opt("--router-topk", args.textdiff_router_topk)
+            + _opt("--precision", args.textdiff_precision)
+            + _opt("--batch", args.textdiff_batch)
+        ),
+        "vit": (
+            _opt("--window", args.vit_window)
+            + _opt("--stride", args.vit_stride)
+            + _opt("--minhash-k", args.vit_minhash_k)
+            + _opt("--router-topk", args.vit_router_topk)
+            + _opt("--precision", args.vit_precision)
+            + _opt("--batch", args.vit_batch)
+        ),
     }
 
     seed_values: List[int] = []
@@ -578,7 +657,7 @@ def main() -> None:
                         )
                     cmd = _cmd(
                         spec["script"],
-                        list(spec["args"]) + common_args + task_args.get(task, []),
+                        list(spec["args"]) + common_args + task_args.get(task, []) + task_overrides.get(task, []),
                         csv_path,
                         seed,
                         rep,

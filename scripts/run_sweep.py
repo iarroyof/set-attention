@@ -193,9 +193,25 @@ def run(
     require_idle: bool,
     post_run_grace: float,
     post_run_wait: bool,
+    dry_run: bool = False,
     base_row: dict | None = None,
 ):
     print("→", " ".join(cmd))
+    if dry_run:
+        if base_row is not None:
+            row = dict(base_row)
+            row.setdefault("script", cmd[1] if len(cmd) > 1 else "")
+            row.setdefault("task", "sweep")
+            row.setdefault("seed", _extract_seed(cmd))
+            row.update(
+                {
+                    "run_uid": f"dryrun-{int(time.time())}",
+                    "status": "dry_run",
+                    "skip_reason": "dry_run",
+                }
+            )
+            append_status(csv_path, row)
+        return 0
     if not _wait_for_gpu(min_free_gb, wait_interval, wait_timeout, require_idle):
         if base_row is not None:
             row = dict(base_row)
@@ -270,6 +286,7 @@ def main():
     ap.add_argument("--which", choices=["transformer", "diffusion", "vit"], default="transformer")
     ap.add_argument("--attn", nargs="*", default=["dot", "cosine", "rbf", "intersect", "ska", "ska_true"])  # ska alias to rbf
     ap.add_argument("--seeds", nargs="*", default=["1337", "2024", "7"])  # strings for convenience
+    ap.add_argument("--dry-run", action="store_true", help="Print commands and write status rows without executing.")
     ap.add_argument("--min-free-gb", type=float, default=0.0, help="Wait for this much free GPU memory before running each job (0=disable).")
     ap.add_argument("--wait-gpu-interval", type=float, default=10.0, help="Seconds between GPU free-memory checks.")
     ap.add_argument("--wait-gpu-timeout", type=float, default=0.0, help="Timeout in seconds for GPU wait (0=wait forever).")
@@ -339,6 +356,7 @@ def main():
                 args.require_idle_gpu,
                 args.post_run_grace,
                 args.post_run_wait,
+                args.dry_run,
                 base_row,
             )
         return
@@ -355,6 +373,7 @@ def main():
                 args.require_idle_gpu,
                 args.post_run_grace,
                 args.post_run_wait,
+                args.dry_run,
                 {"script": "scripts/train_toy_transformer.py", "task": "sweep", "attn": a, "seed": s},
             )
     elif args.which == "diffusion":
@@ -369,6 +388,7 @@ def main():
                 args.require_idle_gpu,
                 args.post_run_grace,
                 args.post_run_wait,
+                args.dry_run,
                 {"script": "scripts/train_toy_diffusion.py", "task": "sweep", "attn": a, "seed": s},
             )
     else:
@@ -383,6 +403,7 @@ def main():
                 args.require_idle_gpu,
                 args.post_run_grace,
                 args.post_run_wait,
+                args.dry_run,
                 {"script": "scripts/train_tiny_vit_cifar.py", "task": "sweep", "attn": a, "seed": s},
             )
 

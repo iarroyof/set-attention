@@ -146,6 +146,7 @@ def _wait_for_gpu(min_free_gb: float, interval_s: float, timeout_s: float, requi
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sweep", required=True, help="Path to sweep yaml (transformer/diffusion/vit)")
+    ap.add_argument("--dry-run", action="store_true", help="Print commands and write status rows without executing.")
     ap.add_argument("--min-free-gb", type=float, default=0.0, help="Wait for this much free GPU memory before running each job (0=disable).")
     ap.add_argument("--wait-gpu-interval", type=float, default=10.0, help="Seconds between GPU free-memory checks.")
     ap.add_argument("--wait-gpu-timeout", type=float, default=0.0, help="Timeout in seconds for GPU wait (0=wait forever).")
@@ -233,6 +234,17 @@ def main():
         base_row = {"script": program, "task": "wandb_sweep"}
         for key, value in all_params.items():
             base_row[key] = _param_to_row(key, value)
+        if args.dry_run:
+            append_status(
+                csv_path,
+                {
+                    **base_row,
+                    "run_uid": f"dryrun-{int(time.time())}",
+                    "status": "dry_run",
+                    "skip_reason": "dry_run",
+                },
+            )
+            continue
         if not _wait_for_gpu(
             args.min_free_gb, args.wait_gpu_interval, args.wait_gpu_timeout, args.require_idle_gpu
         ):

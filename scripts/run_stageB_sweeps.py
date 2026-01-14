@@ -15,9 +15,13 @@ from pathlib import Path
 from typing import List, Optional
 
 
-def _parse_seeds(text: str, default: int) -> List[int]:
-    if not text:
+def _parse_seeds(raw: str | List[str] | None, default: int) -> List[int]:
+    if not raw:
         return [default]
+    if isinstance(raw, list):
+        text = " ".join(raw)
+    else:
+        text = raw
     seeds: List[int] = []
     for part in text.replace(",", " ").split():
         part = part.strip()
@@ -233,7 +237,7 @@ def main():
     ap = argparse.ArgumentParser(description="Run Stage B scaling sweeps with skip-aware configs.")
     ap.add_argument("--output-dir", type=str, default="out/benchmarks_scale")
     ap.add_argument("--gpu-vram", type=float, default=24.0, help="GPU VRAM in GB for skip estimation.")
-    ap.add_argument("--seeds", type=str, default="")
+    ap.add_argument("--seeds", nargs="*", default=None)
     ap.add_argument("--reps", type=int, default=1)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--cache-mode", choices=["none", "tokens", "full"], default="none")
@@ -255,29 +259,51 @@ def main():
     )
 
     # LM length sweep defaults
-    ap.add_argument("--lm-lengths", type=int, nargs="+", default=[256, 512, 1024])
+    ap.add_argument("--lm-lengths", type=int, nargs="+", default=[256, 512])
     ap.add_argument("--lm-batch", type=int, default=8)
     ap.add_argument("--lm-dataset", type=str, default="wikitext103")
     ap.add_argument("--lm-subset-path", type=str, default="subsets/wikitext103_train_10pct.json")
-    ap.add_argument("--lm-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--lm-precision", type=str, default="fp16", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--lm-seq-stride", type=int, default=0, help="Seq stride override (0 uses seq length).")
+    ap.add_argument("--lm-window", type=int, default=64)
+    ap.add_argument("--lm-stride", type=int, default=32)
+    ap.add_argument("--lm-minhash-k", type=int, default=128)
+    ap.add_argument("--lm-router-topk", type=int, default=4)
     ap.add_argument("--lm-num-workers", type=int, default=0)
 
     # Seq2Seq lengths (optional; default empty)
     ap.add_argument("--seq-lengths", type=int, nargs="+", default=[])
     ap.add_argument("--seq-batch", type=int, default=16)
     ap.add_argument("--seq-dataset", type=str, default="wmt16_en_ro")
-    ap.add_argument("--seq-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--seq-precision", type=str, default="fp16", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--seq-max-len", type=int, default=256)
+    ap.add_argument("--seq-tokenizer-type", type=str, default="whitespace")
+    ap.add_argument("--seq-window", type=int, default=64)
+    ap.add_argument("--seq-stride", type=int, default=32)
+    ap.add_argument("--seq-minhash-k", type=int, default=128)
+    ap.add_argument("--seq-router-topk", type=int, default=4)
     ap.add_argument("--seq-num-workers", type=int, default=0)
 
     # Diffusion/text lengths (optional; default empty)
     ap.add_argument("--textdiff-lengths", type=int, nargs="+", default=[])
     ap.add_argument("--textdiff-batch", type=int, default=64)
     ap.add_argument("--textdiff-dataset", type=str, default="wikitext2")
-    ap.add_argument("--textdiff-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--textdiff-precision", type=str, default="fp16", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--textdiff-seq-len", type=int, default=256)
+    ap.add_argument("--textdiff-stride", type=int, default=256)
+    ap.add_argument("--textdiff-window", type=int, default=64)
+    ap.add_argument("--textdiff-bank-stride", type=int, default=32)
+    ap.add_argument("--textdiff-minhash-k", type=int, default=128)
+    ap.add_argument("--textdiff-router-topk", type=int, default=4)
     ap.add_argument("--textdiff-num-workers", type=int, default=0)
 
     # ViT (no length sweep; uses patch-based)
-    ap.add_argument("--vit-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--vit-precision", type=str, default="fp16", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--vit-batch", type=int, default=128)
+    ap.add_argument("--vit-window", type=int, default=8)
+    ap.add_argument("--vit-stride", type=int, default=4)
+    ap.add_argument("--vit-minhash-k", type=int, default=64)
+    ap.add_argument("--vit-router-topk", type=int, default=0)
     ap.add_argument("--vit-num-workers", type=int, default=0)
     ap.add_argument(
         "--common-args",
@@ -366,6 +392,7 @@ def main():
             common.append("--overwrite-cache")
 
         for L in args.lm_lengths:
+            lm_stride = args.lm_seq_stride if args.lm_seq_stride > 0 else L
             lm_cmd = common + [
                 "--task",
                 "lm",
@@ -376,11 +403,25 @@ def main():
                 "--lm-seq-len",
                 str(L),
                 "--lm-seq-stride",
-                str(L),
+                str(lm_stride),
+                "--lm-precision",
+                args.lm_precision,
             ]
             if args.cache_mode == "full":
-                lm_cmd.extend(["--lm-window", "64", "--lm-stride", "32", "--lm-minhash-k", "128", "--lm-router-topk", "4"])
-                lm_cmd.extend(["--precision", args.lm_precision, "--ska-backend", "python"])
+                lm_cmd.extend(
+                    [
+                        "--lm-window",
+                        str(args.lm_window),
+                        "--lm-stride",
+                        str(args.lm_stride),
+                        "--lm-minhash-k",
+                        str(args.lm_minhash_k),
+                        "--lm-router-topk",
+                        str(args.lm_router_topk),
+                        "--ska-backend",
+                        "python",
+                    ]
+                )
             if lm_cache_args:
                 lm_cmd.extend(lm_cache_args)
             _run(
@@ -395,29 +436,49 @@ def main():
             )
 
         if args.seq_lengths:
-            seq_cmd = common + [
-                "--task",
-                "seq2seq",
-                "--seq-dataset",
-                args.seq_dataset,
-            ]
-            if args.cache_mode == "full":
-                seq_cmd.extend(["--seq-window", "64", "--seq-stride", "32", "--seq-minhash-k", "128", "--seq-router-topk", "4"])
-                seq_cmd.extend(["--precision", args.seq_precision, "--ska-backend", "python"])
-            if seq_cache_args:
-                seq_cmd.extend(seq_cache_args)
-            _run(
-                seq_cmd,
-                args.dry_run,
-                args.min_free_gb,
-                args.wait_gpu_interval,
-                args.wait_gpu_timeout,
-                args.require_idle_gpu,
-                args.post_run_grace,
-                args.post_run_wait,
-            )
+            for L in args.seq_lengths:
+                seq_cmd = common + [
+                    "--task",
+                    "seq2seq",
+                    "--seq-dataset",
+                    args.seq_dataset,
+                    "--seq-max-len",
+                    str(L),
+                    "--seq-tokenizer-type",
+                    args.seq_tokenizer_type,
+                    "--seq-precision",
+                    args.seq_precision,
+                ]
+                if args.cache_mode == "full":
+                    seq_cmd.extend(
+                        [
+                            "--seq-window",
+                            str(args.seq_window),
+                            "--seq-stride",
+                            str(args.seq_stride),
+                            "--seq-minhash-k",
+                            str(args.seq_minhash_k),
+                            "--seq-router-topk",
+                            str(args.seq_router_topk),
+                            "--ska-backend",
+                            "python",
+                        ]
+                    )
+                if seq_cache_args:
+                    seq_cmd.extend(seq_cache_args)
+                _run(
+                    seq_cmd,
+                    args.dry_run,
+                    args.min_free_gb,
+                    args.wait_gpu_interval,
+                    args.wait_gpu_timeout,
+                    args.require_idle_gpu,
+                    args.post_run_grace,
+                    args.post_run_wait,
+                )
 
         for L in args.textdiff_lengths:
+            text_stride = args.textdiff_stride if args.textdiff_stride > 0 else L
             text_cmd = common + [
                 "--task",
                 "textdiff",
@@ -426,13 +487,25 @@ def main():
                 "--textdiff-seq-len",
                 str(L),
                 "--textdiff-stride",
-                str(L),
+                str(text_stride),
+                "--textdiff-precision",
+                args.textdiff_precision,
             ]
             if args.cache_mode == "full":
                 text_cmd.extend(
-                    ["--textdiff-window", "64", "--textdiff-bank-stride", "32", "--textdiff-minhash-k", "128", "--textdiff-router-topk", "4"]
+                    [
+                        "--textdiff-window",
+                        str(args.textdiff_window),
+                        "--textdiff-bank-stride",
+                        str(args.textdiff_bank_stride),
+                        "--textdiff-minhash-k",
+                        str(args.textdiff_minhash_k),
+                        "--textdiff-router-topk",
+                        str(args.textdiff_router_topk),
+                        "--ska-backend",
+                        "python",
+                    ]
                 )
-                text_cmd.extend(["--precision", args.textdiff_precision, "--ska-backend", "python"])
             if textdiff_cache_args:
                 text_cmd.extend(textdiff_cache_args)
             _run(
@@ -454,6 +527,7 @@ def main():
             for seed in seeds:
                 for rep in range(1, reps + 1):
                     csv_name = f"lm_{args.lm_dataset}_L{L}_{mode}_s{seed}_r{rep}.csv"
+                    lm_stride = args.lm_seq_stride if args.lm_seq_stride > 0 else L
                     cmd = [
                         sys.executable,
                         "scripts/train_toy_lm_banked.py",
@@ -471,7 +545,7 @@ def main():
                         "--seq-len",
                         str(L),
                         "--seq-stride",
-                        str(L),
+                        str(lm_stride),
                         "--precision",
                         args.lm_precision,
                         "--gpu-vram",
@@ -500,13 +574,13 @@ def main():
                                 "--ska-backend",
                                 "python",
                                 "--window",
-                                "64",
+                                str(args.lm_window),
                                 "--stride",
-                                "32",
+                                str(args.lm_stride),
                                 "--minhash-k",
-                                "128",
+                                str(args.lm_minhash_k),
                                 "--router-topk",
-                                "4",
+                                str(args.lm_router_topk),
                             ]
                         )
                     if common_args:
@@ -557,6 +631,10 @@ def main():
                         "scripts/train_seq2seq_text_banked.py",
                         "--dataset",
                         args.seq_dataset,
+                        "--max-len",
+                        str(L),
+                        "--tokenizer-type",
+                        args.seq_tokenizer_type,
                         "--benchmark",
                         "--bench-warmup",
                         "5",
@@ -592,13 +670,13 @@ def main():
                                 "--ska-backend",
                                 "python",
                                 "--window",
-                                "64",
+                                str(args.seq_window),
                                 "--stride",
-                                "32",
+                                str(args.seq_stride),
                                 "--minhash-k",
-                                "128",
+                                str(args.seq_minhash_k),
                                 "--router-topk",
-                                "4",
+                                str(args.seq_router_topk),
                             ]
                         )
                     if common_args:
@@ -644,6 +722,7 @@ def main():
             for seed in seeds:
                 for rep in range(1, reps + 1):
                     csv_name = f"textdiff_{args.textdiff_dataset}_L{L}_{mode}_s{seed}_r{rep}.csv"
+                    text_stride = args.textdiff_stride if args.textdiff_stride > 0 else L
                     cmd = [
                         sys.executable,
                         "scripts/train_toy_diffusion_banked.py",
@@ -654,7 +733,7 @@ def main():
                         "--text-seq-len",
                         str(L),
                         "--text-stride",
-                        str(L),
+                        str(text_stride),
                         "--benchmark",
                         "--bench-warmup",
                         "5",
@@ -690,13 +769,13 @@ def main():
                                 "--ska-backend",
                                 "python",
                                 "--window",
-                                "64",
+                                str(args.textdiff_window),
                                 "--stride",
-                                "32",
+                                str(args.textdiff_bank_stride),
                                 "--minhash-k",
-                                "128",
+                                str(args.textdiff_minhash_k),
                                 "--router-topk",
-                                "4",
+                                str(args.textdiff_router_topk),
                             ]
                         )
                     if common_args:
@@ -752,7 +831,7 @@ def main():
                     "--bench-iters",
                     "20",
                     "--batch",
-                    "128",
+                    str(args.vit_batch),
                     "--precision",
                     args.vit_precision,
                     "--gpu-vram",
@@ -774,13 +853,13 @@ def main():
                             "--ska-backend",
                             "python",
                             "--window",
-                            "8",
+                            str(args.vit_window),
                             "--stride",
-                            "4",
+                            str(args.vit_stride),
                             "--minhash-k",
-                            "64",
+                            str(args.vit_minhash_k),
                             "--router-topk",
-                            "0",
+                            str(args.vit_router_topk),
                         ]
                     )
                 if common_args:

@@ -165,12 +165,27 @@ def _seq_token_spec(args, dataset_id: str, data_sig: Optional[dict], max_len: in
         split="train+val",
         subset=data_sig,
         tokenizer={
-            "type": "whitespace",
+            "type": args.tokenizer_type,
             "special_tokens": ["<pad>", "<s>", "</s>"],
             "max_len": int(max_len),
+            "tokenizer_config": _default_tokenizer_config(args.tokenizer_type, max_len),
         },
         sequence={"max_len": int(max_len)},
-        model={"d_model": int(args.atom_dim), "heads": int(args.heads), "layers": int(args.layers)},
+        ska={
+            "window": int(args.window),
+            "stride": int(args.stride),
+            "minhash_k": int(args.minhash_k),
+            "router_topk": int(args.router_topk),
+            "backend": args.ska_backend,
+            "precision": args.precision,
+            "attn": args.set_kernel,
+        },
+        model={
+            "d_model": int(args.atom_dim),
+            "heads": int(args.heads),
+            "layers": int(args.layers),
+            "precision": args.precision,
+        },
         routing_depends_on_learned_params=bool(args.adapter_rank > 0),
     )
     return spec.to_dict()
@@ -197,7 +212,12 @@ def _seq_bank_spec(args, dataset_id: str, data_sig: Optional[dict], max_len: int
             "precision": args.precision,
             "attn": args.set_kernel,
         },
-        model={"d_model": int(args.atom_dim), "heads": int(args.heads), "layers": int(args.layers)},
+        model={
+            "d_model": int(args.atom_dim),
+            "heads": int(args.heads),
+            "layers": int(args.layers),
+            "precision": args.precision,
+        },
         routing_depends_on_learned_params=bool(args.adapter_rank > 0),
     )
     return spec.to_dict()
@@ -685,6 +705,12 @@ def main():
         default=None,
         help="Optional cap on dataset size; omit to use the full split.",
     )
+    parser.add_argument(
+        "--max-len",
+        type=int,
+        default=64,
+        help="Maximum sequence length for src/tgt tokenization.",
+    )
     tokenizer_choices = tuple(available_tokenizer_types())
     parser.add_argument(
         "--tokenizer-dir",
@@ -887,7 +913,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         tgt_path=args.tgt,
         demo=args.demo,
         demo_samples=args.demo_samples,
-        max_len=64,
+        max_len=args.max_len,
         cache_dir=str(cache_dir),
     )
 

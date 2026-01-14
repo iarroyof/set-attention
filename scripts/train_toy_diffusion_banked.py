@@ -181,7 +181,20 @@ def _text_token_spec(args) -> dict:
         subset=_text_data_signature(args),
         tokenizer={"type": "whitespace", "special_tokens": TEXT_SPECIAL_TOKENS},
         sequence={"seq_len": int(args.text_seq_len), "stride": int(args.text_stride)},
-        model={"d_model": int(args.d_model), "nhead": int(args.nhead), "layers": int(args.layers)},
+        ska={
+            "window": int(args.window),
+            "stride": int(args.stride),
+            "minhash_k": int(args.minhash_k),
+            "router_topk": int(args.router_topk),
+            "backend": args.ska_backend,
+            "precision": args.precision,
+        },
+        model={
+            "d_model": int(args.d_model),
+            "nhead": int(args.nhead),
+            "layers": int(args.layers),
+            "precision": args.precision,
+        },
         routing_depends_on_learned_params=bool(args.adapter_rank > 0),
     )
     return spec.to_dict()
@@ -203,7 +216,12 @@ def _text_bank_spec(args, tokens_fp: str) -> dict:
             "backend": args.ska_backend,
             "precision": args.precision,
         },
-        model={"d_model": int(args.d_model), "nhead": int(args.nhead), "layers": int(args.layers)},
+        model={
+            "d_model": int(args.d_model),
+            "nhead": int(args.nhead),
+            "layers": int(args.layers),
+            "precision": args.precision,
+        },
         routing_depends_on_learned_params=bool(args.adapter_rank > 0),
     )
     return spec.to_dict()

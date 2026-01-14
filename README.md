@@ -22,6 +22,8 @@ Architecture Updates (Jan 2026)
 - HF cache routing is env-first (`HF_HOME`, `HF_DATASETS_CACHE`, `HF_HUB_CACHE`), via `ensure_hf_cache`.
 - Data loading standardized on DataLoader pipelines with deterministic eval seeding and `--num-workers` controls.
 - Sweeps now gate on GPU idle/free GB and record OOM/exitcode rows for postmortem.
+- Stage A/B runners now expose paper hyperparameters (seq/window/stride/minhash/router/precision/batch) as first-class CLI args; cache scripts consume the same args for fingerprinting.
+- Full-cache runs are guarded: missing bank/routing artifacts produce explicit errors unless `--precache` is used to create them.
 
 Datasets
 --------
@@ -98,6 +100,8 @@ Stage A/B Launchers
 - Stage A (quality @ fixed budget): `scripts/run_stageA_sweeps.py`
 - Stage B (scaling curves): `scripts/run_stageB_sweeps.py`
 - Both support GPU idle gating (`--require-idle-gpu`, `--min-free-gb`), `--cache-mode`, `--precache`, and per-task `--num-workers`.
+- Paper hyperparameters are explicit flags (e.g., `--lm-seq-len`, `--seq-window`, `--textdiff-minhash-k`, `--vit-precision`).
+- Pass non-sweep flags via `--common-args` / `--{task}-args` (e.g., `--wandb`, `--limit` for smoke-only runs).
 
 Configs
 -------
