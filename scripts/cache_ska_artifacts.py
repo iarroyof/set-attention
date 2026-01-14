@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import shlex
 
 
 def main() -> int:
@@ -13,6 +14,30 @@ def main() -> int:
     ap.add_argument("--artifact-cache-root", type=str, default="")
     ap.add_argument("--overwrite-cache", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--common-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to the task cache command (repeatable, quoted string).",
+    )
+    ap.add_argument(
+        "--lm-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to LM cache commands (repeatable, quoted string).",
+    )
+    ap.add_argument(
+        "--seq-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to Seq2Seq cache commands (repeatable, quoted string).",
+    )
+    ap.add_argument(
+        "--textdiff-args",
+        action="append",
+        default=[],
+        help="Extra CLI args appended to TextDiff cache commands (repeatable, quoted string).",
+    )
 
     # LM args
     ap.add_argument("--lm-dataset", type=str, default="wikitext2")
@@ -43,6 +68,18 @@ def main() -> int:
     ap.add_argument("--textdiff-router-topk", type=int, default=4)
 
     args = ap.parse_args()
+
+    def _parse_extra(values: list[str]) -> list[str]:
+        extra: list[str] = []
+        for value in values:
+            if value:
+                extra.extend(shlex.split(value))
+        return extra
+
+    common_args = _parse_extra(args.common_args)
+    lm_args = _parse_extra(args.lm_args)
+    seq_args = _parse_extra(args.seq_args)
+    textdiff_args = _parse_extra(args.textdiff_args)
 
     cmd: list[str]
     if args.task == "lm":
@@ -123,6 +160,14 @@ def main() -> int:
         cmd.extend(["--artifact-cache-root", args.artifact_cache_root])
     if args.overwrite_cache:
         cmd.append("--overwrite-cache")
+    if common_args:
+        cmd.extend(common_args)
+    if args.task == "lm" and lm_args:
+        cmd.extend(lm_args)
+    if args.task == "seq2seq" and seq_args:
+        cmd.extend(seq_args)
+    if args.task == "textdiff" and textdiff_args:
+        cmd.extend(textdiff_args)
 
     print("[cache_ska_artifacts]", " ".join(cmd))
     if args.dry_run:
