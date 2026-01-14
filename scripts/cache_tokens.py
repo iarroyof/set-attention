@@ -23,7 +23,7 @@ def main() -> int:
     # Seq2Seq args
     ap.add_argument("--seq-dataset", type=str, default="wmt16_en_ro")
     ap.add_argument("--seq-limit", type=int, default=None)
-    ap.add_argument("--seq-tokenizer-type", type=str, default="ausa")
+    ap.add_argument("--seq-tokenizer-type", type=str, default="whitespace")
 
     # TextDiff args
     ap.add_argument("--textdiff-dataset", type=str, default="wikitext2")

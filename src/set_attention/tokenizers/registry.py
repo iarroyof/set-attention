@@ -12,6 +12,7 @@ from set_attention.tokenizers.active_tokenizer import (
 )
 from set_attention.tokenizers.hf_bpe import HF_BPE_TYPE, HFBPEConfig, HFBPETokenizer
 from set_attention.tokenizers.hf_unigram import HF_UNIGRAM_TYPE, HFUnigramConfig, HFUnigramTokenizer
+from set_attention.tokenizers.whitespace import WHITESPACE_TOKENIZER_TYPE, WhitespaceConfig, WhitespaceTokenizer
 from set_attention.tokenizers.utils import read_tokenizer_meta
 
 
@@ -56,6 +57,12 @@ def _hf_bpe_loader(path: str, cfg_dict: Optional[Dict[str, Any]]) -> TokenizerPr
 
 
 _REGISTRY: Dict[str, _RegistryEntry] = {
+    WHITESPACE_TOKENIZER_TYPE: _RegistryEntry(
+        WHITESPACE_TOKENIZER_TYPE,
+        constructor=lambda cfg: WhitespaceTokenizer(cfg),
+        loader=lambda path, _: WhitespaceTokenizer.load(path),
+        config_cls=WhitespaceConfig,
+    ),
     ACTIVE_TOKENIZER_TYPE: _RegistryEntry(
         ACTIVE_TOKENIZER_TYPE,
         constructor=lambda cfg: ActiveUniverseTokenizer(cfg),

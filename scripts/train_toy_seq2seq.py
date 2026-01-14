@@ -13,6 +13,7 @@ from set_attention.patch import replace_multihead_attn
 from set_attention.tokenizers.active_tokenizer import ACTIVE_TOKENIZER_TYPE
 from set_attention.tokenizers.hf_bpe import HF_BPE_TYPE
 from set_attention.tokenizers.hf_unigram import HF_UNIGRAM_TYPE
+from set_attention.tokenizers.whitespace import WHITESPACE_TOKENIZER_TYPE
 from set_attention.tokenizers.registry import available_tokenizer_types, create_tokenizer, load_tokenizer, save_tokenizer
 from set_attention.tokenizers.cache import (
     default_tokenizer_dir,
@@ -43,6 +44,8 @@ def _parse_tokenizer_config_arg(value: str) -> Dict[str, Any]:
 def _default_tokenizer_config(kind: str, max_len: int) -> Dict[str, Any]:
     if kind == ACTIVE_TOKENIZER_TYPE:
         return {"seed_lengths": (3, 4, 5), "min_freq": 1, "max_len": max_len}
+    if kind == WHITESPACE_TOKENIZER_TYPE:
+        return {"lowercase": True, "min_freq": 1, "max_vocab": 200_000, "max_len": max_len}
     if kind in {HF_UNIGRAM_TYPE, HF_BPE_TYPE}:
         return {"vocab_size": 512, "min_frequency": 1}
     return {}
@@ -54,9 +57,11 @@ def _normalize_tokenizer_config(config: Dict[str, Any]) -> Dict[str, Any]:
         out["seed_lengths"] = tuple(int(v) for v in out["seed_lengths"])
     if "special_tokens" in out:
         out["special_tokens"] = tuple(str(v) for v in out["special_tokens"])
-    for key in ("min_freq", "min_frequency", "vocab_size", "max_len"):
+    for key in ("min_freq", "min_frequency", "vocab_size", "max_len", "max_vocab"):
         if key in out:
             out[key] = int(out[key])
+    if "lowercase" in out:
+        out["lowercase"] = bool(out["lowercase"])
     return out
 
 
@@ -152,7 +157,7 @@ def main():
     ap.add_argument(
         "--tokenizer-type",
         choices=tokenizer_choices,
-        default=ACTIVE_TOKENIZER_TYPE,
+        default=WHITESPACE_TOKENIZER_TYPE,
         help="Tokenizer backend to use when training a new tokenizer.",
     )
     ap.add_argument(
