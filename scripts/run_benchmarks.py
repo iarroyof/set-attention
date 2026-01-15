@@ -472,6 +472,7 @@ def main() -> None:
     parser.add_argument("--lm-router-topk", type=int, default=None)
     parser.add_argument("--lm-precision", type=str, default=None)
     parser.add_argument("--lm-batch", type=int, default=None)
+    parser.add_argument("--lm-limit", type=int, default=None, help="Alias for --limit in LM runs.")
     # Seq2Seq overrides
     parser.add_argument("--seq-max-len", type=int, default=None)
     parser.add_argument("--seq-window", type=int, default=None)
@@ -559,6 +560,7 @@ def main() -> None:
             + _opt("--router-topk", args.lm_router_topk)
             + _opt("--precision", args.lm_precision)
             + _opt("--batch", args.lm_batch)
+            + _opt("--limit", args.lm_limit)
         ),
         "seq2seq": (
             _opt("--max-len", args.seq_max_len)
