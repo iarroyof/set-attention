@@ -184,6 +184,24 @@ def _extract_seed(cmd: List[str]) -> str:
     return str(cmd[idx + 1])
 
 
+def _require_benchmark_limits(cmd: List[str]) -> None:
+    if "--benchmark" not in cmd:
+        return
+    limit_flags = {
+        "--limit",
+        "--subset-path",
+        "--dataset-lines",
+        "--text-subset-path",
+        "--text-train-limit",
+        "--text-train-line-limit",
+    }
+    if any(flag in cmd for flag in limit_flags):
+        return
+    raise RuntimeError(
+        "--benchmark requires explicit --limit/--subset-path (or text limits for textdiff)."
+    )
+
+
 def run(
     cmd,
     csv_path: Path,
@@ -197,6 +215,7 @@ def run(
     base_row: dict | None = None,
 ):
     print("→", " ".join(cmd))
+    _require_benchmark_limits(cmd)
     if dry_run:
         if base_row is not None:
             row = dict(base_row)

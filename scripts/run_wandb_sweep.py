@@ -143,6 +143,24 @@ def _wait_for_gpu(min_free_gb: float, interval_s: float, timeout_s: float, requi
         time.sleep(interval_s)
 
 
+def _require_benchmark_limits(cmd: List[str]) -> None:
+    if "--benchmark" not in cmd:
+        return
+    limit_flags = {
+        "--limit",
+        "--subset-path",
+        "--dataset-lines",
+        "--text-subset-path",
+        "--text-train-limit",
+        "--text-train-line-limit",
+    }
+    if any(flag in cmd for flag in limit_flags):
+        return
+    raise RuntimeError(
+        "--benchmark requires explicit --limit/--subset-path (or text limits for textdiff)."
+    )
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sweep", required=True, help="Path to sweep yaml (transformer/diffusion/vit)")
@@ -229,6 +247,7 @@ def main():
             if key not in all_params:
                 continue
             cmd.extend(_param_to_cli(key, all_params[key]))
+        _require_benchmark_limits(cmd)
         print("→", " ".join(cmd))
         env = os.environ.copy()
         base_row = {"script": program, "task": "wandb_sweep"}

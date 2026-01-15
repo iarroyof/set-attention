@@ -21,6 +21,19 @@ def _cmd(
     deterministic: bool,
     benchmark_deterministic: bool,
 ) -> List[str]:
+    if "--benchmark" in base_args:
+        limit_flags = {
+            "--limit",
+            "--subset-path",
+            "--dataset-lines",
+            "--text-subset-path",
+            "--text-train-limit",
+            "--text-train-line-limit",
+        }
+        if not any(flag in base_args for flag in limit_flags):
+            raise RuntimeError(
+                "--benchmark requires explicit --limit/--subset-path (or text limits for textdiff)."
+            )
     cmd = [sys.executable, script]
     cmd.extend(base_args)
     cmd.extend(["--benchmark-csv", str(csv_path)])

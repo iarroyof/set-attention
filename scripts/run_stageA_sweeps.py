@@ -179,6 +179,7 @@ def _run(
     post_run_wait: bool,
 ) -> int:
     print("[stageA]", " ".join(cmd))
+    _require_benchmark_limits(cmd)
     if dry_run:
         return 0
     if not _wait_for_gpu(min_free_gb, wait_interval, wait_timeout, require_idle):
@@ -205,6 +206,24 @@ def _run(
         if post_run_wait:
             _wait_for_gpu(min_free_gb, wait_interval, wait_timeout, require_idle)
     return rc
+
+
+def _require_benchmark_limits(cmd: List[str]) -> None:
+    if "--benchmark" not in cmd:
+        return
+    limit_flags = {
+        "--limit",
+        "--subset-path",
+        "--dataset-lines",
+        "--text-subset-path",
+        "--text-train-limit",
+        "--text-train-line-limit",
+    }
+    if any(flag in cmd for flag in limit_flags):
+        return
+    raise RuntimeError(
+        "--benchmark requires explicit --limit/--subset-path (or text limits for textdiff)."
+    )
 
 
 def _append_status_row(csv_path: Path, row: dict) -> None:
