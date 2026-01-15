@@ -241,6 +241,8 @@ def main():
     ap.add_argument("--seeds", nargs="*", default=None)
     ap.add_argument("--reps", type=int, default=1)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--skip-oom", action="store_true", default=True, help="Append --skip-oom to child runs (default: enabled).")
+    ap.add_argument("--no-skip-oom", dest="skip_oom", action="store_false", help="Disable --skip-oom passthrough.")
     ap.add_argument("--cache-mode", choices=["none", "tokens", "full"], default="none")
     ap.add_argument("--artifact-cache-root", type=str, default="")
     ap.add_argument("--overwrite-cache", action="store_true")
@@ -602,7 +604,6 @@ def main():
                         args.lm_precision,
                         "--gpu-vram",
                         str(args.gpu_vram),
-                        "--skip-oom",
                         "--benchmark-csv",
                         str(out_dir / csv_name),
                         "--seed",
@@ -612,6 +613,8 @@ def main():
                         "--num-workers",
                         str(args.lm_num_workers),
                     ]
+                    if args.skip_oom:
+                        cmd.append("--skip-oom")
                     if args.lm_limit is not None:
                         cmd.extend(["--limit", str(args.lm_limit)])
                     if args.cache_mode != "none":
@@ -700,7 +703,6 @@ def main():
                         args.seq_precision,
                         "--gpu-vram",
                         str(args.gpu_vram),
-                        "--skip-oom",
                         "--benchmark-csv",
                         str(out_dir / csv_name),
                         "--seed",
@@ -710,6 +712,8 @@ def main():
                         "--num-workers",
                         str(args.seq_num_workers),
                     ]
+                    if args.skip_oom:
+                        cmd.append("--skip-oom")
                     if args.seq_limit is not None:
                         cmd.extend(["--limit", str(args.seq_limit)])
                     if args.cache_mode != "none":
@@ -801,7 +805,6 @@ def main():
                         args.textdiff_precision,
                         "--gpu-vram",
                         str(args.gpu_vram),
-                        "--skip-oom",
                         "--benchmark-csv",
                         str(out_dir / csv_name),
                         "--seed",
@@ -811,6 +814,8 @@ def main():
                         "--num-workers",
                         str(args.textdiff_num_workers),
                     ]
+                    if args.skip_oom:
+                        cmd.append("--skip-oom")
                     if args.cache_mode != "none":
                         cmd.extend(["--cache-mode", args.cache_mode])
                     if args.artifact_cache_root:
@@ -892,7 +897,6 @@ def main():
                     args.vit_precision,
                     "--gpu-vram",
                     str(args.gpu_vram),
-                    "--skip-oom",
                     "--benchmark-csv",
                     str(out_dir / csv_name),
                     "--seed",
@@ -900,6 +904,8 @@ def main():
                     "--reps",
                     str(1),
                 ]
+                if args.skip_oom:
+                    cmd.append("--skip-oom")
                 cmd.extend(["--num-workers", str(args.vit_num_workers)])
                 if args.vit_limit is not None:
                     cmd.extend(["--limit", str(args.vit_limit)])
