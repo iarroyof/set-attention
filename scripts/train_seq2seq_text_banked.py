@@ -119,6 +119,7 @@ def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Excepti
         "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
         "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
         "precision": args.precision,
+        "cache_fp": getattr(args, "cache_fp", "NA"),
         "set_kernel": args.set_kernel,
         "batch": args.batch,
         "max_len": getattr(args, "max_len", "NA"),
@@ -473,6 +474,7 @@ def run_seq2seq_benchmark(
     train_tgt_ids=None,
 ):
     attn_impl = _attn_impl_label(args, args.sdpa_baseline)
+    cache_fp = getattr(args, "cache_fp", "NA")
     free_gb_at_start = _gpu_free_gb(device)
     iterator = build_text_dataloader(
         train_pairs,
@@ -522,6 +524,7 @@ def run_seq2seq_benchmark(
                     "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                     "attn_impl": attn_impl,
                     "precision": args.precision,
+                    "cache_fp": cache_fp,
                     "status": "skipped",
                     "skip_reason": decision.reason or ("dry_run" if args.dry_run else ""),
                     "gpu_vram_gb": args.gpu_vram,
@@ -580,6 +583,7 @@ def run_seq2seq_benchmark(
                     "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                     "attn_impl": attn_impl,
                     "precision": args.precision,
+                    "cache_fp": cache_fp,
                     "status": "oom",
                     "skip_reason": "runtime_oom",
                     "gpu_vram_gb": args.gpu_vram,
@@ -680,6 +684,7 @@ def run_seq2seq_benchmark(
             "min_sets_per_seq": min_sets,
             "max_sets_per_seq": max_sets,
             "max_vram_mb": max_vram_mb,
+            "cache_fp": cache_fp,
             "status": "ok",
             "skip_reason": "",
             "gpu_vram_gb": args.gpu_vram,
@@ -870,6 +875,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         raise RuntimeError("--precompute-bank requires --cache-mode full.")
     if args.precompute_bank and args.benchmark:
         raise RuntimeError("--precompute-bank must not be used in benchmark mode.")
+    cache_fp = "NA"
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {
@@ -995,6 +1001,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         data_sig = _seq_data_signature(args)
         token_spec = _seq_token_spec(args, dataset_id, data_sig, max_len)
         token_root = _artifact_root_with_override(token_spec, args.artifact_fingerprint, hf_root)
+        cache_fp = token_root.name
         tokens_path = token_root / "tokens.pt"
         if tokens_path.exists() and not args.overwrite_cache:
             assert_meta_compatible(token_root, token_spec)
@@ -1110,6 +1117,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 loaded_bank_cache = True
                 print(f"[Cache] Loaded seq2seq bank+routing from {bank_root}")
                 bank_fp = bank_root.name
+                cache_fp = bank_fp
                 print(f"[CacheReuse] bank+routing loaded | fp={bank_fp} | task=seq2seq")
 
         if not loaded_bank_cache:
@@ -1136,6 +1144,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     val_src_bank = build_windowed_bank_from_texts(tokenizer, val_src_texts, window=args.window, stride=args.stride)
                     val_tgt_bank = build_windowed_bank_from_texts(tokenizer, val_tgt_texts, window=args.window, stride=args.stride)
 
+    args.cache_fp = cache_fp
     device = torch.device(args.device)
     free_gb_at_start = _gpu_free_gb(device)
     if train_src_stoi and train_tgt_stoi:
@@ -1215,6 +1224,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 write_meta(bank_root, bank_spec)
                 print(f"[Cache] Saved seq2seq bank+routing to {bank_root}")
                 bank_fp = bank_root.name
+                cache_fp = bank_fp
                 print(f"[CacheCreate] bank+routing created | fp={bank_fp} | task=seq2seq")
         if args.precompute_bank:
             universe = universe.to(device)
@@ -1362,6 +1372,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                             "attn_impl": attn_impl,
                             "precision": args.precision,
+                            "cache_fp": getattr(args, "cache_fp", "NA"),
                             "set_kernel": args.set_kernel,
                             "batch": args.batch,
                             "max_len": max_len,
@@ -1527,6 +1538,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                     "attn_impl": attn_impl,
                     "precision": args.precision,
+                    "cache_fp": getattr(args, "cache_fp", "NA"),
                     "set_kernel": args.set_kernel,
                     "batch": args.batch,
                     "max_len": 64,

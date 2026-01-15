@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
+from set_attention.data.artifact_cache import resolve_hf_root
 
 def _parse_seeds(raw: str | List[str] | None, default: int) -> List[int]:
     if not raw:
@@ -284,6 +285,7 @@ def main():
     ap.add_argument("--lm-minhash-k", type=int, default=128)
     ap.add_argument("--lm-router-topk", type=int, default=4)
     ap.add_argument("--lm-num-workers", type=int, default=0)
+    ap.add_argument("--lm-limit", type=int, default=None, help="Alias for --limit in LM runs.")
 
     # Seq2Seq defaults
     ap.add_argument("--seq-dataset", type=str, default="wmt16_en_ro")
@@ -296,6 +298,7 @@ def main():
     ap.add_argument("--seq-router-topk", type=int, default=4)
     ap.add_argument("--seq-tokenizer-type", type=str, default="whitespace")
     ap.add_argument("--seq-num-workers", type=int, default=0)
+    ap.add_argument("--seq-limit", type=int, default=None, help="Alias for --limit in Seq2Seq runs.")
 
     # Diffusion text defaults
     ap.add_argument("--textdiff-dataset", type=str, default="wikitext2")
@@ -317,6 +320,7 @@ def main():
     ap.add_argument("--vit-minhash-k", type=int, default=64)
     ap.add_argument("--vit-router-topk", type=int, default=0)
     ap.add_argument("--vit-num-workers", type=int, default=0)
+    ap.add_argument("--vit-limit", type=int, default=None, help="Alias for --limit in ViT runs.")
     ap.add_argument(
         "--common-args",
         action="append",
@@ -388,6 +392,48 @@ def main():
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    if args.cache_mode == "full" and not args.precache:
+        hf_root = resolve_hf_root(args.artifact_cache_root or None)
+        missing = []
+        lm_root = hf_root / "artifacts" / "lm" / args.lm_dataset
+        seq_root = hf_root / "artifacts" / "seq2seq" / args.seq_dataset
+        text_root = hf_root / "artifacts" / "textdiff" / args.textdiff_dataset
+        lm_required = ["bank_train.pt", "bank_val.pt", "routing_train.pt", "routing_val.pt"]
+        seq_required = [
+            "bank_src_train.pt",
+            "bank_tgt_train.pt",
+            "bank_src_val.pt",
+            "bank_tgt_val.pt",
+            "routing_src_train.pt",
+            "routing_tgt_train.pt",
+            "routing_src_val.pt",
+            "routing_tgt_val.pt",
+        ]
+        text_required = ["bank_train.pt", "bank_val.pt", "routing_train.pt", "routing_val.pt"]
+
+        def _has_artifacts(root: Path, required: list[str]) -> bool:
+            if not root.exists():
+                return False
+            for fp_dir in root.iterdir():
+                if not fp_dir.is_dir():
+                    continue
+                if all((fp_dir / name).exists() for name in required):
+                    return True
+            return False
+
+        if not _has_artifacts(lm_root, lm_required):
+            missing.append(f"lm:{args.lm_dataset}")
+        if not _has_artifacts(seq_root, seq_required):
+            missing.append(f"seq2seq:{args.seq_dataset}")
+        if not _has_artifacts(text_root, text_required):
+            missing.append(f"textdiff:{args.textdiff_dataset}")
+        if missing:
+            raise RuntimeError(
+                "Full cache requested but no precomputed banks found for: "
+                + ", ".join(missing)
+                + ". Run with --precache first."
+            )
+
     if args.cpu_threads > 0:
         value = str(args.cpu_threads)
         os.environ["OMP_NUM_THREADS"] = value
@@ -418,6 +464,8 @@ def main():
             "--lm-precision",
             args.lm_precision,
         ]
+        if args.lm_limit is not None:
+            lm_cmd.extend(["--lm-limit", str(args.lm_limit)])
         if args.cache_mode == "full":
             lm_cmd.extend(
                 [
@@ -448,6 +496,8 @@ def main():
             "--seq-precision",
             args.seq_precision,
         ]
+        if args.seq_limit is not None:
+            seq_cmd.extend(["--seq-limit", str(args.seq_limit)])
         if args.cache_mode == "full":
             seq_cmd.extend(
                 [
@@ -546,6 +596,8 @@ def main():
                 ]
                 if args.lm_subset_path:
                     cmd.extend(["--subset-path", args.lm_subset_path])
+                if args.lm_limit is not None:
+                    cmd.extend(["--limit", str(args.lm_limit)])
                 if args.cache_mode != "none":
                     cmd.extend(["--cache-mode", args.cache_mode])
                 if args.artifact_cache_root:
@@ -640,6 +692,8 @@ def main():
                     str(1),
                 ]
                 cmd.extend(["--num-workers", str(args.seq_num_workers)])
+                if args.seq_limit is not None:
+                    cmd.extend(["--limit", str(args.seq_limit)])
                 if args.cache_mode != "none":
                     cmd.extend(["--cache-mode", args.cache_mode])
                 if args.artifact_cache_root:
@@ -826,6 +880,8 @@ def main():
                     str(1),
                 ]
                 cmd.extend(["--num-workers", str(args.vit_num_workers)])
+                if args.vit_limit is not None:
+                    cmd.extend(["--limit", str(args.vit_limit)])
                 if args.skip_oom:
                     cmd.append("--skip-oom")
                 if args.profile:

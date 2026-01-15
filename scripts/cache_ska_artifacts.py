@@ -42,6 +42,7 @@ def main() -> int:
     # LM args
     ap.add_argument("--lm-dataset", type=str, default="wikitext2")
     ap.add_argument("--lm-subset-path", type=str, default="")
+    ap.add_argument("--lm-limit", type=int, default=None, help="Alias for --limit in LM runs.")
     ap.add_argument("--lm-seq-len", type=int, default=256)
     ap.add_argument("--lm-seq-stride", type=int, default=256)
     ap.add_argument("--lm-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
@@ -116,6 +117,8 @@ def main() -> int:
         ]
         if args.lm_subset_path:
             cmd.extend(["--subset-path", args.lm_subset_path])
+        if args.lm_limit is not None:
+            cmd.extend(["--limit", str(args.lm_limit)])
     elif args.task == "seq2seq":
         cmd = [
             sys.executable,

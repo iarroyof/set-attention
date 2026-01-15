@@ -92,6 +92,7 @@ def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Excepti
         "minhash_k": args.minhash_k,
         "router_topk": args.router_topk,
         "adapter_rank": args.adapter_rank,
+        "cache_fp": getattr(args, "cache_fp", "NA"),
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,
@@ -340,6 +341,7 @@ def run_vit_benchmark(
     rep,
     run_uid,
 ):
+    cache_fp = getattr(args, "cache_fp", "NA")
     free_gb_at_start = _gpu_free_gb(device)
     bench_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -384,6 +386,7 @@ def run_vit_benchmark(
                     "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                     "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
                     "precision": args.precision,
+                    "cache_fp": cache_fp,
                     "status": "skipped",
                     "skip_reason": decision.reason or ("dry_run" if args.dry_run else ""),
                     "gpu_vram_gb": args.gpu_vram,
@@ -447,6 +450,7 @@ def run_vit_benchmark(
                     "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                     "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
                     "precision": args.precision,
+                    "cache_fp": cache_fp,
                     "status": "oom",
                     "skip_reason": "runtime_oom",
                     "gpu_vram_gb": args.gpu_vram,
@@ -539,6 +543,7 @@ def run_vit_benchmark(
             "min_sets_per_seq": min_sets,
             "max_sets_per_seq": max_sets,
             "max_vram_mb": max_vram_mb,
+            "cache_fp": cache_fp,
             "status": "ok",
             "skip_reason": "",
             "gpu_vram_gb": args.gpu_vram,
@@ -678,6 +683,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     print(f"[Run] seed={seed} rep={rep} uid={run_uid}")
     if args.precompute_bank and args.benchmark:
         raise RuntimeError("--precompute-bank must not be used in benchmark mode.")
+    args.cache_fp = "NA"
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     wandb_config = {
@@ -994,6 +1000,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                             "rep": rep,
                             "run_uid": run_uid,
                             "epoch": ep,
+                            "cache_fp": getattr(args, "cache_fp", "NA"),
                             "status": "oom",
                             "skip_reason": str(exc)[:160],
                             "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
@@ -1108,6 +1115,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     "val_top5": val_metrics["top5"] if val_metrics is not None else "NA",
                     "coverage_sets_per_seq": avg_sets_per_seq if not args.sdpa_baseline else "NA",
                     "coverage_ratio": coverage_ratio if not args.sdpa_baseline else "NA",
+                    "cache_fp": getattr(args, "cache_fp", "NA"),
                     "status": "ok",
                 },
             )

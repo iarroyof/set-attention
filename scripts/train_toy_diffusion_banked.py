@@ -297,6 +297,7 @@ def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Excepti
         "minhash_k": args.minhash_k,
         "router_topk": args.router_topk,
         "adapter_rank": args.adapter_rank,
+        "cache_fp": getattr(args, "cache_fp", "NA"),
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,
@@ -545,6 +546,14 @@ def run_diffusion_benchmark(
     rep,
     run_uid,
 ):
+    text_mode = args.data_mode == "text"
+    stride_text = args.text_stride if args.text_stride > 0 else args.text_seq_len
+    config_label = args.config
+    dataset_label = args.config
+    if text_mode:
+        config_label = f"text::{args.text_dataset}@{args.text_seq_len}/{stride_text}"
+        dataset_label = args.text_dataset
+    cache_fp = getattr(args, "cache_fp", "NA")
     bench_batch = min(args.batch, train_data.size(0))
     if bench_batch == 0:
         print("[benchmark] no training data available.")
@@ -573,6 +582,7 @@ def run_diffusion_benchmark(
                     "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                     "attn_impl": attn_impl,
                     "precision": args.precision,
+                    "cache_fp": cache_fp,
                     "status": "skipped",
                     "skip_reason": decision.reason or ("dry_run" if args.dry_run else ""),
                     "gpu_vram_gb": args.gpu_vram,
@@ -629,6 +639,7 @@ def run_diffusion_benchmark(
                     "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                     "attn_impl": attn_impl,
                     "precision": args.precision,
+                    "cache_fp": cache_fp,
                     "status": "oom",
                     "skip_reason": "runtime_oom",
                     "gpu_vram_gb": args.gpu_vram,
@@ -684,13 +695,6 @@ def run_diffusion_benchmark(
                 "benchmark/rep": rep,
             }
         )
-    text_mode = args.data_mode == "text"
-    stride_text = args.text_stride if args.text_stride > 0 else args.text_seq_len
-    config_label = args.config
-    dataset_label = args.config
-    if text_mode:
-        config_label = f"text::{args.text_dataset}@{args.text_seq_len}/{stride_text}"
-        dataset_label = args.text_dataset
     _append_benchmark_row(
         benchmark_csv,
         {
@@ -734,6 +738,7 @@ def run_diffusion_benchmark(
             "min_sets_per_seq": min_sets,
             "max_sets_per_seq": max_sets,
             "max_vram_mb": max_vram_mb,
+            "cache_fp": cache_fp,
             "status": "ok",
             "skip_reason": "",
             "gpu_vram_gb": args.gpu_vram,
@@ -933,6 +938,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
     hf_cache = ensure_hf_cache(args.text_cache_dir)
     hf_root = resolve_hf_root(args.artifact_cache_root or None)
     cache_mode = args.cache_mode
+    cache_fp = "NA"
     if cache_mode == "full" and args.adapter_rank > 0:
         raise ValueError("--cache-mode full is only supported when --adapter-rank 0.")
     if args.precompute_bank and cache_mode != "full":
@@ -1055,6 +1061,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 text_embeddings = payload["embeddings"]
                 text_itos = payload["itos"]
                 print(f"[Cache] Loaded text diffusion tokens from {tokens_path}")
+                cache_fp = token_root.name
             else:
                 cache_dir = Path(hf_cache)
                 stride = args.text_stride if args.text_stride > 0 else args.text_seq_len
@@ -1090,6 +1097,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 _save_text_tokens(tokens_path, payload)
                 write_meta(token_root, token_spec)
                 print(f"[Cache] Saved text diffusion tokens to {tokens_path}")
+                cache_fp = token_root.name
             text_train_ids = [row.clone() for row in text_train_ids_tensor] if text_train_ids_tensor is not None else None
             text_val_ids = [row.clone() for row in text_val_ids_tensor] if text_val_ids_tensor is not None else None
         else:
@@ -1191,6 +1199,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 print(f"[Cache] Loaded diffusion bank+routing from {bank_root}")
                 bank_fp = bank_root.name
                 print(f"[CacheReuse] bank+routing loaded | fp={bank_fp} | task=textdiff")
+                cache_fp = bank_fp
 
         if not loaded_bank_cache:
             if text_mode and text_train_ids is not None and text_val_ids is not None:
@@ -1241,12 +1250,16 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 print(f"[Cache] Saved diffusion bank+routing to {bank_root}")
                 bank_fp = bank_root.name
                 print(f"[CacheCreate] bank+routing created | fp={bank_fp} | task=textdiff")
+                cache_fp = bank_fp
 
         if text_mode and text_vocab_size is not None:
+            args.cache_fp = cache_fp
             vocab_size = text_vocab_size
         elif train_cache is not None:
+            args.cache_fp = cache_fp
             vocab_size = int(train_cache.values.max().item() + 1) if train_cache.values.numel() > 0 else data_cfg.seq_len * 2
         else:
+            args.cache_fp = cache_fp
             vocab_size = data_cfg.seq_len * 2
         atom_emb = nn.Embedding(vocab_size, args.d_model).to(device)
         if args.adapter_rank > 0:
@@ -1424,6 +1437,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                             "router_topk": args.router_topk,
                             "adapter_rank": args.adapter_rank,
                             "epoch": epoch,
+                            "cache_fp": getattr(args, "cache_fp", "NA"),
                             "status": "oom",
                             "skip_reason": str(exc)[:160],
                             "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
@@ -1532,6 +1546,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                     "val_1nn": val_nn1_mean,
                     "val_token_acc": text_token_acc if text_token_acc is not None else "NA",
                     "val_bleu": text_bleu if text_bleu is not None else "NA",
+                    "cache_fp": getattr(args, "cache_fp", "NA"),
                     "status": "ok",
                 },
             )

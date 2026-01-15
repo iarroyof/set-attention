@@ -577,6 +577,7 @@ def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Excepti
         "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
         "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
         "precision": args.precision,
+        "cache_fp": getattr(args, "cache_fp", "NA"),
         "attn": args.attn,
         "batch": args.batch,
         "seq_len": args.seq_len,
@@ -700,6 +701,7 @@ def run_lm_benchmark(
     run_uid,
 ):
     attn_impl = _attn_impl_label(args, args.sdpa_baseline)
+    cache_fp = getattr(args, "cache_fp", "NA")
     free_gb_at_start = _gpu_free_gb(device)
     # Normalize benchmark batch
     batch_idx = src_ids = tgt_ids = None
@@ -729,6 +731,7 @@ def run_lm_benchmark(
                     "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                     "attn_impl": attn_impl,
                     "precision": args.precision,
+                    "cache_fp": cache_fp,
                     "status": "skipped",
                     "skip_reason": decision.reason,
                     "gpu_vram_gb": args.gpu_vram,
@@ -749,6 +752,7 @@ def run_lm_benchmark(
                 "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                 "attn_impl": attn_impl,
                 "precision": args.precision,
+                "cache_fp": cache_fp,
                 "status": "dry_run",
                 "skip_reason": "dry_run",
                 "gpu_vram_gb": args.gpu_vram,
@@ -813,6 +817,7 @@ def run_lm_benchmark(
                     "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                     "attn_impl": attn_impl,
                     "precision": args.precision,
+                    "cache_fp": cache_fp,
                     "status": "oom",
                     "skip_reason": msg[:160],
                     "gpu_vram_gb": args.gpu_vram,
@@ -881,6 +886,7 @@ def run_lm_benchmark(
             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
             "attn_impl": attn_impl,
             "precision": args.precision,
+            "cache_fp": cache_fp,
             "attn": args.attn,
             "batch": bench_batch_size or args.batch,
             "seq_len": max_len,
@@ -978,6 +984,12 @@ def main():
     ap.add_argument("--dataset", choices=["", "wikitext2", "wikitext103"], default="")
     ap.add_argument("--dataset-lines", type=int, default=0, help="Limit number of text lines per split (0 = all).")
     ap.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Alias for --dataset-lines (use for fast smoke tests).",
+    )
+    ap.add_argument(
         "--subset-path",
         type=str,
         default="",
@@ -1021,6 +1033,8 @@ def main():
     )
     ap.add_argument("--reps", type=int, default=1, help="Number of repetitions per seed.")
     args = ap.parse_args()
+    if args.limit and args.dataset_lines == 0:
+        args.dataset_lines = int(args.limit)
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), args.d_model, args.nhead)
@@ -1138,6 +1152,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         raise RuntimeError("--precompute-bank must not be used in benchmark mode.")
 
     streaming_data: Optional[WikitextStreamingData] = None
+    cache_fp = "NA"
     train_text_pairs = []
     val_text_pairs = []
     train_refs = []
@@ -1221,6 +1236,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         else:
             token_spec = _lm_token_spec(args, args.dataset, subset_sig)
             token_root = _artifact_root_with_override(token_spec, args.artifact_fingerprint, hf_root)
+            if cache_mode in ("tokens", "full"):
+                cache_fp = token_root.name
             tokens_path = token_root / "tokens.pt"
             if cache_mode in ("tokens", "full") and tokens_path.exists() and not args.overwrite_cache:
                 assert_meta_compatible(token_root, token_spec)
@@ -1258,6 +1275,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         train_refs = []
         val_refs = []
 
+    args.cache_fp = cache_fp
     vocab_size = len(stoi)
     device = torch.device(args.device)
     free_gb_at_start = _gpu_free_gb(device)
@@ -1319,6 +1337,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 val_cache = cache_from_packs(universe, val_pack, val_route)
                 loaded_bank_cache = True
                 bank_fp = bank_root.name
+                cache_fp = bank_fp
                 print(f"[Cache] Loaded LM bank+routing from {bank_root}")
                 print(f"[CacheReuse] bank+routing loaded | fp={bank_fp} | task=lm")
             elif (
@@ -1340,6 +1359,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 val_cache = cache_from_packs(universe, val_pack, val_route)
                 loaded_bank_cache = True
                 bank_fp = bank_root.name
+                cache_fp = bank_fp
                 print(f"[Cache] Loaded LM bank+routing from {bank_root}")
                 print(f"[CacheReuse] bank+routing loaded | fp={bank_fp} | task=lm")
 
@@ -1383,6 +1403,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 write_meta(bank_root, bank_spec)
                 print(f"[Cache] Saved LM bank+routing to {bank_root}")
                 bank_fp = bank_root.name
+                cache_fp = bank_fp
                 print(f"[CacheCreate] bank+routing created | fp={bank_fp} | task=lm")
 
         atom_emb = nn.Embedding(vocab_size, args.d_model).to(device)
@@ -1725,6 +1746,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                             "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                             "attn_impl": attn_impl,
                             "precision": args.precision,
+                            "cache_fp": getattr(args, "cache_fp", "NA"),
                             "attn": args.attn,
                             "batch": args.batch,
                             "seq_len": args.seq_len,
@@ -1801,6 +1823,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
                     "attn_impl": attn_impl,
                     "precision": args.precision,
+                    "cache_fp": getattr(args, "cache_fp", "NA"),
                     "attn": args.attn,
                     "batch": args.batch,
                     "seq_len": args.seq_len,
