@@ -13,6 +13,8 @@ def get_seq2seq_datasets(
     dataset: str = "",
     limit: Optional[int] = None,
     val_limit: Optional[int] = None,
+    train_indices: Optional[list[int]] = None,
+    val_indices: Optional[list[int]] = None,
     src_path: Optional[str] = None,
     tgt_path: Optional[str] = None,
     demo: bool = False,
@@ -25,8 +27,20 @@ def get_seq2seq_datasets(
     Precedence: dataset -> demo -> local files.
     """
     if dataset:
-        src_tr, tgt_tr = load_seq2seq_pairs(dataset, split="train", limit=limit, cache_dir=cache_dir)
-        src_va, tgt_va = load_seq2seq_pairs(dataset, split="validation", limit=val_limit or limit, cache_dir=cache_dir)
+        src_tr, tgt_tr = load_seq2seq_pairs(
+            dataset,
+            split="train",
+            limit=limit,
+            cache_dir=cache_dir,
+            indices=train_indices,
+        )
+        src_va, tgt_va = load_seq2seq_pairs(
+            dataset,
+            split="validation",
+            limit=val_limit or limit,
+            cache_dir=cache_dir,
+            indices=val_indices,
+        )
         train_ds = InMemoryTextPairDataset(src_tr, tgt_tr, max_len=max_len)
         val_ds = InMemoryTextPairDataset(src_va, tgt_va, max_len=max_len)
         return train_ds, val_ds

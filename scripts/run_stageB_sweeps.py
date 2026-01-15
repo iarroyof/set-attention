@@ -247,6 +247,11 @@ def main():
     ap.add_argument("--artifact-cache-root", type=str, default="")
     ap.add_argument("--overwrite-cache", action="store_true")
     ap.add_argument("--precache", action="store_true", help="Precompute caches before running Stage B.")
+    ap.add_argument("--stageb-mode", choices=["benchmark", "train"], default="benchmark", help="Stage B mode (default: benchmark).")
+    ap.add_argument("--epochs", type=int, default=None, help="Required when --stageb-mode train is selected.")
+    ap.add_argument("--eval-seed", type=int, default=1337, help="Validation seed for Stage B training runs.")
+    ap.add_argument("--production", action="store_true", help="Enforce production logging requirements (W&B).")
+    ap.add_argument("--wandb-project", type=str, default="", help="W&B project name (required with --production).")
     ap.add_argument("--min-free-gb", type=float, default=0.0, help="Wait for this much free GPU memory before running each job (0=disable).")
     ap.add_argument("--wait-gpu-interval", type=float, default=10.0, help="Seconds between GPU free-memory checks.")
     ap.add_argument("--wait-gpu-timeout", type=float, default=0.0, help="Timeout in seconds for GPU wait (0=wait forever).")
@@ -281,6 +286,7 @@ def main():
     ap.add_argument("--seq-dataset", type=str, default="wmt16_en_ro")
     ap.add_argument("--seq-precision", type=str, default="fp16", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--seq-max-len", type=int, default=256)
+    ap.add_argument("--seq-subset-path", type=str, default="")
     ap.add_argument("--seq-tokenizer-type", type=str, default="whitespace")
     ap.add_argument("--seq-window", type=int, default=64)
     ap.add_argument("--seq-stride", type=int, default=32)
@@ -293,6 +299,7 @@ def main():
     ap.add_argument("--textdiff-lengths", type=int, nargs="+", default=[])
     ap.add_argument("--textdiff-batch", type=int, default=64)
     ap.add_argument("--textdiff-dataset", type=str, default="wikitext2")
+    ap.add_argument("--textdiff-subset-path", type=str, default="")
     ap.add_argument("--textdiff-precision", type=str, default="fp16", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--textdiff-seq-len", type=int, default=256)
     ap.add_argument("--textdiff-stride", type=int, default=256)
@@ -311,6 +318,7 @@ def main():
     ap.add_argument("--vit-router-topk", type=int, default=0)
     ap.add_argument("--vit-num-workers", type=int, default=0)
     ap.add_argument("--vit-limit", type=int, default=None, help="Alias for --limit in ViT runs.")
+    ap.add_argument("--vit-subset-path", type=str, default="")
     ap.add_argument(
         "--common-args",
         action="append",
@@ -381,6 +389,19 @@ def main():
     reps = max(1, int(args.reps))
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.production and not args.wandb_project:
+        raise RuntimeError("--production requires --wandb-project (paper-grade runs must be logged).")
+    if args.stageb_mode == "train" and args.epochs is None:
+        raise RuntimeError("Stage B training requires --epochs.")
+    if args.production:
+        os.environ.setdefault("WANDB_RUN_GROUP", "stageB_scaling")
+        if "--wandb" not in common_args:
+            common_args.append("--wandb")
+        if "--wandb-project" not in common_args:
+            common_args.extend(["--wandb-project", args.wandb_project])
+        if "--wandb-tags" not in common_args:
+            common_args.extend(["--wandb-tags", "stageB_scaling,production"])
 
     if args.cache_mode == "full" and not args.precache:
         hf_root = resolve_hf_root(args.artifact_cache_root or None)
@@ -496,6 +517,8 @@ def main():
                     args.seq_dataset,
                     "--seq-max-len",
                     str(L),
+                    "--seq-subset-path",
+                    args.seq_subset_path,
                     "--seq-tokenizer-type",
                     args.seq_tokenizer_type,
                     "--seq-precision",
@@ -545,6 +568,8 @@ def main():
                 "--textdiff-precision",
                 args.textdiff_precision,
             ]
+            if args.textdiff_subset_path:
+                text_cmd.extend(["--textdiff-subset-path", args.textdiff_subset_path])
             if args.cache_mode == "full":
                 text_cmd.extend(
                     [
@@ -581,6 +606,7 @@ def main():
             for seed in seeds:
                 for rep in range(1, reps + 1):
                     csv_name = f"lm_{args.lm_dataset}_L{L}_{mode}_s{seed}_r{rep}.csv"
+                    metrics_name = f"metrics_lm_{args.lm_dataset}_L{L}_{mode}_s{seed}_r{rep}.csv"
                     lm_stride = args.lm_seq_stride if args.lm_seq_stride > 0 else L
                     cmd = [
                         sys.executable,
@@ -589,30 +615,50 @@ def main():
                         args.lm_dataset,
                         "--subset-path",
                         args.lm_subset_path,
-                        "--benchmark",
-                        "--bench-warmup",
-                        "5",
-                        "--bench-iters",
-                        "20",
-                        "--batch",
-                        str(args.lm_batch),
-                        "--seq-len",
-                        str(L),
-                        "--seq-stride",
-                        str(lm_stride),
-                        "--precision",
-                        args.lm_precision,
-                        "--gpu-vram",
-                        str(args.gpu_vram),
-                        "--benchmark-csv",
-                        str(out_dir / csv_name),
-                        "--seed",
-                        str(seed),
-                        "--reps",
-                        str(1),
-                        "--num-workers",
-                        str(args.lm_num_workers),
                     ]
+                    if args.stageb_mode == "benchmark":
+                        cmd.extend(
+                            [
+                                "--benchmark",
+                                "--bench-warmup",
+                                "5",
+                                "--bench-iters",
+                                "20",
+                                "--benchmark-csv",
+                                str(out_dir / csv_name),
+                            ]
+                        )
+                    else:
+                        cmd.extend(
+                            [
+                                "--epochs",
+                                str(args.epochs),
+                                "--eval-seed",
+                                str(args.eval_seed),
+                                "--metrics-csv",
+                                str(out_dir / metrics_name),
+                            ]
+                        )
+                    cmd.extend(
+                        [
+                            "--batch",
+                            str(args.lm_batch),
+                            "--seq-len",
+                            str(L),
+                            "--seq-stride",
+                            str(lm_stride),
+                            "--precision",
+                            args.lm_precision,
+                            "--gpu-vram",
+                            str(args.gpu_vram),
+                            "--seed",
+                            str(seed),
+                            "--reps",
+                            str(1),
+                            "--num-workers",
+                            str(args.lm_num_workers),
+                        ]
+                    )
                     if args.skip_oom:
                         cmd.append("--skip-oom")
                     if args.lm_limit is not None:
@@ -683,6 +729,7 @@ def main():
             for seed in seeds:
                 for rep in range(1, reps + 1):
                     csv_name = f"seq_{args.seq_dataset}_L{L}_{mode}_s{seed}_r{rep}.csv"
+                    metrics_name = f"metrics_seq_{args.seq_dataset}_L{L}_{mode}_s{seed}_r{rep}.csv"
                     cmd = [
                         sys.executable,
                         "scripts/train_seq2seq_text_banked.py",
@@ -690,28 +737,50 @@ def main():
                         args.seq_dataset,
                         "--max-len",
                         str(L),
+                        "--subset-path",
+                        args.seq_subset_path,
                         "--tokenizer-type",
                         args.seq_tokenizer_type,
-                        "--benchmark",
-                        "--bench-warmup",
-                        "5",
-                        "--bench-iters",
-                        "20",
-                        "--batch",
-                        str(args.seq_batch),
-                        "--precision",
-                        args.seq_precision,
-                        "--gpu-vram",
-                        str(args.gpu_vram),
-                        "--benchmark-csv",
-                        str(out_dir / csv_name),
-                        "--seed",
-                        str(seed),
-                        "--reps",
-                        str(1),
-                        "--num-workers",
-                        str(args.seq_num_workers),
                     ]
+                    if args.stageb_mode == "benchmark":
+                        cmd.extend(
+                            [
+                                "--benchmark",
+                                "--bench-warmup",
+                                "5",
+                                "--bench-iters",
+                                "20",
+                                "--benchmark-csv",
+                                str(out_dir / csv_name),
+                            ]
+                        )
+                    else:
+                        cmd.extend(
+                            [
+                                "--epochs",
+                                str(args.epochs),
+                                "--eval-seed",
+                                str(args.eval_seed),
+                                "--metrics-csv",
+                                str(out_dir / metrics_name),
+                            ]
+                        )
+                    cmd.extend(
+                        [
+                            "--batch",
+                            str(args.seq_batch),
+                            "--precision",
+                            args.seq_precision,
+                            "--gpu-vram",
+                            str(args.gpu_vram),
+                            "--seed",
+                            str(seed),
+                            "--reps",
+                            str(1),
+                            "--num-workers",
+                            str(args.seq_num_workers),
+                        ]
+                    )
                     if args.skip_oom:
                         cmd.append("--skip-oom")
                     if args.seq_limit is not None:
@@ -782,6 +851,7 @@ def main():
             for seed in seeds:
                 for rep in range(1, reps + 1):
                     csv_name = f"textdiff_{args.textdiff_dataset}_L{L}_{mode}_s{seed}_r{rep}.csv"
+                    metrics_name = f"metrics_textdiff_{args.textdiff_dataset}_L{L}_{mode}_s{seed}_r{rep}.csv"
                     text_stride = args.textdiff_stride if args.textdiff_stride > 0 else L
                     cmd = [
                         sys.executable,
@@ -794,26 +864,48 @@ def main():
                         str(L),
                         "--text-stride",
                         str(text_stride),
-                        "--benchmark",
-                        "--bench-warmup",
-                        "5",
-                        "--bench-iters",
-                        "20",
-                        "--batch",
-                        str(args.textdiff_batch),
-                        "--precision",
-                        args.textdiff_precision,
-                        "--gpu-vram",
-                        str(args.gpu_vram),
-                        "--benchmark-csv",
-                        str(out_dir / csv_name),
-                        "--seed",
-                        str(seed),
-                        "--reps",
-                        str(1),
-                        "--num-workers",
-                        str(args.textdiff_num_workers),
                     ]
+                    if args.textdiff_subset_path:
+                        cmd.extend(["--text-subset-path", args.textdiff_subset_path])
+                    if args.stageb_mode == "benchmark":
+                        cmd.extend(
+                            [
+                                "--benchmark",
+                                "--bench-warmup",
+                                "5",
+                                "--bench-iters",
+                                "20",
+                                "--benchmark-csv",
+                                str(out_dir / csv_name),
+                            ]
+                        )
+                    else:
+                        cmd.extend(
+                            [
+                                "--epochs",
+                                str(args.epochs),
+                                "--eval-seed",
+                                str(args.eval_seed),
+                                "--metrics-csv",
+                                str(out_dir / metrics_name),
+                            ]
+                        )
+                    cmd.extend(
+                        [
+                            "--batch",
+                            str(args.textdiff_batch),
+                            "--precision",
+                            args.textdiff_precision,
+                            "--gpu-vram",
+                            str(args.gpu_vram),
+                            "--seed",
+                            str(seed),
+                            "--reps",
+                            str(1),
+                            "--num-workers",
+                            str(args.textdiff_num_workers),
+                        ]
+                    )
                     if args.skip_oom:
                         cmd.append("--skip-oom")
                     if args.cache_mode != "none":
@@ -881,34 +973,57 @@ def main():
         for seed in seeds:
             for rep in range(1, reps + 1):
                 csv_name = f"vit_{mode}_s{seed}_r{rep}.csv"
+                metrics_name = f"metrics_vit_{mode}_s{seed}_r{rep}.csv"
                 cmd = [
                     sys.executable,
                     "scripts/train_tiny_vit_banked.py",
                     "--data-mode",
                     "cifar10",
-                    "--benchmark",
-                    "--bench-warmup",
-                    "5",
-                    "--bench-iters",
-                    "20",
-                    "--batch",
-                    str(args.vit_batch),
-                    "--precision",
-                    args.vit_precision,
-                    "--gpu-vram",
-                    str(args.gpu_vram),
-                    "--benchmark-csv",
-                    str(out_dir / csv_name),
-                    "--seed",
-                    str(seed),
-                    "--reps",
-                    str(1),
                 ]
+                if args.stageb_mode == "benchmark":
+                    cmd.extend(
+                        [
+                            "--benchmark",
+                            "--bench-warmup",
+                            "5",
+                            "--bench-iters",
+                            "20",
+                            "--benchmark-csv",
+                            str(out_dir / csv_name),
+                        ]
+                    )
+                else:
+                    cmd.extend(
+                        [
+                            "--epochs",
+                            str(args.epochs),
+                            "--eval-seed",
+                            str(args.eval_seed),
+                            "--metrics-csv",
+                            str(out_dir / metrics_name),
+                        ]
+                    )
+                cmd.extend(
+                    [
+                        "--batch",
+                        str(args.vit_batch),
+                        "--precision",
+                        args.vit_precision,
+                        "--gpu-vram",
+                        str(args.gpu_vram),
+                        "--seed",
+                        str(seed),
+                        "--reps",
+                        str(1),
+                    ]
+                )
                 if args.skip_oom:
                     cmd.append("--skip-oom")
                 cmd.extend(["--num-workers", str(args.vit_num_workers)])
                 if args.vit_limit is not None:
                     cmd.extend(["--limit", str(args.vit_limit)])
+                if args.vit_subset_path:
+                    cmd.extend(["--subset-path", args.vit_subset_path])
                 if mode == "dot_explicit":
                     cmd.extend(["--sdpa-baseline", "--attn-baseline", "explicit", "--dot-naive"])
                 else:

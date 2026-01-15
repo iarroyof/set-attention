@@ -2,6 +2,7 @@ import argparse
 import copy
 import csv
 import gc
+import json
 import os
 import random
 import subprocess
@@ -119,8 +120,9 @@ def prepare_text_diffusion_data(
     val_seq_limit: Optional[int],
     embed_dim: int,
     embed_seed: int,
+    train_indices: Optional[List[int]] = None,
 ):
-    train_lines = load_wikitext_lines(dataset, "train", cache_dir, train_line_limit)
+    train_lines = load_wikitext_lines(dataset, "train", cache_dir, train_line_limit, indices=train_indices)
     val_lines = load_wikitext_lines(dataset, "validation", cache_dir, val_line_limit)
     train_tokens = tokenize_lines(train_lines)
     if not train_tokens:
@@ -167,6 +169,7 @@ def _text_data_signature(args) -> dict:
         "val_line_limit": args.text_val_line_limit,
         "train_seq_limit": args.text_train_limit,
         "val_seq_limit": args.text_val_limit,
+        "subset": file_signature(Path(args.text_subset_path)) if args.text_subset_path else None,
         "embed_seed": args.text_embed_seed,
         "seq_len": args.text_seq_len,
         "stride": args.text_stride,
@@ -826,6 +829,12 @@ def main():
     ap.add_argument("--data-mode", choices=["continuous", "synthetic", "text"], default="continuous")
     ap.add_argument("--text-dataset", choices=["wikitext2", "wikitext103"], default="wikitext2")
     ap.add_argument(
+        "--text-subset-path",
+        type=str,
+        default="",
+        help="Optional JSON with 'indices' for text train split (train-only; validation unchanged).",
+    )
+    ap.add_argument(
         "--text-cache-dir",
         type=str,
         default="",
@@ -898,6 +907,28 @@ def main():
     )
     defaults = ap.parse_args([])
     args = ap.parse_args()
+    if args.data_mode == "text":
+        if args.benchmark:
+            if (
+                args.text_train_line_limit is None
+                and args.text_train_limit is None
+                and not args.text_subset_path
+            ):
+                raise RuntimeError(
+                    "--benchmark requires explicit --text-train-limit/--text-train-line-limit or --text-subset-path "
+                    "(no silent dataset caps)."
+                )
+        elif (
+            args.text_train_line_limit is not None
+            or args.text_val_line_limit is not None
+            or args.text_train_limit is not None
+            or args.text_val_limit is not None
+        ):
+            print("[Data] ignoring text limit flags outside benchmark; use --text-subset-path instead.")
+            args.text_train_line_limit = None
+            args.text_val_line_limit = None
+            args.text_train_limit = None
+            args.text_val_limit = None
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), args.d_model, args.nhead)
@@ -1046,6 +1077,13 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
     token_spec = None
 
     if text_mode:
+        text_train_indices: Optional[List[int]] = None
+        if args.text_subset_path:
+            subset_payload = json.loads(Path(args.text_subset_path).read_text())
+            text_train_indices = subset_payload.get("indices", [])
+            if not text_train_indices:
+                raise ValueError(f"No indices found in subset file: {args.text_subset_path}")
+            print(f"[Data] Using text subset indices from {args.text_subset_path} (count={len(text_train_indices)})")
         if cache_mode != "none":
             token_spec = _text_token_spec(args)
             token_root = _artifact_root_with_override(token_spec, args.artifact_fingerprint, hf_root)
@@ -1077,6 +1115,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                     args.text_val_limit,
                     embed_dim,
                     args.text_embed_seed,
+                    text_train_indices,
                 )
                 train_data = text_payload["train_data"]
                 val_data = text_payload["val_data"]
@@ -1115,6 +1154,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 args.text_val_limit,
                 embed_dim,
                 args.text_embed_seed,
+                text_train_indices,
             )
             train_data = text_payload["train_data"]
             val_data = text_payload["val_data"]

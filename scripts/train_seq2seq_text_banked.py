@@ -150,6 +150,7 @@ def _seq_data_signature(args) -> Optional[dict]:
             "dataset": args.dataset,
             "limit": args.limit,
             "val_limit": val_limit,
+            "subset": file_signature(Path(args.subset_path)) if args.subset_path else None,
         }
     if args.src and args.tgt:
         return {
@@ -705,6 +706,12 @@ def main():
     parser.add_argument("--demo-samples", type=int, default=200)
     parser.add_argument("--dataset", choices=["", "wmt16_en_ro", "cnn_dailymail"], default="")
     parser.add_argument(
+        "--subset-path",
+        type=str,
+        default="",
+        help="Optional JSON with 'indices' for train split (train-only; validation unchanged).",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -826,9 +833,14 @@ def main():
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), args.atom_dim, args.heads)
-    if args.benchmark and args.limit is None:
-        args.limit = 50000
-        print("[benchmark] limiting dataset to 50k pairs for memory safety.")
+    if args.benchmark and args.limit is None and not args.subset_path:
+        raise RuntimeError(
+            "--benchmark requires explicit --limit or --subset-path "
+            "(no silent caps allowed)."
+        )
+    if not args.benchmark and args.limit is not None:
+        print("[Data] ignoring --limit outside benchmark mode.")
+        args.limit = None
     if args.cache_mode == "full" and args.num_workers > 0:
         print("[Data] cache-mode=full forces num_workers=0 to avoid duplicating cached tensors.")
         args.num_workers = 0
@@ -911,10 +923,19 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         wandb_tags,
     )
 
+    train_indices = None
+    if args.subset_path:
+        subset_payload = json.loads(Path(args.subset_path).read_text())
+        train_indices = subset_payload.get("indices", [])
+        if not train_indices:
+            raise ValueError(f"No indices found in subset file: {args.subset_path}")
+        print(f"[Data] Using subset indices from {args.subset_path} (count={len(train_indices)})")
+
     train_ds, val_ds = get_seq2seq_datasets(
         dataset=args.dataset,
         limit=args.limit,
         val_limit=args.limit,
+        train_indices=train_indices,
         src_path=args.src,
         tgt_path=args.tgt,
         demo=args.demo,
@@ -949,6 +970,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         limit=args.limit,
         src_path=args.src,
         tgt_path=args.tgt,
+        extra={"subset": file_signature(Path(args.subset_path)) if args.subset_path else None},
     )
     if not tokenizer_dir:
         hf_root = Path(os.environ.get("HF_HOME") or str(cache_dir.parent))

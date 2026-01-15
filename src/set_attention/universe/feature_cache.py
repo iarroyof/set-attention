@@ -89,11 +89,9 @@ class SetFeatureCache:
     def gather_sequence_sets(self, batch_indices: torch.LongTensor) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.seq_offsets is None:
             raise RuntimeError("seq_offsets is not available for this cache.")
-        device = batch_indices.device
         seq_offsets = self.seq_offsets
-        if seq_offsets.device != device:
-            seq_offsets = seq_offsets.to(device)
-        batch_indices = batch_indices.to(device)
+        device = seq_offsets.device
+        batch_indices = batch_indices.to(device, non_blocking=True)
         if batch_indices.numel() == 0:
             return (
                 torch.empty(0, dtype=torch.long, device=device),
@@ -126,7 +124,10 @@ class SetFeatureCache:
             raise RuntimeError("MinHash signatures not built; call build_minhash() first.")
 
         device = phi_cur.device
-        batch_indices_dev = batch_indices.to(device)
+        if self.seq_offsets.device != device:
+            # Ensure cache tensors live with phi_cur to avoid per-batch transfers.
+            self.to(device, non_blocking=True)
+        batch_indices_dev = batch_indices.to(device, non_blocking=True)
         set_idx, ptrs = self.gather_sequence_sets(batch_indices_dev)
         if set_idx.numel() == 0:
             atom_dim = phi_cur.shape[1]
@@ -137,14 +138,8 @@ class SetFeatureCache:
             return empty_phi, empty_sig, empty_size, ptrs
 
         phi_sets = self.compute_phi_for_indices(set_idx, phi_cur)
-        sig_sets = self.sig_sets
-        size_sets = self.size_sets
-        if sig_sets.device != device:
-            sig_sets = sig_sets.to(device)
-        if size_sets.device != device:
-            size_sets = size_sets.to(device)
-        sig_sets = sig_sets.index_select(0, set_idx)
-        size_sets = size_sets.index_select(0, set_idx)
+        sig_sets = self.sig_sets.index_select(0, set_idx)
+        size_sets = self.size_sets.index_select(0, set_idx)
         return phi_sets, sig_sets, size_sets, ptrs
 
     def compute_phi_for_indices(self, set_idx: torch.LongTensor, phi_cur: torch.Tensor) -> torch.Tensor:
@@ -157,14 +152,7 @@ class SetFeatureCache:
 
         device = phi_cur.device
         set_offsets = self.set_offsets
-        if set_offsets.device != device:
-            set_offsets = set_offsets.to(device)
         values_pos = self._values_pos
-        if values_pos.device != device:
-            values_pos = values_pos.to(device)
-        size_sets = self.size_sets
-        if size_sets.device != device:
-            size_sets = size_sets.to(device)
 
         starts = set_offsets.index_select(0, set_idx)
         ends = set_offsets.index_select(0, set_idx + 1)

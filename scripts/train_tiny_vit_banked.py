@@ -2,6 +2,7 @@ import argparse
 import copy
 import csv
 import gc
+import json
 import os
 import subprocess
 import time
@@ -250,9 +251,13 @@ def patch_ids_from_image(img: torch.Tensor, patch: int) -> torch.Tensor:
     return torch.tensor(ids, dtype=torch.long)
 
 
-def build_patch_banks(dataset, patch: int, limit: int) -> BankedSetBatch:
+def build_patch_banks(dataset, patch: int, limit: int | None = None, indices: List[int] | None = None) -> BankedSetBatch:
     sequences = []
-    for idx in range(limit):
+    if indices is not None:
+        use_indices = indices
+    else:
+        use_indices = list(range(int(limit or 0)))
+    for idx in use_indices:
         img, _ = dataset[idx]
         sequences.append(patch_ids_from_image(img, patch))
     bank = build_windowed_bank_from_ids(sequences, window=8, stride=4)
@@ -565,6 +570,12 @@ def main():
         default=None,
         help="Optional cap on dataset size; omit to use the full split.",
     )
+    ap.add_argument(
+        "--subset-path",
+        type=str,
+        default="",
+        help="Optional JSON with 'indices' for train split (train-only; validation unchanged).",
+    )
     ap.add_argument("--val-frac", type=float, default=0.1)
     ap.add_argument("--window", type=int, default=8)
     ap.add_argument("--stride", type=int, default=4)
@@ -644,6 +655,14 @@ def main():
     ap.add_argument("--skip-oom", action="store_true", help="Skip configs that OOM or exceed estimated VRAM.")
     ap.add_argument("--dry-run", action="store_true", help="Print skip/ok decision and write CSV status without running.")
     args = ap.parse_args()
+    if args.benchmark and args.limit is None and not args.subset_path:
+        raise RuntimeError(
+            "--benchmark requires explicit --limit or --subset-path "
+            "(no silent dataset caps allowed)."
+        )
+    if not args.benchmark and args.limit is not None:
+        print("[Data] ignoring --limit outside benchmark; use --subset-path instead.")
+        args.limit = None
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), 128, args.heads)
@@ -737,18 +756,38 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         base_dataset = SyntheticVisionDataset(num_samples=args.demo_samples, img_size=32, num_classes=args.num_classes, seed=seed)
         dataset_len = len(base_dataset)
 
-    limit = args.limit if args.limit is not None else dataset_len
-    total_limit = min(limit, dataset_len)
-    indices_full = list(range(total_limit))
-    if args.val_frac <= 0.0 or total_limit < 2:
-        train_indices = indices_full
+    subset_indices: List[int] | None = None
+    if args.subset_path:
+        subset_payload = json.loads(Path(args.subset_path).read_text())
+        subset_indices = subset_payload.get("indices", [])
+        if not subset_indices:
+            raise ValueError(f"No indices found in subset file: {args.subset_path}")
+        subset_indices = [int(i) for i in subset_indices if 0 <= int(i) < dataset_len]
+        if not subset_indices:
+            raise ValueError(f"No valid indices in subset file: {args.subset_path}")
+        print(f"[Data] Using subset indices from {args.subset_path} (count={len(subset_indices)})")
+
+    base_indices = list(range(dataset_len))
+    if args.benchmark and args.limit is not None:
+        base_indices = base_indices[: min(int(args.limit), dataset_len)]
+    base_count = len(base_indices)
+    if args.val_frac <= 0.0 or base_count < 2:
+        val_count = 0
         val_indices: List[int] = []
     else:
-        val_count = max(1, int(total_limit * args.val_frac))
-        if val_count >= total_limit:
-            val_count = max(1, total_limit // 5)
-        train_indices = indices_full[:-val_count] if val_count < total_limit else indices_full
-        val_indices = indices_full[-val_count:] if val_count < total_limit else []
+        val_count = max(1, int(base_count * args.val_frac))
+        if val_count >= base_count:
+            val_count = max(1, base_count // 5)
+        val_indices = base_indices[-val_count:] if val_count < base_count else []
+    val_set = set(val_indices)
+
+    if subset_indices is not None:
+        train_indices = [idx for idx in subset_indices if idx not in val_set]
+        if not train_indices:
+            raise RuntimeError("Subset indices overlap entirely with validation split.")
+    else:
+        train_indices = base_indices[:-val_count] if val_count < base_count else base_indices
+    total_limit = len(train_indices)
 
     train_dataset = IndexedDataset(base_dataset, train_indices)
     val_dataset = IndexedDataset(base_dataset, val_indices) if val_indices else None
@@ -775,7 +814,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     atom_emb = adapter = phi_snapshot = None
     universe = None
     if not args.sdpa_baseline:
-        bank = build_patch_banks(base_dataset, args.patch, total_limit)
+        bank = build_patch_banks(base_dataset, args.patch, indices=train_indices)
         val_count_log = len(val_dataset) if val_dataset is not None else 0
         print(
             f"[ViT-Banked] dataset prepared | train samples {len(train_dataset)} | "

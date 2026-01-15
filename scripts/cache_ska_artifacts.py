@@ -53,6 +53,7 @@ def main() -> int:
 
     # Seq2Seq args
     ap.add_argument("--seq-dataset", type=str, default="wmt16_en_ro")
+    ap.add_argument("--seq-subset-path", type=str, default="")
     ap.add_argument("--seq-limit", type=int, default=None)
     ap.add_argument("--limit", type=int, default=None, help="Alias for --seq-limit.")
     ap.add_argument("--seq-tokenizer-type", type=str, default="whitespace")
@@ -65,6 +66,7 @@ def main() -> int:
 
     # TextDiff args
     ap.add_argument("--textdiff-dataset", type=str, default="wikitext2")
+    ap.add_argument("--textdiff-subset-path", type=str, default="")
     ap.add_argument("--textdiff-seq-len", type=int, default=256)
     ap.add_argument("--textdiff-stride", type=int, default=256)
     ap.add_argument("--textdiff-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
@@ -144,6 +146,8 @@ def main() -> int:
             "--cache-only",
             "--precompute-bank",
         ]
+        if args.seq_subset_path:
+            cmd.extend(["--subset-path", args.seq_subset_path])
         if args.seq_limit is not None:
             cmd.extend(["--limit", str(args.seq_limit)])
     else:
@@ -173,6 +177,8 @@ def main() -> int:
             "--cache-only",
             "--precompute-bank",
         ]
+        if args.textdiff_subset_path:
+            cmd.extend(["--text-subset-path", args.textdiff_subset_path])
 
     if args.artifact_cache_root:
         cmd.extend(["--artifact-cache-root", args.artifact_cache_root])

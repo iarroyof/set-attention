@@ -75,15 +75,8 @@ def build_windowed_bank_from_ids(
 
     for seq in seq_iter:
         seq = seq.to(torch.long)
-        if pad_id is not None:
-            keep = (seq != pad_id).nonzero(as_tuple=False)
-            if keep.numel() == 0:
-                L = 0
-                seq = seq[:0]
-            else:
-                last = int(keep[-1].item())
-                seq = seq[: last + 1]
-                L = seq.numel()
+        if pad_id is not None and not (seq != pad_id).any():
+            L = 0
         else:
             L = seq.numel()
         sets_this_seq = 0

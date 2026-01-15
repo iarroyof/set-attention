@@ -187,6 +187,8 @@ LM_BENCHES = [
             "256",
             "--seq-stride",
             "256",
+            "--limit",
+            "50000",
             "--dot-naive",
         ],
     },
@@ -220,6 +222,8 @@ LM_BENCHES = [
             "256",
             "--seq-stride",
             "256",
+            "--limit",
+            "50000",
             "--dot-naive",
         ],
     },
@@ -241,6 +245,8 @@ SEQ_BENCHES = [
             "50",
             "--batch",
             "16",
+            "--limit",
+            "50000",
         ],
     },
     {
@@ -269,6 +275,8 @@ SEQ_BENCHES = [
             "50",
             "--batch",
             "16",
+            "--limit",
+            "50000",
         ],
     },
 ]
@@ -482,6 +490,7 @@ def main() -> None:
     parser.add_argument("--seq-precision", type=str, default=None)
     parser.add_argument("--seq-batch", type=int, default=None)
     parser.add_argument("--seq-tokenizer-type", type=str, default="whitespace")
+    parser.add_argument("--seq-limit", type=int, default=None, help="Alias for --limit in Seq2Seq runs.")
     # TextDiff overrides
     parser.add_argument("--textdiff-seq-len", type=int, default=None)
     parser.add_argument("--textdiff-stride", type=int, default=None)
@@ -498,6 +507,7 @@ def main() -> None:
     parser.add_argument("--vit-router-topk", type=int, default=None)
     parser.add_argument("--vit-precision", type=str, default=None)
     parser.add_argument("--vit-batch", type=int, default=None)
+    parser.add_argument("--vit-limit", type=int, default=None, help="Alias for --limit in ViT runs.")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without executing.")
     parser.add_argument(
         "--common-args",
@@ -571,6 +581,7 @@ def main() -> None:
             + _opt("--precision", args.seq_precision)
             + _opt("--batch", args.seq_batch)
             + _opt("--tokenizer-type", args.seq_tokenizer_type)
+            + _opt("--limit", args.seq_limit)
         ),
         "diffusion": (
             _opt("--text-seq-len", args.textdiff_seq_len)
@@ -589,6 +600,7 @@ def main() -> None:
             + _opt("--router-topk", args.vit_router_topk)
             + _opt("--precision", args.vit_precision)
             + _opt("--batch", args.vit_batch)
+            + _opt("--limit", args.vit_limit)
         ),
     }
 

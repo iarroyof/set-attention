@@ -16,7 +16,13 @@ def _resolve_cache_dir(cache_dir: Optional[str]) -> Optional[str]:
     return env_cache
 
 
-def load_seq2seq_pairs(dataset: str, split: str = "train", limit: Optional[int] = None, cache_dir: Optional[str] = None) -> Tuple[List[str], List[str]]:
+def load_seq2seq_pairs(
+    dataset: str,
+    split: str = "train",
+    limit: Optional[int] = None,
+    cache_dir: Optional[str] = None,
+    indices: Optional[List[int]] = None,
+) -> Tuple[List[str], List[str]]:
     """Download a small, widely used seq2seq dataset via Hugging Face Datasets.
 
     Supported:
@@ -48,6 +54,8 @@ def load_seq2seq_pairs(dataset: str, split: str = "train", limit: Optional[int] 
                 f"cache_dir={cache_root or 'default'} | original error: {exc}"
             ) from exc
         ds_split = ds[split]
+        if indices is not None:
+            ds_split = ds_split.select(indices)
         for rec in ds_split:
             # translation dict has keys 'ro','en'
             tr = rec.get("translation", {})
@@ -68,6 +76,8 @@ def load_seq2seq_pairs(dataset: str, split: str = "train", limit: Optional[int] 
                 f"cache_dir={cache_root or 'default'} | original error: {exc}"
             ) from exc
         ds_split = ds[split]
+        if indices is not None:
+            ds_split = ds_split.select(indices)
         for rec in ds_split:
             src = rec.get("article", "")
             tgt = rec.get("highlights", "")

@@ -1035,6 +1035,15 @@ def main():
     args = ap.parse_args()
     if args.limit and args.dataset_lines == 0:
         args.dataset_lines = int(args.limit)
+    if args.benchmark:
+        if args.dataset_lines <= 0 and not args.subset_path:
+            raise RuntimeError(
+                "--benchmark requires explicit --limit/--dataset-lines or --subset-path "
+                "(no silent dataset caps)."
+            )
+    elif args.dataset_lines > 0:
+        print("[Data] ignoring --limit/--dataset-lines outside benchmark; use --subset-path instead.")
+        args.dataset_lines = 0
     _configure_dot_naive(args.dot_naive)
     if args.sdpa_baseline and args.attn_baseline == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), args.d_model, args.nhead)

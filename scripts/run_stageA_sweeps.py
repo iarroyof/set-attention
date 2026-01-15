@@ -259,6 +259,8 @@ def main():
     ap.add_argument("--artifact-cache-root", type=str, default="")
     ap.add_argument("--overwrite-cache", action="store_true")
     ap.add_argument("--precache", action="store_true", help="Precompute caches before running Stage A.")
+    ap.add_argument("--production", action="store_true", help="Enforce production logging requirements (W&B).")
+    ap.add_argument("--wandb-project", type=str, default="", help="W&B project name (required with --production).")
     ap.add_argument("--min-free-gb", type=float, default=0.0, help="Wait for this much free GPU memory before running each job (0=disable).")
     ap.add_argument("--wait-gpu-interval", type=float, default=10.0, help="Seconds between GPU free-memory checks.")
     ap.add_argument("--wait-gpu-timeout", type=float, default=0.0, help="Timeout in seconds for GPU wait (0=wait forever).")
@@ -292,6 +294,7 @@ def main():
     ap.add_argument("--seq-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--seq-batch", type=int, default=32)
     ap.add_argument("--seq-max-len", type=int, default=256)
+    ap.add_argument("--seq-subset-path", type=str, default="")
     ap.add_argument("--seq-window", type=int, default=64)
     ap.add_argument("--seq-stride", type=int, default=32)
     ap.add_argument("--seq-minhash-k", type=int, default=128)
@@ -302,6 +305,7 @@ def main():
 
     # Diffusion text defaults
     ap.add_argument("--textdiff-dataset", type=str, default="wikitext2")
+    ap.add_argument("--textdiff-subset-path", type=str, default="")
     ap.add_argument("--textdiff-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--textdiff-batch", type=int, default=64)
     ap.add_argument("--textdiff-seq-len", type=int, default=256)
@@ -321,6 +325,7 @@ def main():
     ap.add_argument("--vit-router-topk", type=int, default=0)
     ap.add_argument("--vit-num-workers", type=int, default=0)
     ap.add_argument("--vit-limit", type=int, default=None, help="Alias for --limit in ViT runs.")
+    ap.add_argument("--vit-subset-path", type=str, default="")
     ap.add_argument(
         "--common-args",
         action="append",
@@ -391,6 +396,17 @@ def main():
     reps = max(1, int(args.reps))
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.production and not args.wandb_project:
+        raise RuntimeError("--production requires --wandb-project (paper-grade runs must be logged).")
+    if args.production:
+        os.environ.setdefault("WANDB_RUN_GROUP", "stageA_quality")
+        if "--wandb" not in common_args:
+            common_args.append("--wandb")
+        if "--wandb-project" not in common_args:
+            common_args.extend(["--wandb-project", args.wandb_project])
+        if "--wandb-tags" not in common_args:
+            common_args.extend(["--wandb-tags", "stageA_quality,production"])
 
     if args.cache_mode == "full" and not args.precache:
         hf_root = resolve_hf_root(args.artifact_cache_root or None)
@@ -496,6 +512,8 @@ def main():
             "--seq-precision",
             args.seq_precision,
         ]
+        if args.seq_subset_path:
+            seq_cmd.extend(["--seq-subset-path", args.seq_subset_path])
         if args.seq_limit is not None:
             seq_cmd.extend(["--seq-limit", str(args.seq_limit)])
         if args.cache_mode == "full":
@@ -528,6 +546,8 @@ def main():
             "--textdiff-precision",
             args.textdiff_precision,
         ]
+        if args.textdiff_subset_path:
+            text_cmd.extend(["--textdiff-subset-path", args.textdiff_subset_path])
         if args.cache_mode == "full":
             text_cmd.extend(
                 [
@@ -694,6 +714,8 @@ def main():
                 cmd.extend(["--num-workers", str(args.seq_num_workers)])
                 if args.seq_limit is not None:
                     cmd.extend(["--limit", str(args.seq_limit)])
+                if args.seq_subset_path:
+                    cmd.extend(["--subset-path", args.seq_subset_path])
                 if args.cache_mode != "none":
                     cmd.extend(["--cache-mode", args.cache_mode])
                 if args.artifact_cache_root:
@@ -789,6 +811,8 @@ def main():
                     "--reps",
                     str(1),
                 ]
+                if args.textdiff_subset_path:
+                    cmd.extend(["--text-subset-path", args.textdiff_subset_path])
                 cmd.extend(["--num-workers", str(args.textdiff_num_workers)])
                 if args.cache_mode != "none":
                     cmd.extend(["--cache-mode", args.cache_mode])
@@ -882,6 +906,8 @@ def main():
                 cmd.extend(["--num-workers", str(args.vit_num_workers)])
                 if args.vit_limit is not None:
                     cmd.extend(["--limit", str(args.vit_limit)])
+                if args.vit_subset_path:
+                    cmd.extend(["--subset-path", args.vit_subset_path])
                 if args.skip_oom:
                     cmd.append("--skip-oom")
                 if args.profile:
