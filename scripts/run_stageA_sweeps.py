@@ -226,6 +226,28 @@ def _require_benchmark_limits(cmd: List[str]) -> None:
     )
 
 
+def _scaled_window_stride_ok(
+    seq_len: int,
+    window: int,
+    stride: int,
+    base_len: Optional[int] = None,
+    base_window: Optional[int] = None,
+    base_stride: Optional[int] = None,
+) -> bool:
+    if seq_len <= 0 or window <= 0 or stride <= 0:
+        return False
+    if window > seq_len or stride > window:
+        return False
+    if seq_len % stride != 0:
+        return False
+    if base_len and base_window and base_stride:
+        if seq_len * base_window != window * base_len:
+            return False
+        if seq_len * base_stride != stride * base_len:
+            return False
+    return True
+
+
 def _append_status_row(csv_path: Path, row: dict) -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = list(row.keys())
@@ -607,6 +629,38 @@ def main():
         for seed in seeds:
             for rep in range(1, reps + 1):
                 csv_path = mpath("lm", args.lm_dataset, variant, args.lm_precision, seed, rep)
+                if (
+                    variant == "ska_python"
+                    and not _scaled_window_stride_ok(
+                        args.lm_seq_len,
+                        args.lm_window,
+                        args.lm_stride,
+                        args.lm_seq_len,
+                        args.lm_window,
+                        args.lm_stride,
+                    )
+                ):
+                    _append_status_row(
+                        csv_path,
+                        {
+                            "script": "train_toy_lm_banked",
+                            "task": "lm",
+                            "dataset": args.lm_dataset,
+                            "dataset_id": args.lm_dataset,
+                            "mode": "ska/python",
+                            "attn_impl": "ska/python",
+                            "precision": args.lm_precision,
+                            "seed": seed,
+                            "rep": rep,
+                            "run_uid": f"skip-{int(time.time())}-{seed}-{rep}",
+                            "status": "skipped",
+                            "skip_reason": (
+                                f"incompatible_window_stride(seq_len={args.lm_seq_len},"
+                                f" window={args.lm_window}, stride={args.lm_stride})"
+                            ),
+                        },
+                    )
+                    continue
                 cmd = [
                     sys.executable,
                     "scripts/train_toy_lm_banked.py",
@@ -706,6 +760,38 @@ def main():
         for seed in seeds:
             for rep in range(1, reps + 1):
                 csv_path = mpath("seq", args.seq_dataset, variant, args.seq_precision, seed, rep)
+                if (
+                    variant == "ska_python"
+                    and not _scaled_window_stride_ok(
+                        args.seq_max_len,
+                        args.seq_window,
+                        args.seq_stride,
+                        args.seq_max_len,
+                        args.seq_window,
+                        args.seq_stride,
+                    )
+                ):
+                    _append_status_row(
+                        csv_path,
+                        {
+                            "script": "train_seq2seq_text_banked",
+                            "task": "seq2seq",
+                            "dataset": args.seq_dataset,
+                            "dataset_id": args.seq_dataset,
+                            "mode": "ska/python",
+                            "attn_impl": "ska/python",
+                            "precision": args.seq_precision,
+                            "seed": seed,
+                            "rep": rep,
+                            "run_uid": f"skip-{int(time.time())}-{seed}-{rep}",
+                            "status": "skipped",
+                            "skip_reason": (
+                                f"incompatible_window_stride(seq_len={args.seq_max_len},"
+                                f" window={args.seq_window}, stride={args.seq_stride})"
+                            ),
+                        },
+                    )
+                    continue
                 cmd = [
                     sys.executable,
                     "scripts/train_seq2seq_text_banked.py",
@@ -804,6 +890,38 @@ def main():
         for seed in seeds:
             for rep in range(1, reps + 1):
                 csv_path = mpath("textdiff", args.textdiff_dataset, variant, args.textdiff_precision, seed, rep)
+                if (
+                    variant == "ska_python"
+                    and not _scaled_window_stride_ok(
+                        args.textdiff_seq_len,
+                        args.textdiff_window,
+                        args.textdiff_bank_stride,
+                        args.textdiff_seq_len,
+                        args.textdiff_window,
+                        args.textdiff_bank_stride,
+                    )
+                ):
+                    _append_status_row(
+                        csv_path,
+                        {
+                            "script": "train_toy_diffusion_banked",
+                            "task": "textdiff",
+                            "dataset": args.textdiff_dataset,
+                            "dataset_id": args.textdiff_dataset,
+                            "mode": "ska/python",
+                            "attn_impl": "ska/python",
+                            "precision": args.textdiff_precision,
+                            "seed": seed,
+                            "rep": rep,
+                            "run_uid": f"skip-{int(time.time())}-{seed}-{rep}",
+                            "status": "skipped",
+                            "skip_reason": (
+                                f"incompatible_window_stride(seq_len={args.textdiff_seq_len},"
+                                f" window={args.textdiff_window}, stride={args.textdiff_bank_stride})"
+                            ),
+                        },
+                    )
+                    continue
                 cmd = [
                     sys.executable,
                     "scripts/train_toy_diffusion_banked.py",
