@@ -1134,6 +1134,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     wandb_config = {
         "script": "train_toy_lm_banked",
         "dataset": args.dataset or "char",
+        "dataset_id": args.dataset or "char",
+        "data_mode": "text",
         "seq_len": args.seq_len,
         "seq_stride": args.seq_stride,
         "window": args.window,
@@ -1152,6 +1154,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "vocab_path": args.vocab_path or "",
         "vocab_workers": args.vocab_workers,
         "hf_tokenizer_name": args.hf_tokenizer_name or "",
+        "hf_cache_dir": args.hf_cache_dir or "",
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,

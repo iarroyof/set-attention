@@ -1005,10 +1005,17 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
     dataset_label = args.text_dataset if args.data_mode == "text" else args.config
+    seq_len = args.text_seq_len if args.data_mode == "text" else args.data_seq_len
+    seq_stride = args.text_stride if args.data_mode == "text" else "NA"
     wandb_config = {
         "script": "train_toy_diffusion_banked",
+        "dataset": dataset_label,
+        "dataset_id": dataset_label,
+        "data_mode": args.data_mode,
         "ska_backend": args.ska_backend,
         "precision": args.precision,
+        "seq_len": seq_len,
+        "seq_stride": seq_stride,
         "window": args.window,
         "stride": args.stride,
         "minhash_k": args.minhash_k,
@@ -1016,9 +1023,13 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         "adapter_rank": args.adapter_rank,
         "steps": args.steps,
         "batch": args.batch,
-        "dataset": dataset_label,
         "sdpa_baseline": args.sdpa_baseline,
         "precompute_bank": args.precompute_bank,
+        "streaming": False,
+        "reuse_vocab": False,
+        "vocab_path": "",
+        "vocab_workers": 0,
+        "hf_cache_dir": args.text_cache_dir or "",
         "sample_count": args.sample_count,
         "seed": seed,
         "rep": rep,
