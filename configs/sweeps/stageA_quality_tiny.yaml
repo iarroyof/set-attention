@@ -2,7 +2,7 @@ program: scripts/run_stageA_sweeps.py
 parameters:
   output-dir: {value: out/smoke_stageA}
   cache-mode: {value: full}
-  epochs: {value: 1}
+  epochs: {value: 5}
   production: {value: true}
   wandb-project: {value: set-attention-test}
 
