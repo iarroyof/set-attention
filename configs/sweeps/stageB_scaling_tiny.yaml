@@ -1,0 +1,51 @@
+program: scripts/run_stageB_sweeps.py
+parameters:
+  output-dir: {value: out/smoke_stageB}
+  cache-mode: {value: full}
+  stageb-mode: {value: train}
+  epochs: {value: 1}
+  production: {value: true}
+  wandb-project: {value: set-attention-test}
+
+  lm-dataset: {value: wikitext2}
+  lm-subset-path: {value: subsets/wikitext2_train_01pct.json}
+  lm-precision: {value: fp16}
+  lm-batch: {value: 4}
+  lm-lengths: {values: [128]}
+  lm-seq-stride: {value: 0}
+  lm-window: {value: 32}
+  lm-stride: {value: 16}
+  lm-minhash-k: {value: 32}
+  lm-router-topk: {value: 2}
+
+  seq-dataset: {value: wmt16_en_ro}
+  seq-subset-path: {value: subsets/wmt16_en_ro_train_1pct.json}
+  seq-precision: {value: fp16}
+  seq-batch: {value: 8}
+  seq-lengths: {values: [64]}
+  seq-max-len: {value: 64}
+  seq-tokenizer-type: {value: whitespace}
+  seq-window: {value: 32}
+  seq-stride: {value: 16}
+  seq-minhash-k: {value: 32}
+  seq-router-topk: {value: 2}
+
+  textdiff-dataset: {value: wikitext2}
+  textdiff-subset-path: {value: subsets/wikitext2_train_01pct.json}
+  textdiff-precision: {value: fp16}
+  textdiff-batch: {value: 16}
+  textdiff-lengths: {values: [128]}
+  textdiff-seq-len: {value: 128}
+  textdiff-stride: {value: 128}
+  textdiff-window: {value: 32}
+  textdiff-bank-stride: {value: 16}
+  textdiff-minhash-k: {value: 32}
+  textdiff-router-topk: {value: 2}
+
+  vit-precision: {value: fp16}
+  vit-batch: {value: 64}
+  vit-window: {value: 4}
+  vit-stride: {value: 2}
+  vit-minhash-k: {value: 32}
+  vit-router-topk: {value: 0}
+  vit-subset-path: {value: subsets/cifar10_train_1pct.json}
