@@ -77,7 +77,31 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
             writer.writerow(row)
 
 
-def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception) -> None:
+_WANDB_KEYS_PRINTED: set[tuple[str, str]] = set()
+
+
+def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = None, summarize: bool = False) -> None:
+    if not getattr(wandb_run, "enabled", False):
+        return
+    if os.environ.get("SA_PRINT_WANDB_KEYS") == "1":
+        key_id = (row.get("script", "unknown"), prefix)
+        if key_id not in _WANDB_KEYS_PRINTED:
+            keys = sorted(f"{prefix}/{key}" for key in row.keys())
+            print(f"[wandb-keys] {key_id[0]} {prefix}: {', '.join(keys)}")
+            _WANDB_KEYS_PRINTED.add(key_id)
+    payload: dict[str, object] = {}
+    for key, value in row.items():
+        if isinstance(value, (list, tuple, dict)):
+            payload[f"{prefix}/{key}"] = json.dumps(value, sort_keys=True)
+        else:
+            payload[f"{prefix}/{key}"] = value
+    wandb_run.log(payload, step=step)
+    if summarize:
+        for key, value in row.items():
+            wandb_run.set_summary(f"{prefix}/{key}", value)
+
+
+def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception, wandb_run=None) -> None:
     dataset_id = args.data_mode
     row = {
         "script": "train_tiny_vit_banked",
@@ -103,8 +127,10 @@ def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Excepti
     }
     if args.metrics_csv:
         _append_benchmark_row(args.metrics_csv, row)
+        _log_csv_row_wandb(wandb_run, row, "csv/metrics", summarize=True)
     if args.benchmark_csv:
         _append_benchmark_row(args.benchmark_csv, row)
+        _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
 
 
 def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
@@ -324,7 +350,8 @@ class IndexedDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         base_idx = self.indices[idx]
         img, label = self.base[base_idx]
-        return base_idx, img, label
+        # Return local index so cache seq_offsets align with batch indices.
+        return idx, img, label
 
 
 def run_vit_benchmark(
@@ -380,23 +407,22 @@ def run_vit_benchmark(
             xb.size(0), seq_len, args.window, args.stride, args.heads, args.precision, args.gpu_vram
         )
         if decision.skip or args.dry_run:
-            _append_benchmark_row(
-                benchmark_csv,
-                {
-                    "script": "train_tiny_vit_banked",
-                    "task": "vit",
-                    "dataset": args.data_mode,
-                    "dataset_id": args.data_mode,
-                    "data_mode": args.data_mode,
-                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                    "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
-                    "precision": args.precision,
-                    "cache_fp": cache_fp,
-                    "status": "skipped",
-                    "skip_reason": decision.reason or ("dry_run" if args.dry_run else ""),
-                    "gpu_vram_gb": args.gpu_vram,
-                },
-            )
+            row = {
+                "script": "train_tiny_vit_banked",
+                "task": "vit",
+                "dataset": args.data_mode,
+                "dataset_id": args.data_mode,
+                "data_mode": args.data_mode,
+                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                "precision": args.precision,
+                "cache_fp": cache_fp,
+                "status": "skipped",
+                "skip_reason": decision.reason or ("dry_run" if args.dry_run else ""),
+                "gpu_vram_gb": args.gpu_vram,
+            }
+            _append_benchmark_row(benchmark_csv, row)
+            _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
             if args.dry_run or decision.skip:
                 return
 
@@ -444,29 +470,28 @@ def run_vit_benchmark(
     except torch.cuda.OutOfMemoryError:
         if args.skip_oom:
             torch.cuda.empty_cache()
-            _append_benchmark_row(
-                benchmark_csv,
-                {
-                    "script": "train_tiny_vit_banked",
-                    "task": "vit",
-                    "dataset": args.data_mode,
-                    "dataset_id": args.data_mode,
-                    "data_mode": args.data_mode,
-                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                    "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
-                    "precision": args.precision,
-                    "cache_fp": cache_fp,
-                    "status": "oom",
-                    "skip_reason": "runtime_oom",
-                    "gpu_vram_gb": args.gpu_vram,
-                    "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
-                    "peak_allocated_mb": (
-                        torch.cuda.max_memory_allocated() / (1024**2)
-                        if torch.cuda.is_available()
-                        else "NA"
-                    ),
-                },
-            )
+            row = {
+                "script": "train_tiny_vit_banked",
+                "task": "vit",
+                "dataset": args.data_mode,
+                "dataset_id": args.data_mode,
+                "data_mode": args.data_mode,
+                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                "precision": args.precision,
+                "cache_fp": cache_fp,
+                "status": "oom",
+                "skip_reason": "runtime_oom",
+                "gpu_vram_gb": args.gpu_vram,
+                "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
+                "peak_allocated_mb": (
+                    torch.cuda.max_memory_allocated() / (1024**2)
+                    if torch.cuda.is_available()
+                    else "NA"
+                ),
+            }
+            _append_benchmark_row(benchmark_csv, row)
+            _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
             return
         raise
     if torch.cuda.is_available():
@@ -511,49 +536,48 @@ def run_vit_benchmark(
                 "benchmark/rep": rep,
             }
         )
-    _append_benchmark_row(
-        benchmark_csv,
-        {
-            "script": "train_tiny_vit_banked",
-            "task": "vit",
-            "dataset": args.data_mode,
-            "dataset_id": args.data_mode,
-            "data_mode": args.data_mode,
-            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-            "attn_impl": attn_impl,
-            "precision": args.precision,
-            "patch": args.patch,
-            "window": args.window,
-            "stride": args.stride,
-            "minhash_k": args.minhash_k,
-            "router_topk": args.router_topk,
-            "batch": args.batch,
-            "bench_warmup": args.bench_warmup,
-            "bench_iters": args.bench_iters,
-            "seed": seed,
-            "rep": rep,
-            "run_uid": run_uid,
-            "device": info["device"],
-            "gpu_name": info["gpu_name"],
-            "torch_version": info["torch_version"],
-            "cuda_version": info["cuda_version"],
-            "git_sha": info["git_sha"],
-            "images_per_s": throughput,
-            "elapsed_s": elapsed,
-            "avg_sets_per_seq": avg_sets,
-            "avg_atoms_per_set": avg_atoms,
-            "scores_total": scores_total,
-            "scores_per_s": scores_per_s,
-            "scores_per_1e6": scores_per_1e6,
-            "min_sets_per_seq": min_sets,
-            "max_sets_per_seq": max_sets,
-            "max_vram_mb": max_vram_mb,
-            "cache_fp": cache_fp,
-            "status": "ok",
-            "skip_reason": "",
-            "gpu_vram_gb": args.gpu_vram,
-        },
-    )
+    row = {
+        "script": "train_tiny_vit_banked",
+        "task": "vit",
+        "dataset": args.data_mode,
+        "dataset_id": args.data_mode,
+        "data_mode": args.data_mode,
+        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+        "attn_impl": attn_impl,
+        "precision": args.precision,
+        "patch": args.patch,
+        "window": args.window,
+        "stride": args.stride,
+        "minhash_k": args.minhash_k,
+        "router_topk": args.router_topk,
+        "batch": args.batch,
+        "bench_warmup": args.bench_warmup,
+        "bench_iters": args.bench_iters,
+        "seed": seed,
+        "rep": rep,
+        "run_uid": run_uid,
+        "device": info["device"],
+        "gpu_name": info["gpu_name"],
+        "torch_version": info["torch_version"],
+        "cuda_version": info["cuda_version"],
+        "git_sha": info["git_sha"],
+        "images_per_s": throughput,
+        "elapsed_s": elapsed,
+        "avg_sets_per_seq": avg_sets,
+        "avg_atoms_per_set": avg_atoms,
+        "scores_total": scores_total,
+        "scores_per_s": scores_per_s,
+        "scores_per_1e6": scores_per_1e6,
+        "min_sets_per_seq": min_sets,
+        "max_sets_per_seq": max_sets,
+        "max_vram_mb": max_vram_mb,
+        "cache_fp": cache_fp,
+        "status": "ok",
+        "skip_reason": "",
+        "gpu_vram_gb": args.gpu_vram,
+    }
+    _append_benchmark_row(benchmark_csv, row)
+    _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
 
 
 def main():
@@ -688,7 +712,7 @@ def main():
             try:
                 run_single(run_args, seed, rep, run_uid, multi_run)
             except Exception as exc:
-                _append_exception_rows(run_args, seed, rep, run_uid, exc)
+                _append_exception_rows(run_args, seed, rep, run_uid, exc, wandb_run=wandb_run)
                 raise
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -813,6 +837,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     bank = cache = None
     atom_emb = adapter = phi_snapshot = None
     universe = None
+    val_cache = None
     if not args.sdpa_baseline:
         bank = build_patch_banks(base_dataset, args.patch, indices=train_indices)
         val_count_log = len(val_dataset) if val_dataset is not None else 0
@@ -832,9 +857,16 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         universe = UniversePool(universe_ids, metadata={"task": "tiny_vit"})
         minhash = MinHasher(k=args.minhash_k, device=bank.values.device)
         cache = SetFeatureCache(universe, bank.values, bank.set_offsets, bank.seq_offsets, minhash=minhash)
+        if val_indices:
+            val_bank = build_patch_banks(base_dataset, args.patch, indices=val_indices)
+            val_cache = SetFeatureCache(
+                universe, val_bank.values, val_bank.set_offsets, val_bank.seq_offsets, minhash=minhash
+            )
         if args.precompute_bank:
             universe = universe.to(device)
             cache = cache.to(device)
+            if val_cache is not None:
+                val_cache = val_cache.to(device)
     else:
         val_count_log = len(val_dataset) if val_dataset is not None else 0
         print(
@@ -926,6 +958,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         sample_records = {}
         if sample_indices:
             sample_lookup = {idx: order for order, idx in enumerate(sample_indices)}
+        cache_eval = val_cache if val_cache is not None else cache
         with torch.no_grad():
             for idx_batch, xb, yb in loader:
                 batch_idx = idx_batch.to(device)
@@ -936,7 +969,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     routed = tokens
                 else:
                     phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
-                    Phi, Sig, Size, q_ptrs = cache.gather_flat(batch_idx, phi_dynamic)
+                    Phi, Sig, Size, q_ptrs = cache_eval.gather_flat(batch_idx, phi_dynamic)
                     Z, q_ptrs = set_attn(Phi, Sig, Size, q_ptrs, Phi, Sig, Size, q_ptrs)
                     routed = router(tokens, Z, Phi, q_ptrs)
                 cls_repr = routed.mean(dim=1)
@@ -1019,37 +1052,36 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             if args.skip_oom and is_oom:
                 torch.cuda.empty_cache()
                 if args.metrics_csv:
-                    _append_benchmark_row(
-                        args.metrics_csv,
-                        {
-                            "script": "train_tiny_vit_banked",
-                            "task": "vit",
-                            "dataset": args.data_mode,
-                            "dataset_id": args.data_mode,
-                            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                            "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
-                            "precision": args.precision,
-                            "patch": args.patch,
-                            "window": args.window,
-                            "stride": args.stride,
-                            "minhash_k": args.minhash_k,
-                            "router_topk": args.router_topk,
-                            "batch": args.batch,
-                            "seed": seed,
-                            "rep": rep,
-                            "run_uid": run_uid,
-                            "epoch": ep,
-                            "cache_fp": getattr(args, "cache_fp", "NA"),
-                            "status": "oom",
-                            "skip_reason": str(exc)[:160],
-                            "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
-                            "peak_allocated_mb": (
-                                torch.cuda.max_memory_allocated() / (1024**2)
-                                if torch.cuda.is_available()
-                                else "NA"
-                            ),
-                        },
-                    )
+                    row = {
+                        "script": "train_tiny_vit_banked",
+                        "task": "vit",
+                        "dataset": args.data_mode,
+                        "dataset_id": args.data_mode,
+                        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                        "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                        "precision": args.precision,
+                        "patch": args.patch,
+                        "window": args.window,
+                        "stride": args.stride,
+                        "minhash_k": args.minhash_k,
+                        "router_topk": args.router_topk,
+                        "batch": args.batch,
+                        "seed": seed,
+                        "rep": rep,
+                        "run_uid": run_uid,
+                        "epoch": ep,
+                        "cache_fp": getattr(args, "cache_fp", "NA"),
+                        "status": "oom",
+                        "skip_reason": str(exc)[:160],
+                        "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
+                        "peak_allocated_mb": (
+                            torch.cuda.max_memory_allocated() / (1024**2)
+                            if torch.cuda.is_available()
+                            else "NA"
+                        ),
+                    }
+                    _append_benchmark_row(args.metrics_csv, row)
+                    _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=ep, summarize=True)
                 if wandb_run.enabled:
                     wandb_run.finish()
                 return
@@ -1126,38 +1158,37 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
             wandb_run.log(payload, step=ep)
         if args.metrics_csv:
-            _append_benchmark_row(
-                args.metrics_csv,
-                {
-                    "script": "train_tiny_vit_banked",
-                    "task": "vit",
-                    "dataset": args.data_mode,
-                    "dataset_id": args.data_mode,
-                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                    "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
-                    "precision": args.precision,
-                    "patch": args.patch,
-                    "window": args.window,
-                    "stride": args.stride,
-                    "minhash_k": args.minhash_k,
-                    "router_topk": args.router_topk,
-                    "batch": args.batch,
-                    "seed": seed,
-                    "rep": rep,
-                    "run_uid": run_uid,
-                    "epoch": ep,
-                    "train_loss": avg_loss,
-                    "train_acc": avg_acc,
-                    "train_top5": avg_top5,
-                    "val_loss": val_metrics["loss"] if val_metrics is not None else "NA",
-                    "val_acc": val_metrics["acc"] if val_metrics is not None else "NA",
-                    "val_top5": val_metrics["top5"] if val_metrics is not None else "NA",
-                    "coverage_sets_per_seq": avg_sets_per_seq if not args.sdpa_baseline else "NA",
-                    "coverage_ratio": coverage_ratio if not args.sdpa_baseline else "NA",
-                    "cache_fp": getattr(args, "cache_fp", "NA"),
-                    "status": "ok",
-                },
-            )
+            row = {
+                "script": "train_tiny_vit_banked",
+                "task": "vit",
+                "dataset": args.data_mode,
+                "dataset_id": args.data_mode,
+                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                "precision": args.precision,
+                "patch": args.patch,
+                "window": args.window,
+                "stride": args.stride,
+                "minhash_k": args.minhash_k,
+                "router_topk": args.router_topk,
+                "batch": args.batch,
+                "seed": seed,
+                "rep": rep,
+                "run_uid": run_uid,
+                "epoch": ep,
+                "train_loss": avg_loss,
+                "train_acc": avg_acc,
+                "train_top5": avg_top5,
+                "val_loss": val_metrics["loss"] if val_metrics is not None else "NA",
+                "val_acc": val_metrics["acc"] if val_metrics is not None else "NA",
+                "val_top5": val_metrics["top5"] if val_metrics is not None else "NA",
+                "coverage_sets_per_seq": avg_sets_per_seq if not args.sdpa_baseline else "NA",
+                "coverage_ratio": coverage_ratio if not args.sdpa_baseline else "NA",
+                "cache_fp": getattr(args, "cache_fp", "NA"),
+                "status": "ok",
+            }
+            _append_benchmark_row(args.metrics_csv, row)
+            _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=ep, summarize=ep == args.epochs)
 
     wandb_run.finish()
 

@@ -1,0 +1,134 @@
+program: scripts/run_stageB_sweeps.py
+parameters:
+  # Output directory for benchmark CSVs.
+  output-dir:
+    value: out/production/stageB
+  # Cache mode: none | tokens | full (tokens + bank/routing).
+  cache-mode:
+    value: full
+  # Stage B mode: benchmark (throughput) or train (full training).
+  stageb-mode:
+    value: benchmark
+  # Enforce W&B logging for production runs.
+  production:
+    value: true
+  # W&B project name.
+  wandb-project:
+    value: set-attention-paper
+  # LM dataset identifier.
+  lm-dataset:
+    value: wikitext103
+  # LM train subset indices JSON (train-only).
+  lm-subset-path:
+    value: subsets/wikitext103_train_10pct.json
+  # LM compute precision.
+  lm-precision:
+    value: fp16
+  # LM batch size (sequences per step).
+  lm-batch:
+    value: 8
+  # LM length sweep (tokens per sequence).
+  lm-lengths:
+    values: [256, 512, 1024]
+  # LM sequence stride (0 = same as seq-len).
+  lm-seq-stride:
+    value: 0
+  # LM SKA window length (tokens per set).
+  lm-window:
+    value: 64
+  # LM SKA bank stride (tokens between windows).
+  lm-stride:
+    value: 32
+  # LM SKA minhash signature size.
+  lm-minhash-k:
+    value: 128
+  # LM SKA router top-k sets.
+  lm-router-topk:
+    value: 4
+  # Seq2Seq dataset identifier.
+  seq-dataset:
+    value: wmt16_en_ro
+  # Seq2Seq train subset indices JSON (train-only).
+  seq-subset-path:
+    value: subsets/wmt16_en_ro_train_10pct.json
+  # Seq2Seq compute precision.
+  seq-precision:
+    value: fp16
+  # Seq2Seq batch size (sentence pairs per step).
+  seq-batch:
+    value: 16
+  # Seq2Seq length sweep (max token length).
+  seq-lengths:
+    values: [256]
+  # Seq2Seq max token length (src/tgt truncation length).
+  seq-max-len:
+    value: 256
+  # Seq2Seq tokenizer type (whitespace or ausa).
+  seq-tokenizer-type:
+    value: whitespace
+  # Seq2Seq SKA window length (tokens per set).
+  seq-window:
+    value: 64
+  # Seq2Seq SKA bank stride (tokens between windows).
+  seq-stride:
+    value: 32
+  # Seq2Seq SKA minhash signature size.
+  seq-minhash-k:
+    value: 128
+  # Seq2Seq SKA router top-k sets.
+  seq-router-topk:
+    value: 4
+  # TextDiff dataset identifier.
+  textdiff-dataset:
+    value: wikitext103
+  # TextDiff train subset indices JSON (train-only).
+  textdiff-subset-path:
+    value: subsets/wikitext103_train_10pct.json
+  # TextDiff compute precision.
+  textdiff-precision:
+    value: fp16
+  # TextDiff batch size (sequences per step).
+  textdiff-batch:
+    value: 64
+  # TextDiff length sweep (tokens per sequence).
+  textdiff-lengths:
+    values: [256]
+  # TextDiff sequence length (tokens per sequence).
+  textdiff-seq-len:
+    value: 256
+  # TextDiff sequence stride (tokens between sequences).
+  textdiff-stride:
+    value: 256
+  # TextDiff SKA window length (tokens per set).
+  textdiff-window:
+    value: 64
+  # TextDiff SKA bank stride (tokens between windows).
+  textdiff-bank-stride:
+    value: 32
+  # TextDiff SKA minhash signature size.
+  textdiff-minhash-k:
+    value: 128
+  # TextDiff SKA router top-k sets.
+  textdiff-router-topk:
+    value: 4
+  # ViT compute precision.
+  vit-precision:
+    value: fp16
+  # ViT batch size (images per step).
+  vit-batch:
+    value: 128
+  # ViT SKA window length (patch tokens per set).
+  vit-window:
+    value: 8
+  # ViT SKA bank stride (patch tokens between windows).
+  vit-stride:
+    value: 4
+  # ViT SKA minhash signature size.
+  vit-minhash-k:
+    value: 64
+  # ViT SKA router top-k sets.
+  vit-router-topk:
+    value: 0
+  # ViT train subset indices JSON (train-only).
+  vit-subset-path:
+    value: subsets/cifar10_train_10pct.json

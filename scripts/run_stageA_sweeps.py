@@ -5,6 +5,7 @@ Uses the per-task scripts with metrics logging enabled; not a benchmark-only run
 """
 import argparse
 import csv
+import itertools
 import os
 import subprocess
 import tempfile
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from set_attention.data.artifact_cache import resolve_hf_root
+import yaml
 
 def _parse_seeds(raw: str | List[str] | None, default: int) -> List[int]:
     if not raw:
@@ -33,6 +35,69 @@ def _parse_seeds(raw: str | List[str] | None, default: int) -> List[int]:
         except ValueError:
             continue
     return seeds or [default]
+
+
+def _load_yaml_grid(path: Path) -> List[dict]:
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(cfg, dict):
+        raise RuntimeError(f"Invalid sweep yaml (expected mapping): {path}")
+    params = cfg.get("parameters")
+    if params is None:
+        params = {k: v for k, v in cfg.items() if k not in {"program", "name", "method", "description"}}
+    if not isinstance(params, dict):
+        raise RuntimeError(f"Invalid sweep yaml parameters: {path}")
+    fixed: dict[str, object] = {}
+    sweep_keys: List[str] = []
+    sweep_values: List[list] = []
+    for key, spec in params.items():
+        if isinstance(spec, dict):
+            if "value" in spec:
+                fixed[key] = spec["value"]
+                continue
+            if "values" in spec:
+                values = spec["values"]
+                if not isinstance(values, list):
+                    values = [values]
+                sweep_keys.append(key)
+                sweep_values.append(values)
+                continue
+        fixed[key] = spec
+    if not sweep_values:
+        return [dict(fixed)]
+    combos: List[dict] = []
+    for combo in itertools.product(*sweep_values):
+        entry = dict(fixed)
+        for key, value in zip(sweep_keys, combo):
+            entry[key] = value
+        combos.append(entry)
+    return combos
+
+
+def _yaml_param_to_cli(key: str, value: object) -> list[str]:
+    if value is None:
+        return []
+    flag = key if key.startswith("-") else f"--{key.replace('_', '-')}"
+    if isinstance(value, bool):
+        return [flag] if value else []
+    if isinstance(value, (list, tuple)):
+        return [flag, *[str(v) for v in value]]
+    return [flag, str(value)]
+
+
+def _strip_sweep_args(argv: list[str], flag: str) -> list[str]:
+    cleaned: list[str] = []
+    skip_next = False
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == flag:
+            skip_next = True
+            continue
+        if arg.startswith(flag + "="):
+            continue
+        cleaned.append(arg)
+    return cleaned
 
 
 def _visible_gpu_indices() -> List[int]:
@@ -300,6 +365,7 @@ def main():
     ap.add_argument("--artifact-cache-root", type=str, default="")
     ap.add_argument("--overwrite-cache", action="store_true")
     ap.add_argument("--precache", action="store_true", help="Precompute caches before running Stage A.")
+    ap.add_argument("--sweep-yaml", type=str, default="", help="W&B-style sweep yaml to expand into multiple Stage A runs.")
     ap.add_argument("--production", action="store_true", help="Enforce production logging requirements (W&B).")
     ap.add_argument("--wandb-project", type=str, default="", help="W&B project name (required with --production).")
     ap.add_argument("--min-free-gb", type=float, default=0.0, help="Wait for this much free GPU memory before running each job (0=disable).")
@@ -418,6 +484,23 @@ def main():
 
     args = ap.parse_args()
 
+    lm_seq_stride = args.lm_seq_stride if args.lm_seq_stride > 0 else args.lm_seq_len
+
+    if args.sweep_yaml:
+        sweep_path = Path(args.sweep_yaml)
+        combos = _load_yaml_grid(sweep_path)
+        base_args = _strip_sweep_args(sys.argv[1:], "--sweep-yaml")
+        failed = False
+        for idx, combo in enumerate(combos, start=1):
+            cmd = [sys.executable, sys.argv[0], *base_args]
+            for key, value in combo.items():
+                cmd.extend(_yaml_param_to_cli(key, value))
+            print(f"[stageA] sweep {idx}/{len(combos)}: {combo}")
+            rc = subprocess.call(cmd)
+            if rc != 0:
+                failed = True
+        sys.exit(1 if failed else 0)
+
     def _parse_extra(values: list[str]) -> list[str]:
         extra: list[str] = []
         for value in values:
@@ -517,7 +600,7 @@ def main():
             "--lm-seq-len",
             str(args.lm_seq_len),
             "--lm-seq-stride",
-            str(args.lm_seq_stride),
+            str(lm_seq_stride),
             "--lm-precision",
             args.lm_precision,
         ]
@@ -673,7 +756,7 @@ def main():
                     "--seq-len",
                     str(args.lm_seq_len),
                     "--seq-stride",
-                    str(args.lm_seq_stride),
+                    str(lm_seq_stride),
                     "--precision",
                     args.lm_precision,
                     "--eval-seed",

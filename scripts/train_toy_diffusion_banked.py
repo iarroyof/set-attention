@@ -282,7 +282,31 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
             writer.writerow(row)
 
 
-def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception) -> None:
+_WANDB_KEYS_PRINTED: set[tuple[str, str]] = set()
+
+
+def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = None, summarize: bool = False) -> None:
+    if not getattr(wandb_run, "enabled", False):
+        return
+    if os.environ.get("SA_PRINT_WANDB_KEYS") == "1":
+        key_id = (row.get("script", "unknown"), prefix)
+        if key_id not in _WANDB_KEYS_PRINTED:
+            keys = sorted(f"{prefix}/{key}" for key in row.keys())
+            print(f"[wandb-keys] {key_id[0]} {prefix}: {', '.join(keys)}")
+            _WANDB_KEYS_PRINTED.add(key_id)
+    payload: dict[str, object] = {}
+    for key, value in row.items():
+        if isinstance(value, (list, tuple, dict)):
+            payload[f"{prefix}/{key}"] = json.dumps(value, sort_keys=True)
+        else:
+            payload[f"{prefix}/{key}"] = value
+    wandb_run.log(payload, step=step)
+    if summarize:
+        for key, value in row.items():
+            wandb_run.set_summary(f"{prefix}/{key}", value)
+
+
+def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception, wandb_run=None) -> None:
     dataset_id = args.text_dataset if args.data_mode == "text" else args.data_mode
     row = {
         "script": "train_toy_diffusion_banked",
@@ -310,8 +334,10 @@ def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Excepti
     }
     if args.metrics_csv:
         _append_benchmark_row(args.metrics_csv, row)
+        _log_csv_row_wandb(wandb_run, row, "csv/metrics", summarize=True)
     if args.benchmark_csv:
         _append_benchmark_row(args.benchmark_csv, row)
+        _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
 
 
 def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
@@ -574,23 +600,22 @@ def run_diffusion_benchmark(
             bench_batch, seq_len, args.window, args.stride, args.nhead, args.precision, args.gpu_vram
         )
         if decision.skip or args.dry_run:
-            _append_benchmark_row(
-                benchmark_csv,
-                {
-                    "script": "train_toy_diffusion_banked",
-                    "task": "textdiff" if text_mode else "diffusion",
-                    "dataset": dataset_label,
-                    "config": config_label,
-                    "dataset_id": config_label,
-                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                    "attn_impl": attn_impl,
-                    "precision": args.precision,
-                    "cache_fp": cache_fp,
-                    "status": "skipped",
-                    "skip_reason": decision.reason or ("dry_run" if args.dry_run else ""),
-                    "gpu_vram_gb": args.gpu_vram,
-                },
-            )
+            row = {
+                "script": "train_toy_diffusion_banked",
+                "task": "textdiff" if text_mode else "diffusion",
+                "dataset": dataset_label,
+                "config": config_label,
+                "dataset_id": config_label,
+                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                "attn_impl": attn_impl,
+                "precision": args.precision,
+                "cache_fp": cache_fp,
+                "status": "skipped",
+                "skip_reason": decision.reason or ("dry_run" if args.dry_run else ""),
+                "gpu_vram_gb": args.gpu_vram,
+            }
+            _append_benchmark_row(benchmark_csv, row)
+            _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
             if args.dry_run or decision.skip:
                 return
     attn_impl = _attn_impl_label(args, args.sdpa_baseline)
@@ -631,29 +656,28 @@ def run_diffusion_benchmark(
     except torch.cuda.OutOfMemoryError:
         if args.skip_oom:
             torch.cuda.empty_cache()
-            _append_benchmark_row(
-                benchmark_csv,
-                {
-                    "script": "train_toy_diffusion_banked",
-                    "task": "textdiff" if text_mode else "diffusion",
-                    "dataset": dataset_label,
-                    "config": config_label,
-                    "dataset_id": config_label,
-                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                    "attn_impl": attn_impl,
-                    "precision": args.precision,
-                    "cache_fp": cache_fp,
-                    "status": "oom",
-                    "skip_reason": "runtime_oom",
-                    "gpu_vram_gb": args.gpu_vram,
-                    "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
-                    "peak_allocated_mb": (
-                        torch.cuda.max_memory_allocated() / (1024**2)
-                        if torch.cuda.is_available()
-                        else "NA"
-                    ),
-                },
-            )
+            row = {
+                "script": "train_toy_diffusion_banked",
+                "task": "textdiff" if text_mode else "diffusion",
+                "dataset": dataset_label,
+                "config": config_label,
+                "dataset_id": config_label,
+                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                "attn_impl": attn_impl,
+                "precision": args.precision,
+                "cache_fp": cache_fp,
+                "status": "oom",
+                "skip_reason": "runtime_oom",
+                "gpu_vram_gb": args.gpu_vram,
+                "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
+                "peak_allocated_mb": (
+                    torch.cuda.max_memory_allocated() / (1024**2)
+                    if torch.cuda.is_available()
+                    else "NA"
+                ),
+            }
+            _append_benchmark_row(benchmark_csv, row)
+            _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
             return
         raise
     if torch.cuda.is_available():
@@ -698,55 +722,54 @@ def run_diffusion_benchmark(
                 "benchmark/rep": rep,
             }
         )
-    _append_benchmark_row(
-        benchmark_csv,
-        {
-            "script": "train_toy_diffusion_banked",
-            "task": "textdiff" if text_mode else "diffusion",
-            "dataset": dataset_label,
-            "config": config_label,
-            "dataset_id": config_label,
-            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-            "attn_impl": attn_impl,
-            "precision": args.precision,
-            "window": args.window,
-            "stride": args.stride,
-            "minhash_k": args.minhash_k,
-            "router_topk": args.router_topk,
-            "batch": args.batch,
-            "steps": args.steps,
-            "bench_warmup": args.bench_warmup,
-            "bench_iters": args.bench_iters,
-            "seed": seed,
-            "rep": rep,
-            "run_uid": run_uid,
-            "device": info["device"],
-            "gpu_name": info["gpu_name"],
-            "torch_version": info["torch_version"],
-            "cuda_version": info["cuda_version"],
-            "git_sha": info["git_sha"],
-            "data_mode": args.data_mode,
-            "text_dataset": args.text_dataset if text_mode else "",
-            "text_seq_len": args.text_seq_len if text_mode else "",
-            "text_stride": stride_text if text_mode else "",
-            "text_train_limit": args.text_train_limit if text_mode else "",
-            "text_val_limit": args.text_val_limit if text_mode else "",
-            "sequences_per_s": throughput,
-            "elapsed_s": elapsed,
-            "avg_sets_per_seq": avg_sets,
-            "avg_atoms_per_set": avg_atoms,
-            "scores_total": scores_total,
-            "scores_per_s": scores_per_s,
-            "scores_per_1e6": scores_per_1e6,
-            "min_sets_per_seq": min_sets,
-            "max_sets_per_seq": max_sets,
-            "max_vram_mb": max_vram_mb,
-            "cache_fp": cache_fp,
-            "status": "ok",
-            "skip_reason": "",
-            "gpu_vram_gb": args.gpu_vram,
-        },
-    )
+    row = {
+        "script": "train_toy_diffusion_banked",
+        "task": "textdiff" if text_mode else "diffusion",
+        "dataset": dataset_label,
+        "config": config_label,
+        "dataset_id": config_label,
+        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+        "attn_impl": attn_impl,
+        "precision": args.precision,
+        "window": args.window,
+        "stride": args.stride,
+        "minhash_k": args.minhash_k,
+        "router_topk": args.router_topk,
+        "batch": args.batch,
+        "steps": args.steps,
+        "bench_warmup": args.bench_warmup,
+        "bench_iters": args.bench_iters,
+        "seed": seed,
+        "rep": rep,
+        "run_uid": run_uid,
+        "device": info["device"],
+        "gpu_name": info["gpu_name"],
+        "torch_version": info["torch_version"],
+        "cuda_version": info["cuda_version"],
+        "git_sha": info["git_sha"],
+        "data_mode": args.data_mode,
+        "text_dataset": args.text_dataset if text_mode else "",
+        "text_seq_len": args.text_seq_len if text_mode else "",
+        "text_stride": stride_text if text_mode else "",
+        "text_train_limit": args.text_train_limit if text_mode else "",
+        "text_val_limit": args.text_val_limit if text_mode else "",
+        "sequences_per_s": throughput,
+        "elapsed_s": elapsed,
+        "avg_sets_per_seq": avg_sets,
+        "avg_atoms_per_set": avg_atoms,
+        "scores_total": scores_total,
+        "scores_per_s": scores_per_s,
+        "scores_per_1e6": scores_per_1e6,
+        "min_sets_per_seq": min_sets,
+        "max_sets_per_seq": max_sets,
+        "max_vram_mb": max_vram_mb,
+        "cache_fp": cache_fp,
+        "status": "ok",
+        "skip_reason": "",
+        "gpu_vram_gb": args.gpu_vram,
+    }
+    _append_benchmark_row(benchmark_csv, row)
+    _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
 
 
 class TensorBatchDataset(Dataset):
@@ -1459,35 +1482,34 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
             if args.skip_oom and is_oom:
                 torch.cuda.empty_cache()
                 if args.metrics_csv:
-                    _append_benchmark_row(
-                        args.metrics_csv,
-                        {
-                            "script": "train_toy_diffusion_banked",
-                            "task": "textdiff" if text_mode else "diffusion",
-                            "dataset": dataset_label,
-                            "config": config_label,
-                            "dataset_id": config_label,
-                            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                            "attn_impl": attn_impl,
-                            "precision": args.precision,
-                            "batch": data_cfg.batch_size,
-                            "window": args.window,
-                            "stride": args.stride,
-                            "minhash_k": args.minhash_k,
-                            "router_topk": args.router_topk,
-                            "adapter_rank": args.adapter_rank,
-                            "epoch": epoch,
-                            "cache_fp": getattr(args, "cache_fp", "NA"),
-                            "status": "oom",
-                            "skip_reason": str(exc)[:160],
-                            "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
-                            "peak_allocated_mb": (
-                                torch.cuda.max_memory_allocated() / (1024**2)
-                                if torch.cuda.is_available()
-                                else "NA"
-                            ),
-                        },
-                    )
+                    row = {
+                        "script": "train_toy_diffusion_banked",
+                        "task": "textdiff" if text_mode else "diffusion",
+                        "dataset": dataset_label,
+                        "config": config_label,
+                        "dataset_id": config_label,
+                        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                        "attn_impl": attn_impl,
+                        "precision": args.precision,
+                        "batch": data_cfg.batch_size,
+                        "window": args.window,
+                        "stride": args.stride,
+                        "minhash_k": args.minhash_k,
+                        "router_topk": args.router_topk,
+                        "adapter_rank": args.adapter_rank,
+                        "epoch": epoch,
+                        "cache_fp": getattr(args, "cache_fp", "NA"),
+                        "status": "oom",
+                        "skip_reason": str(exc)[:160],
+                        "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
+                        "peak_allocated_mb": (
+                            torch.cuda.max_memory_allocated() / (1024**2)
+                            if torch.cuda.is_available()
+                            else "NA"
+                        ),
+                    }
+                    _append_benchmark_row(args.metrics_csv, row)
+                    _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=epoch, summarize=True)
                 if wandb_run.enabled:
                     wandb_run.finish()
                 return
@@ -1560,35 +1582,40 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 wandb_payload["samples/generated"] = sample_text
             wandb_run.log(wandb_payload, step=epoch)
         if args.metrics_csv:
-            _append_benchmark_row(
-                args.metrics_csv,
-                {
-                    "script": "train_toy_diffusion_banked",
-                    "task": "textdiff" if text_mode else "diffusion",
-                    "dataset": dataset_label,
-                    "dataset_id": config_label,
-                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                    "attn_impl": attn_impl,
-                    "precision": args.precision,
-                    "window": args.window,
-                    "stride": args.stride,
-                    "minhash_k": args.minhash_k,
-                    "router_topk": args.router_topk,
-                    "batch": args.batch,
-                    "steps": args.steps,
-                    "seed": seed,
-                    "rep": rep,
-                    "run_uid": run_uid,
-                    "epoch": epoch,
-                    "train_loss": train_loss,
-                    "val_mmd": val_mmd_mean,
-                    "val_chamfer": val_chamfer_mean,
-                    "val_1nn": val_nn1_mean,
-                    "val_token_acc": text_token_acc if text_token_acc is not None else "NA",
-                    "val_bleu": text_bleu if text_bleu is not None else "NA",
-                    "cache_fp": getattr(args, "cache_fp", "NA"),
-                    "status": "ok",
-                },
+            row = {
+                "script": "train_toy_diffusion_banked",
+                "task": "textdiff" if text_mode else "diffusion",
+                "dataset": dataset_label,
+                "dataset_id": config_label,
+                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                "attn_impl": attn_impl,
+                "precision": args.precision,
+                "window": args.window,
+                "stride": args.stride,
+                "minhash_k": args.minhash_k,
+                "router_topk": args.router_topk,
+                "batch": args.batch,
+                "steps": args.steps,
+                "seed": seed,
+                "rep": rep,
+                "run_uid": run_uid,
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_mmd": val_mmd_mean,
+                "val_chamfer": val_chamfer_mean,
+                "val_1nn": val_nn1_mean,
+                "val_token_acc": text_token_acc if text_token_acc is not None else "NA",
+                "val_bleu": text_bleu if text_bleu is not None else "NA",
+                "cache_fp": getattr(args, "cache_fp", "NA"),
+                "status": "ok",
+            }
+            _append_benchmark_row(args.metrics_csv, row)
+            _log_csv_row_wandb(
+                wandb_run,
+                row,
+                "csv/metrics",
+                step=epoch,
+                summarize=(epoch == args.epochs),
             )
 
     wandb_run.finish()

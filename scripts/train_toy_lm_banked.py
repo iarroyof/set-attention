@@ -568,7 +568,31 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
             writer.writerow(row)
 
 
-def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception) -> None:
+_WANDB_KEYS_PRINTED: set[tuple[str, str]] = set()
+
+
+def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = None, summarize: bool = False) -> None:
+    if not getattr(wandb_run, "enabled", False):
+        return
+    if os.environ.get("SA_PRINT_WANDB_KEYS") == "1":
+        key_id = (row.get("script", "unknown"), prefix)
+        if key_id not in _WANDB_KEYS_PRINTED:
+            keys = sorted(f"{prefix}/{key}" for key in row.keys())
+            print(f"[wandb-keys] {key_id[0]} {prefix}: {', '.join(keys)}")
+            _WANDB_KEYS_PRINTED.add(key_id)
+    payload: dict[str, object] = {}
+    for key, value in row.items():
+        if isinstance(value, (list, tuple, dict)):
+            payload[f"{prefix}/{key}"] = json.dumps(value, sort_keys=True)
+        else:
+            payload[f"{prefix}/{key}"] = value
+    wandb_run.log(payload, step=step)
+    if summarize:
+        for key, value in row.items():
+            wandb_run.set_summary(f"{prefix}/{key}", value)
+
+
+def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception, wandb_run=None) -> None:
     row = {
         "script": "train_toy_lm_banked",
         "task": "lm",
@@ -596,8 +620,10 @@ def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Excepti
     }
     if args.metrics_csv:
         _append_benchmark_row(args.metrics_csv, row)
+        _log_csv_row_wandb(wandb_run, row, "csv/metrics", summarize=True)
     if args.benchmark_csv:
         _append_benchmark_row(args.benchmark_csv, row)
+        _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
 
 
 def _summarize_ska_batch(q_ptrs: torch.Tensor, size_tensor: torch.Tensor, num_heads: int):
@@ -721,30 +747,7 @@ def run_lm_benchmark(
         else:
             decision = should_skip_ska(bench_batch_size, max_len, args.window, args.stride, args.nhead, args.precision, args.gpu_vram)
         if decision.skip:
-            _append_benchmark_row(
-                benchmark_csv,
-                {
-                    "script": "train_toy_lm_banked",
-                    "task": "lm",
-                    "dataset": args.dataset or "custom",
-                    "dataset_id": args.dataset or "custom",
-                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                    "attn_impl": attn_impl,
-                    "precision": args.precision,
-                    "cache_fp": cache_fp,
-                    "status": "skipped",
-                    "skip_reason": decision.reason,
-                    "gpu_vram_gb": args.gpu_vram,
-                    "batch": bench_batch_size,
-                    "seq_len": seq_len,
-                    "seq_stride": args.seq_stride,
-                },
-            )
-            return
-    if args.dry_run:
-        _append_benchmark_row(
-            benchmark_csv,
-            {
+            row = {
                 "script": "train_toy_lm_banked",
                 "task": "lm",
                 "dataset": args.dataset or "custom",
@@ -753,14 +756,35 @@ def run_lm_benchmark(
                 "attn_impl": attn_impl,
                 "precision": args.precision,
                 "cache_fp": cache_fp,
-                "status": "dry_run",
-                "skip_reason": "dry_run",
+                "status": "skipped",
+                "skip_reason": decision.reason,
                 "gpu_vram_gb": args.gpu_vram,
-                "batch": bench_batch_size or args.batch,
+                "batch": bench_batch_size,
                 "seq_len": seq_len,
                 "seq_stride": args.seq_stride,
-            },
-        )
+            }
+            _append_benchmark_row(benchmark_csv, row)
+            _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
+            return
+    if args.dry_run:
+        row = {
+            "script": "train_toy_lm_banked",
+            "task": "lm",
+            "dataset": args.dataset or "custom",
+            "dataset_id": args.dataset or "custom",
+            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+            "attn_impl": attn_impl,
+            "precision": args.precision,
+            "cache_fp": cache_fp,
+            "status": "dry_run",
+            "skip_reason": "dry_run",
+            "gpu_vram_gb": args.gpu_vram,
+            "batch": bench_batch_size or args.batch,
+            "seq_len": seq_len,
+            "seq_stride": args.seq_stride,
+        }
+        _append_benchmark_row(benchmark_csv, row)
+        _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
         return
     if bench_batch is None:
         print("[benchmark] no data available.")
@@ -807,31 +831,30 @@ def run_lm_benchmark(
         is_oom = "out of memory" in msg.lower()
         if args.skip_oom and is_oom:
             torch.cuda.empty_cache()
-            _append_benchmark_row(
-                benchmark_csv,
-                {
-                    "script": "train_toy_lm_banked",
-                    "task": "lm",
-                    "dataset": args.dataset or "custom",
-                    "dataset_id": args.dataset or "custom",
-                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                    "attn_impl": attn_impl,
-                    "precision": args.precision,
-                    "cache_fp": cache_fp,
-                    "status": "oom",
-                    "skip_reason": msg[:160],
-                    "gpu_vram_gb": args.gpu_vram,
-                    "batch": bench_batch_size or args.batch,
-                    "seq_len": max_len,
-                    "seq_stride": args.seq_stride,
-                    "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
-                    "peak_allocated_mb": (
-                        torch.cuda.max_memory_allocated() / (1024**2)
-                        if torch.cuda.is_available()
-                        else "NA"
-                    ),
-                },
-            )
+            row = {
+                "script": "train_toy_lm_banked",
+                "task": "lm",
+                "dataset": args.dataset or "custom",
+                "dataset_id": args.dataset or "custom",
+                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                "attn_impl": attn_impl,
+                "precision": args.precision,
+                "cache_fp": cache_fp,
+                "status": "oom",
+                "skip_reason": msg[:160],
+                "gpu_vram_gb": args.gpu_vram,
+                "batch": bench_batch_size or args.batch,
+                "seq_len": max_len,
+                "seq_stride": args.seq_stride,
+                "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
+                "peak_allocated_mb": (
+                    torch.cuda.max_memory_allocated() / (1024**2)
+                    if torch.cuda.is_available()
+                    else "NA"
+                ),
+            }
+            _append_benchmark_row(benchmark_csv, row)
+            _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
             return
         raise
     max_vram_mb = (
@@ -876,53 +899,52 @@ def run_lm_benchmark(
                 "benchmark/rep": rep,
             }
         )
-    _append_benchmark_row(
-        benchmark_csv,
-        {
-            "script": "train_toy_lm_banked",
-            "task": "lm",
-            "dataset": args.dataset or "custom",
-            "dataset_id": args.dataset or "custom",
-            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-            "attn_impl": attn_impl,
-            "precision": args.precision,
-            "cache_fp": cache_fp,
-            "attn": args.attn,
-            "batch": bench_batch_size or args.batch,
-            "seq_len": max_len,
-            "seq_stride": args.seq_stride,
-            "window": args.window,
-            "stride": args.stride,
-            "minhash_k": args.minhash_k,
-            "router_topk": args.router_topk,
-            "adapter_rank": args.adapter_rank,
-            "bench_warmup": args.bench_warmup,
-            "bench_iters": args.bench_iters,
-            "seed": seed,
-            "rep": rep,
-            "run_uid": run_uid,
-            "device": info["device"],
-            "gpu_name": info["gpu_name"],
-            "torch_version": info["torch_version"],
-            "cuda_version": info["cuda_version"],
-            "git_sha": info["git_sha"],
-            "tokens_per_s": throughput,
-            "elapsed_s": elapsed,
-            "tokens_total": tokens_total,
-            "avg_sets_per_seq": avg_sets,
-            "avg_atoms_per_set": avg_atoms,
-            "scores_total": scores_total,
-            "scores_per_s": scores_per_s,
-            "scores_per_1e6": throughput_per_m,
-            "scores_per_token": scores_per_token,
-            "min_sets_per_seq": min_sets,
-            "max_sets_per_seq": max_sets,
-            "max_vram_mb": max_vram_mb,
-            "status": "ok",
-            "skip_reason": "",
-            "gpu_vram_gb": args.gpu_vram,
-        },
-    )
+    row = {
+        "script": "train_toy_lm_banked",
+        "task": "lm",
+        "dataset": args.dataset or "custom",
+        "dataset_id": args.dataset or "custom",
+        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+        "attn_impl": attn_impl,
+        "precision": args.precision,
+        "cache_fp": cache_fp,
+        "attn": args.attn,
+        "batch": bench_batch_size or args.batch,
+        "seq_len": max_len,
+        "seq_stride": args.seq_stride,
+        "window": args.window,
+        "stride": args.stride,
+        "minhash_k": args.minhash_k,
+        "router_topk": args.router_topk,
+        "adapter_rank": args.adapter_rank,
+        "bench_warmup": args.bench_warmup,
+        "bench_iters": args.bench_iters,
+        "seed": seed,
+        "rep": rep,
+        "run_uid": run_uid,
+        "device": info["device"],
+        "gpu_name": info["gpu_name"],
+        "torch_version": info["torch_version"],
+        "cuda_version": info["cuda_version"],
+        "git_sha": info["git_sha"],
+        "tokens_per_s": throughput,
+        "elapsed_s": elapsed,
+        "tokens_total": tokens_total,
+        "avg_sets_per_seq": avg_sets,
+        "avg_atoms_per_set": avg_atoms,
+        "scores_total": scores_total,
+        "scores_per_s": scores_per_s,
+        "scores_per_1e6": throughput_per_m,
+        "scores_per_token": scores_per_token,
+        "min_sets_per_seq": min_sets,
+        "max_sets_per_seq": max_sets,
+        "max_vram_mb": max_vram_mb,
+        "status": "ok",
+        "skip_reason": "",
+        "gpu_vram_gb": args.gpu_vram,
+    }
+    _append_benchmark_row(benchmark_csv, row)
+    _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
 
 
 def main():
@@ -1491,51 +1513,50 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 _, src_ids, tgt_ids, _ = benchmark_batch[:4]
                 bench_size = src_ids.size(0)
                 seq_len = tgt_ids.size(1)
-            _append_benchmark_row(
-                args.benchmark_csv,
-                {
-                    "script": "train_toy_lm_banked",
-                    "task": "lm",
-                    "dataset": dataset_id,
-                    "dataset_id": dataset_id,
-                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                    "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
-                    "precision": args.precision,
-                    "attn": args.attn,
-                    "batch": bench_size or args.batch,
-                    "seq_len": seq_len,
-                    "seq_stride": args.seq_stride,
-                    "window": args.window,
-                    "stride": args.stride,
-                    "minhash_k": args.minhash_k,
-                    "router_topk": args.router_topk,
-                    "bench_warmup": args.bench_warmup,
-                    "bench_iters": args.bench_iters,
-                    "seed": seed,
-                    "rep": rep,
-                    "run_uid": run_uid,
-                    "device": sys_info["device"],
-                    "gpu_name": sys_info["gpu_name"],
-                    "torch_version": sys_info["torch_version"],
-                    "cuda_version": sys_info["cuda_version"],
-                    "git_sha": sys_info["git_sha"],
-                    "tokens_per_s": 0.0,
-                    "elapsed_s": 0.0,
-                    "tokens_total": 0.0,
-                    "avg_sets_per_seq": 0.0,
-                    "avg_atoms_per_set": 0.0,
-                    "scores_total": 0.0,
-                    "scores_per_s": 0.0,
-                    "scores_per_1e6": 0.0,
-                    "scores_per_token": 0.0,
-                    "min_sets_per_seq": 0.0,
-                    "max_sets_per_seq": 0.0,
-                    "max_vram_mb": 0.0,
-                    "status": "dry_run",
-                    "skip_reason": "dry_run",
-                    "gpu_vram_gb": args.gpu_vram,
-                },
-            )
+            row = {
+                "script": "train_toy_lm_banked",
+                "task": "lm",
+                "dataset": dataset_id,
+                "dataset_id": dataset_id,
+                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                "precision": args.precision,
+                "attn": args.attn,
+                "batch": bench_size or args.batch,
+                "seq_len": seq_len,
+                "seq_stride": args.seq_stride,
+                "window": args.window,
+                "stride": args.stride,
+                "minhash_k": args.minhash_k,
+                "router_topk": args.router_topk,
+                "bench_warmup": args.bench_warmup,
+                "bench_iters": args.bench_iters,
+                "seed": seed,
+                "rep": rep,
+                "run_uid": run_uid,
+                "device": sys_info["device"],
+                "gpu_name": sys_info["gpu_name"],
+                "torch_version": sys_info["torch_version"],
+                "cuda_version": sys_info["cuda_version"],
+                "git_sha": sys_info["git_sha"],
+                "tokens_per_s": 0.0,
+                "elapsed_s": 0.0,
+                "tokens_total": 0.0,
+                "avg_sets_per_seq": 0.0,
+                "avg_atoms_per_set": 0.0,
+                "scores_total": 0.0,
+                "scores_per_s": 0.0,
+                "scores_per_1e6": 0.0,
+                "scores_per_token": 0.0,
+                "min_sets_per_seq": 0.0,
+                "max_sets_per_seq": 0.0,
+                "max_vram_mb": 0.0,
+                "status": "dry_run",
+                "skip_reason": "dry_run",
+                "gpu_vram_gb": args.gpu_vram,
+            }
+            _append_benchmark_row(args.benchmark_csv, row)
+            _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
             if wandb_run.enabled:
                 wandb_run.finish()
             return
@@ -1594,49 +1615,48 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     }
                 )
             dataset_id = args.dataset or "custom"
-            _append_benchmark_row(
-                args.benchmark_csv,
-                {
-                    "script": "train_toy_lm_banked",
-                    "task": "lm",
-                    "dataset": dataset_id,
-                    "dataset_id": dataset_id,
-                    "mode": "sdpa",
-                    "attn_impl": attn_impl,
-                    "precision": args.precision,
-                    "attn": args.attn,
-                    "batch": bench_batch,
-                    "seq_len": tgt_ids.size(1),
-                    "seq_stride": args.seq_stride,
-                    "window": args.window,
-                    "stride": args.stride,
-                    "minhash_k": args.minhash_k,
-                    "router_topk": args.router_topk,
-                    "adapter_rank": args.adapter_rank,
-                    "bench_warmup": args.bench_warmup,
-                    "bench_iters": args.bench_iters,
-                    "seed": seed,
-                    "rep": rep,
-                    "run_uid": run_uid,
-                    "device": sys_info["device"],
-                    "gpu_name": sys_info["gpu_name"],
-                    "torch_version": sys_info["torch_version"],
-                    "cuda_version": sys_info["cuda_version"],
-                    "git_sha": sys_info["git_sha"],
-                    "tokens_per_s": throughput,
-                    "elapsed_s": elapsed,
-                    "tokens_total": tokens,
-                    "avg_sets_per_seq": 0.0,
-                    "avg_atoms_per_set": 0.0,
-                    "scores_total": scores_total,
-                    "scores_per_s": scores_per_s,
-                    "scores_per_1e6": throughput_per_m,
-                    "max_vram_mb": max_vram_mb,
-                    "status": "ok",
-                    "skip_reason": "",
-                    "gpu_vram_gb": args.gpu_vram,
-                },
-            )
+            row = {
+                "script": "train_toy_lm_banked",
+                "task": "lm",
+                "dataset": dataset_id,
+                "dataset_id": dataset_id,
+                "mode": "sdpa",
+                "attn_impl": attn_impl,
+                "precision": args.precision,
+                "attn": args.attn,
+                "batch": bench_batch,
+                "seq_len": tgt_ids.size(1),
+                "seq_stride": args.seq_stride,
+                "window": args.window,
+                "stride": args.stride,
+                "minhash_k": args.minhash_k,
+                "router_topk": args.router_topk,
+                "adapter_rank": args.adapter_rank,
+                "bench_warmup": args.bench_warmup,
+                "bench_iters": args.bench_iters,
+                "seed": seed,
+                "rep": rep,
+                "run_uid": run_uid,
+                "device": sys_info["device"],
+                "gpu_name": sys_info["gpu_name"],
+                "torch_version": sys_info["torch_version"],
+                "cuda_version": sys_info["cuda_version"],
+                "git_sha": sys_info["git_sha"],
+                "tokens_per_s": throughput,
+                "elapsed_s": elapsed,
+                "tokens_total": tokens,
+                "avg_sets_per_seq": 0.0,
+                "avg_atoms_per_set": 0.0,
+                "scores_total": scores_total,
+                "scores_per_s": scores_per_s,
+                "scores_per_1e6": throughput_per_m,
+                "max_vram_mb": max_vram_mb,
+                "status": "ok",
+                "skip_reason": "",
+                "gpu_vram_gb": args.gpu_vram,
+            }
+            _append_benchmark_row(args.benchmark_csv, row)
+            _log_csv_row_wandb(wandb_run, row, "csv/benchmark", summarize=True)
         else:
             run_lm_benchmark(
                 args,
@@ -1745,37 +1765,36 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             if args.skip_oom and is_oom:
                 torch.cuda.empty_cache()
                 if args.metrics_csv:
-                    _append_benchmark_row(
-                        args.metrics_csv,
-                        {
-                            "script": "train_toy_lm_banked",
-                            "task": "lm",
-                            "dataset": args.dataset or "custom",
-                            "dataset_id": args.dataset or "custom",
-                            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                            "attn_impl": attn_impl,
-                            "precision": args.precision,
-                            "cache_fp": getattr(args, "cache_fp", "NA"),
-                            "attn": args.attn,
-                            "batch": args.batch,
-                            "seq_len": args.seq_len,
-                            "seq_stride": args.seq_stride,
-                            "window": args.window,
-                            "stride": args.stride,
-                            "minhash_k": args.minhash_k,
-                            "router_topk": args.router_topk,
-                            "adapter_rank": args.adapter_rank,
-                            "epoch": epoch,
-                            "status": "oom",
-                            "skip_reason": str(exc)[:160],
-                            "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
-                            "peak_allocated_mb": (
-                                torch.cuda.max_memory_allocated() / (1024**2)
-                                if torch.cuda.is_available()
-                                else "NA"
-                            ),
-                        },
-                    )
+                    row = {
+                        "script": "train_toy_lm_banked",
+                        "task": "lm",
+                        "dataset": args.dataset or "custom",
+                        "dataset_id": args.dataset or "custom",
+                        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                        "attn_impl": attn_impl,
+                        "precision": args.precision,
+                        "cache_fp": getattr(args, "cache_fp", "NA"),
+                        "attn": args.attn,
+                        "batch": args.batch,
+                        "seq_len": args.seq_len,
+                        "seq_stride": args.seq_stride,
+                        "window": args.window,
+                        "stride": args.stride,
+                        "minhash_k": args.minhash_k,
+                        "router_topk": args.router_topk,
+                        "adapter_rank": args.adapter_rank,
+                        "epoch": epoch,
+                        "status": "oom",
+                        "skip_reason": str(exc)[:160],
+                        "free_gb_at_start": free_gb_at_start if free_gb_at_start is not None else "NA",
+                        "peak_allocated_mb": (
+                            torch.cuda.max_memory_allocated() / (1024**2)
+                            if torch.cuda.is_available()
+                            else "NA"
+                        ),
+                    }
+                    _append_benchmark_row(args.metrics_csv, row)
+                    _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=epoch, summarize=True)
                 if wandb_run.enabled:
                     wandb_run.finish()
                 return
@@ -1822,37 +1841,42 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 payload["samples/val_text"] = sample_text
             wandb_run.log(payload, step=epoch)
         if args.metrics_csv:
-            _append_benchmark_row(
-                args.metrics_csv,
-                {
-                    "script": "train_toy_lm_banked",
-                    "task": "lm",
-                    "dataset": args.dataset or "custom",
-                    "dataset_id": args.dataset or "custom",
-                    "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                    "attn_impl": attn_impl,
-                    "precision": args.precision,
-                    "cache_fp": getattr(args, "cache_fp", "NA"),
-                    "attn": args.attn,
-                    "batch": args.batch,
-                    "seq_len": args.seq_len,
-                    "seq_stride": args.seq_stride,
-                    "window": args.window,
-                    "stride": args.stride,
-                    "minhash_k": args.minhash_k,
-                    "router_topk": args.router_topk,
-                    "adapter_rank": args.adapter_rank,
-                    "seed": seed,
-                    "rep": rep,
-                    "run_uid": run_uid,
-                    "epoch": epoch,
-                    "train_loss": train_loss,
-                    "train_ppl": train_ppl,
-                    "train_bleu": train_bleu,
-                    "val_loss": val_loss,
-                    "val_ppl": val_ppl,
-                    "val_bleu": val_bleu,
-                },
+            row = {
+                "script": "train_toy_lm_banked",
+                "task": "lm",
+                "dataset": args.dataset or "custom",
+                "dataset_id": args.dataset or "custom",
+                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
+                "attn_impl": attn_impl,
+                "precision": args.precision,
+                "cache_fp": getattr(args, "cache_fp", "NA"),
+                "attn": args.attn,
+                "batch": args.batch,
+                "seq_len": args.seq_len,
+                "seq_stride": args.seq_stride,
+                "window": args.window,
+                "stride": args.stride,
+                "minhash_k": args.minhash_k,
+                "router_topk": args.router_topk,
+                "adapter_rank": args.adapter_rank,
+                "seed": seed,
+                "rep": rep,
+                "run_uid": run_uid,
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "train_ppl": train_ppl,
+                "train_bleu": train_bleu,
+                "val_loss": val_loss,
+                "val_ppl": val_ppl,
+                "val_bleu": val_bleu,
+            }
+            _append_benchmark_row(args.metrics_csv, row)
+            _log_csv_row_wandb(
+                wandb_run,
+                row,
+                "csv/metrics",
+                step=epoch,
+                summarize=(epoch == args.epochs),
             )
 
     wandb_run.finish()
