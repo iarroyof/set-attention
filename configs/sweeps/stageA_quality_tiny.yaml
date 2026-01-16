@@ -10,7 +10,7 @@ parameters:
   lm-subset-path: {value: subsets/wikitext2_train_01pct.json}
   lm-precision: {value: fp32}
   lm-batch: {value: 4}
-  lm-seq-len: {values: [128]}
+  lm-seq-len: {values: [128, 256]}
   lm-seq-stride: {value: 0}
   lm-window: {value: 32}
   lm-stride: {value: 16}
@@ -21,7 +21,7 @@ parameters:
   seq-subset-path: {value: subsets/wmt16_en_ro_train_1pct.json}
   seq-precision: {value: fp32}
   seq-batch: {value: 8}
-  seq-max-len: {value: 64}
+  seq-max-len: {values: [64, 128]}
   seq-tokenizer-type: {value: whitespace}
   seq-window: {value: 32}
   seq-stride: {value: 16}
@@ -32,7 +32,7 @@ parameters:
   textdiff-subset-path: {value: subsets/wikitext2_train_01pct.json}
   textdiff-precision: {value: fp32}
   textdiff-batch: {value: 16}
-  textdiff-seq-len: {value: 128}
+  textdiff-seq-len: {values: [128, 256]}
   textdiff-stride: {value: 128}
   textdiff-window: {value: 32}
   textdiff-bank-stride: {value: 16}
@@ -41,8 +41,8 @@ parameters:
 
   vit-precision: {value: fp32}
   vit-batch: {value: 64}
-  vit-window: {value: 4}
-  vit-stride: {value: 2}
-  vit-minhash-k: {value: 32}
+  vit-window: {values: [4, 8]}
+  vit-stride: {values: [2, 4]}
+  vit-minhash-k: {values: [32, 64]}
   vit-router-topk: {value: 0}
   vit-subset-path: {value: subsets/cifar10_train_1pct.json}
