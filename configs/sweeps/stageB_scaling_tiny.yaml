@@ -3,7 +3,7 @@ parameters:
   output-dir: {value: out/smoke_stageB}
   cache-mode: {value: full}
   stageb-mode: {value: train}
-  epochs: {value: 5}
+  epochs: {value: 15}
   production: {value: true}
   wandb-project: {value: set-attention-test}
 
@@ -11,7 +11,7 @@ parameters:
   lm-subset-path: {value: subsets/wikitext2_train_01pct.json}
   lm-precision: {value: fp16}
   lm-batch: {value: 4}
-  lm-lengths: {values: [128]}
+  lm-lengths: {values: [512, 1024]}
   lm-seq-stride: {value: 0}
   lm-window: {value: 32}
   lm-stride: {value: 16}
@@ -22,7 +22,7 @@ parameters:
   seq-subset-path: {value: subsets/wmt16_en_ro_train_1pct.json}
   seq-precision: {value: fp16}
   seq-batch: {value: 8}
-  seq-lengths: {values: [64]}
+  seq-lengths: {values: [256, 512]}
   seq-max-len: {value: 64}
   seq-tokenizer-type: {value: whitespace}
   seq-window: {value: 32}
@@ -34,7 +34,7 @@ parameters:
   textdiff-subset-path: {value: subsets/wikitext2_train_01pct.json}
   textdiff-precision: {value: fp16}
   textdiff-batch: {value: 16}
-  textdiff-lengths: {values: [128]}
+  textdiff-lengths: {values: [256, 512]}
   textdiff-seq-len: {value: 128}
   textdiff-stride: {value: 128}
   textdiff-window: {value: 32}
