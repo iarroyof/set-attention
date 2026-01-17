@@ -18,6 +18,18 @@ parameters:
   # Log grad norms every N steps (0=disable).
   grad-log-interval:
     value: 10
+  # Model type: baseline or ska.
+  model-type:
+    values: [baseline, ska]
+  # Baseline attention implementation.
+  baseline-impl:
+    value: explicit
+  # SKA backend implementation.
+  ska-backend:
+    value: python
+  # SKA score mode (kernel).
+  ska-score-mode:
+    value: delta_plus_dot
   # LM dataset identifier.
   lm-dataset:
     value: wikitext103

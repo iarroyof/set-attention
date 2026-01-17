@@ -24,6 +24,12 @@ except Exception:
 from set_attention.data import resolve_data_root
 from set_attention.utils.wandb import init_wandb
 from set_attention.utils.grad_stats import component_grad_norms, global_grad_norm, iter_named_parameters
+from set_attention.utils.model_config import (
+    add_model_args,
+    build_model_config,
+    model_config_fields,
+    model_impl_label,
+)
 
 from set_attention.sets.bank_builders import build_windowed_bank_from_ids
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
@@ -44,6 +50,10 @@ from common.repro import set_seed
 def _append_benchmark_row(csv_path: str, row: dict) -> None:
     if not csv_path:
         return
+
+    def _sanitize(value: object) -> object:
+        return "NA" if value is None else value
+
     path = Path(csv_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -65,17 +75,17 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
                 writer = csv.DictWriter(handle, fieldnames=new_fields)
                 writer.writeheader()
                 for prev in existing_rows:
-                    writer.writerow({col: prev.get(col, "") for col in new_fields})
+                    writer.writerow({col: _sanitize(prev.get(col, "NA")) for col in new_fields})
             existing = new_fields
         with path.open("a", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=existing)
-            writer.writerow({col: row.get(col, "") for col in existing})
+            writer.writerow({col: _sanitize(row.get(col, "NA")) for col in existing})
     else:
         fieldnames = list(row.keys())
         with path.open("w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerow(row)
+            writer.writerow({col: _sanitize(row.get(col, "NA")) for col in fieldnames})
 
 
 _WANDB_KEYS_PRINTED: set[tuple[str, str]] = set()
@@ -125,13 +135,13 @@ def _summarize_wandb_payload(wandb_run, payload: dict) -> None:
 
 def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception, wandb_run=None) -> None:
     dataset_id = args.data_mode
+    model_cfg = build_model_config(args, allow_set_kernel=False)
     row = {
         "script": "train_tiny_vit_banked",
         "task": "vit",
         "dataset": dataset_id,
         "dataset_id": dataset_id,
-        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-        "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+        **model_config_fields(model_cfg),
         "precision": args.precision,
         "batch": args.batch,
         "window": args.window,
@@ -228,12 +238,6 @@ class ExplicitTransformerEncoderLayer(nn.Module):
         ff = self.linear2(self.dropout(self.activation(self.linear1(src))))
         src = self.norm2(src + self.dropout2(ff))
         return src
-
-
-def _attn_impl_label(args, sdpa_mode: bool) -> str:
-    if sdpa_mode:
-        return "dot_explicit" if args.attn_baseline == "explicit" else "dot_builtin"
-    return f"ska/{args.ska_backend}"
 
 
 def _sanity_check_explicit_attention(device: torch.device, d_model: int, nhead: int, tol: float = 1e-5) -> None:
@@ -396,6 +400,9 @@ def run_vit_benchmark(
     run_uid,
 ):
     cache_fp = getattr(args, "cache_fp", "NA")
+    model_cfg = getattr(args, "model_config", build_model_config(args, allow_set_kernel=False))
+    is_baseline = model_cfg.model_type == "baseline"
+    impl_label = model_impl_label(model_cfg)
     free_gb_at_start = _gpu_free_gb(device)
     bench_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -423,10 +430,12 @@ def run_vit_benchmark(
         tok_preview = backbone.patch(xb)
         seq_len = tok_preview.size(1)
         dim = tok_preview.size(2)
-        decision = should_skip_dense(
-            xb.size(0), seq_len, dim, args.heads, args.precision, args.gpu_vram
-        ) if args.sdpa_baseline else should_skip_ska(
-            xb.size(0), seq_len, args.window, args.stride, args.heads, args.precision, args.gpu_vram
+        decision = (
+            should_skip_dense(xb.size(0), seq_len, dim, args.heads, args.precision, args.gpu_vram)
+            if is_baseline
+            else should_skip_ska(
+                xb.size(0), seq_len, args.window, args.stride, args.heads, args.precision, args.gpu_vram
+            )
         )
         if decision.skip or args.dry_run:
             row = {
@@ -435,8 +444,7 @@ def run_vit_benchmark(
                 "dataset": args.data_mode,
                 "dataset_id": args.data_mode,
                 "data_mode": args.data_mode,
-                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                **model_config_fields(model_cfg),
                 "precision": args.precision,
                 "cache_fp": cache_fp,
                 "status": "skipped",
@@ -448,9 +456,8 @@ def run_vit_benchmark(
             if args.dry_run or decision.skip:
                 return
 
-    attn_impl = _attn_impl_label(args, args.sdpa_baseline)
-    if args.sdpa_baseline:
-        backend_label = f"sdpa/{attn_impl}"
+    backend_label = impl_label
+    if is_baseline:
 
         def step():
             optim.zero_grad(set_to_none=True)
@@ -462,8 +469,6 @@ def run_vit_benchmark(
             optim.step()
 
     else:
-        backend_label = attn_impl
-
         def step():
             nonlocal stats_ptrs, stats_sizes
             optim.zero_grad(set_to_none=True)
@@ -498,8 +503,7 @@ def run_vit_benchmark(
                 "dataset": args.data_mode,
                 "dataset_id": args.data_mode,
                 "data_mode": args.data_mode,
-                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                **model_config_fields(model_cfg),
                 "precision": args.precision,
                 "cache_fp": cache_fp,
                 "status": "oom",
@@ -526,7 +530,7 @@ def run_vit_benchmark(
     throughput = images / elapsed if elapsed > 0 else 0.0
     head_count = getattr(backbone, "heads", 4)
     info = _system_info()
-    if args.sdpa_baseline:
+    if is_baseline:
         seq_len = backbone.patch.num_patches
         scores_total = float(seq_len * seq_len * head_count * xb.size(0) * args.bench_iters)
         avg_sets = avg_atoms = min_sets = max_sets = 0.0
@@ -564,8 +568,7 @@ def run_vit_benchmark(
         "dataset": args.data_mode,
         "dataset_id": args.data_mode,
         "data_mode": args.data_mode,
-        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-        "attn_impl": attn_impl,
+        **model_config_fields(model_cfg),
         "precision": args.precision,
         "patch": args.patch,
         "window": args.window,
@@ -604,7 +607,7 @@ def run_vit_benchmark(
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--attn", choices=["dot", "cosine", "rbf", "intersect", "ska_true"], default="dot")
+    add_model_args(ap, default_model_type="ska", default_ska_score_mode="delta_plus_dot")
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--batch", type=int, default=128)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -634,18 +637,11 @@ def main():
     ap.add_argument("--num-classes", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--num-workers", type=int, default=2)
-    ap.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
     ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
     ap.add_argument(
         "--dot-naive",
         action="store_true",
         help="Force dot-product baseline attention to use the naive math path.",
-    )
-    ap.add_argument(
-        "--attn-baseline",
-        choices=["pytorch", "explicit"],
-        default="pytorch",
-        help="Baseline attention implementation when --sdpa-baseline is used.",
     )
     ap.add_argument("--benchmark", action="store_true")
     ap.add_argument("--bench-warmup", type=int, default=5)
@@ -689,11 +685,6 @@ def main():
         help="Enable benchmark-friendly seeding (disables deterministic algs but seeds RNG).",
     )
     ap.add_argument(
-        "--sdpa-baseline",
-        action="store_true",
-        help="Skip set attention/router and run plain ViT encoder.",
-    )
-    ap.add_argument(
         "--precompute-bank",
         action="store_true",
         help="Move banks/universe to the training device (default keeps them on CPU).",
@@ -702,6 +693,7 @@ def main():
     ap.add_argument("--skip-oom", action="store_true", help="Skip configs that OOM or exceed estimated VRAM.")
     ap.add_argument("--dry-run", action="store_true", help="Print skip/ok decision and write CSV status without running.")
     args = ap.parse_args()
+    args.model_config = build_model_config(args, allow_set_kernel=False)
     if args.benchmark and args.limit is None and not args.subset_path:
         raise RuntimeError(
             "--benchmark requires explicit --limit or --subset-path "
@@ -711,7 +703,7 @@ def main():
         print("[Data] ignoring --limit outside benchmark; use --subset-path instead.")
         args.limit = None
     _configure_dot_naive(args.dot_naive)
-    if args.sdpa_baseline and args.attn_baseline == "explicit":
+    if args.model_config.model_type == "baseline" and args.model_config.baseline_impl == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), 128, args.heads)
 
     seed_values: List[int] = []
@@ -744,6 +736,9 @@ def main():
 
 
 def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
+    model_cfg = getattr(args, "model_config", build_model_config(args, allow_set_kernel=False))
+    is_baseline = model_cfg.model_type == "baseline"
+    impl_label = model_impl_label(model_cfg)
     torch.backends.cudnn.benchmark = True
     set_seed(seed, deterministic=args.deterministic, benchmark_mode=args.benchmark_mode)
     print(f"[Run] seed={seed} rep={rep} uid={run_uid}")
@@ -758,8 +753,9 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "dataset_id": args.data_mode,
         "data_mode": args.data_mode,
         "tokenizer_type": "NA",
-        "ska_backend": args.ska_backend,
+        **model_config_fields(model_cfg),
         "precision": args.precision,
+        "patch": args.patch,
         "seq_len": "NA",
         "seq_stride": "NA",
         "window": args.window,
@@ -767,10 +763,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "minhash_k": args.minhash_k,
         "router_topk": args.router_topk,
         "adapter_rank": args.adapter_rank,
-        "set_kernel": "NA",
         "steps": "NA",
         "batch": args.batch,
-        "sdpa_baseline": args.sdpa_baseline,
         "precompute_bank": args.precompute_bank,
         "streaming": False,
         "reuse_vocab": False,
@@ -783,7 +777,6 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,
-        "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
     }
     run_name = args.wandb_run_name or None
     if run_name and multi_run:
@@ -816,8 +809,6 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             "val/mmd": "NA",
             "val/chamfer": "NA",
             "val/token_acc": "NA",
-            "samples/val_text": "NA",
-            "samples/generated": "NA",
             "samples/val_preview": "NA",
         },
     )
@@ -901,7 +892,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     atom_emb = adapter = phi_snapshot = None
     universe = None
     val_cache = None
-    if not args.sdpa_baseline:
+    if not is_baseline:
         bank = build_patch_banks(base_dataset, args.patch, indices=train_indices)
         val_count_log = len(val_dataset) if val_dataset is not None else 0
         print(
@@ -937,22 +928,24 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             f"val samples {val_count_log} | baseline mode (no banks)"
         )
 
+    attn_baseline = "explicit" if (is_baseline and model_cfg.baseline_impl == "explicit") else "pytorch"
     backbone = TinyViTBackbone(
         dim=128,
         depth=4,
         heads=args.heads,
         patch=args.patch,
-        attn_baseline="explicit" if (args.sdpa_baseline and args.attn_baseline == "explicit") else "pytorch",
+        attn_baseline=attn_baseline,
     ).to(device)
     set_attn = router = None
-    if not args.sdpa_baseline:
+    if not is_baseline:
+        ska_gamma = 0.0 if args.ska_score_mode == "dot" else 0.3
         set_attn = SetBankAttention(
             d_model=128,
             num_heads=args.heads,
             tau=1.0,
-            gamma=0.3,
+            gamma=ska_gamma,
             beta=1.0,
-            score_mode="delta_plus_dot",
+            score_mode=args.ska_score_mode,
             eta=1.0,
             backend=args.ska_backend,
             precision=args.precision,
@@ -973,7 +966,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     )
 
     params = list(backbone.parameters()) + list(head.parameters())
-    if not args.sdpa_baseline:
+    if not is_baseline:
         if set_attn is not None:
             params += list(set_attn.parameters())
         if router is not None:
@@ -1040,7 +1033,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 xb = xb.to(device, non_blocking=True)
                 yb = yb.to(device, non_blocking=True)
                 tokens = backbone(xb)
-                if args.sdpa_baseline:
+                if is_baseline:
                     routed = tokens
                 else:
                     phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
@@ -1102,7 +1095,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     xb = xb.to(device, non_blocking=True)
                     yb = yb.to(device, non_blocking=True)
                     tokens = backbone(xb)
-                    if args.sdpa_baseline:
+                    if is_baseline:
                         routed = tokens
                     else:
                         phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
@@ -1137,7 +1130,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     pred = logits.argmax(dim=-1)
                     topk = logits.topk(min(5, logits.size(-1)), dim=-1).indices
                     batch_top5 = (topk == yb.unsqueeze(-1)).any(dim=-1).sum().item()
-                    if not args.sdpa_baseline:
+                    if not is_baseline:
                         with torch.no_grad():
                             set_idx_batch, _ = cache.gather_sequence_sets(batch_idx)
                             _, mask = pad_segments_from_ptrs(Phi.new_zeros(Phi.size(0), 1), q_ptrs)
@@ -1158,8 +1151,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                         "task": "vit",
                         "dataset": args.data_mode,
                         "dataset_id": args.data_mode,
-                        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                        "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                        **model_config_fields(model_cfg),
                         "precision": args.precision,
                         "patch": args.patch,
                         "window": args.window,
@@ -1209,7 +1201,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         train_grad_norm_ffn = (
             grad_comp_sums["ffn"] / grad_comp_counts["ffn"] if grad_comp_counts["ffn"] else None
         )
-        coverage_display = "NA" if args.sdpa_baseline else f"{coverage_ratio * 100:.1f}%"
+        coverage_display = "NA" if is_baseline else f"{coverage_ratio * 100:.1f}%"
         if val_loader is not None:
             sample_indices = select_sample_indices(len(val_loader.dataset), args.sample_count, args.sample_seed + ep)
         else:
@@ -1219,9 +1211,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         if val_metrics is not None and "samples" in val_metrics:
             val_samples = val_metrics["samples"]
             del val_metrics["samples"]
-        mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
+        kernel_tag = model_cfg.ska_score_mode if model_cfg.model_type == "ska" else model_cfg.baseline_impl
+        mode_tag = impl_label
         msg = (
-            f"[ViT-Banked][{mode_tag}][{args.attn}] epoch {ep:02d} "
+            f"[ViT-Banked][{mode_tag}][{kernel_tag}] epoch {ep:02d} "
             f"train loss {avg_loss:.4f} acc {avg_acc:.3f} top5 {avg_top5:.3f} "
             f"| sets/seq {avg_sets_per_seq:.2f} | coverage {coverage_display}"
         )
@@ -1241,9 +1234,15 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "train/acc": avg_acc,
                 "train/top5": avg_top5,
                 "train/sets_per_seq": avg_sets_per_seq,
-                "impl/attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                "impl/model_type": model_cfg.model_type,
             }
-            if not args.sdpa_baseline:
+            if model_cfg.baseline_impl:
+                payload["impl/baseline_impl"] = model_cfg.baseline_impl
+            if model_cfg.ska_backend:
+                payload["impl/ska_backend"] = model_cfg.ska_backend
+            if model_cfg.ska_score_mode:
+                payload["impl/ska_score_mode"] = model_cfg.ska_score_mode
+            if not is_baseline:
                 payload["train/coverage"] = coverage_ratio
             if val_metrics is not None:
                 payload.update(
@@ -1290,8 +1289,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "task": "vit",
                 "dataset": args.data_mode,
                 "dataset_id": args.data_mode,
-                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                **model_config_fields(model_cfg),
                 "precision": args.precision,
                 "patch": args.patch,
                 "window": args.window,
@@ -1309,8 +1307,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "val_loss": val_metrics["loss"] if val_metrics is not None else "NA",
                 "val_acc": val_metrics["acc"] if val_metrics is not None else "NA",
                 "val_top5": val_metrics["top5"] if val_metrics is not None else "NA",
-                "coverage_sets_per_seq": avg_sets_per_seq if not args.sdpa_baseline else "NA",
-                "coverage_ratio": coverage_ratio if not args.sdpa_baseline else "NA",
+                "coverage_sets_per_seq": avg_sets_per_seq if not is_baseline else "NA",
+                "coverage_ratio": coverage_ratio if not is_baseline else "NA",
                 "train_grad_norm": train_grad_norm if train_grad_norm is not None else "NA",
                 "train_grad_norm_ska": train_grad_norm_ska if train_grad_norm_ska is not None else "NA",
                 "train_grad_norm_baseline_attn": (

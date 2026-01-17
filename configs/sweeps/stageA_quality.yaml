@@ -15,6 +15,18 @@ parameters:
   # W&B project name.
   wandb-project:
     value: set-attention-paper
+  # Model type: baseline or ska.
+  model-type:
+    values: [baseline, ska]
+  # Baseline attention implementation.
+  baseline-impl:
+    value: explicit
+  # SKA backend implementation.
+  ska-backend:
+    value: python
+  # SKA score mode (kernel).
+  ska-score-mode:
+    value: delta_plus_dot
   # LM dataset identifier.
   lm-dataset:
     value: wikitext103

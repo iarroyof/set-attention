@@ -63,6 +63,12 @@ from set_attention.utils.profiling import profiler
 from set_attention.utils.sample_logging import format_text_samples
 from set_attention.utils.wandb import init_wandb
 from set_attention.utils.grad_stats import component_grad_norms, global_grad_norm, iter_named_parameters
+from set_attention.utils.model_config import (
+    add_model_args,
+    build_model_config,
+    model_config_fields,
+    model_impl_label,
+)
 from set_attention.experiments.nlp_eval import corpus_bleu
 from set_attention.training.text_utils import build_text_dataloader, ids_to_tokens
 
@@ -358,7 +364,7 @@ def _lm_token_spec(args, dataset_id: str, subset_sig: Optional[dict]) -> dict:
             "router_topk": int(args.router_topk),
             "backend": args.ska_backend,
             "precision": args.precision,
-            "attn": args.attn,
+            "score_mode": args.ska_score_mode,
         },
         model={
             "d_model": int(args.d_model),
@@ -395,7 +401,7 @@ def _lm_bank_spec(args, dataset_id: str, subset_sig: Optional[dict], tokens_fp: 
             "router_topk": int(args.router_topk),
             "backend": args.ska_backend,
             "precision": args.precision,
-            "attn": args.attn,
+            "score_mode": args.ska_score_mode,
         },
         model={
             "d_model": int(args.d_model),
@@ -535,6 +541,10 @@ class TinyLMBackbone(nn.Module):
 def _append_benchmark_row(csv_path: str, row: dict) -> None:
     if not csv_path:
         return
+
+    def _sanitize(value: object) -> object:
+        return "NA" if value is None else value
+
     path = Path(csv_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -556,17 +566,17 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
                 writer = csv.DictWriter(handle, fieldnames=new_fields)
                 writer.writeheader()
                 for prev in existing_rows:
-                    writer.writerow({col: prev.get(col, "") for col in new_fields})
+                    writer.writerow({col: _sanitize(prev.get(col, "NA")) for col in new_fields})
             existing = new_fields
         with path.open("a", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=existing)
-            writer.writerow({col: row.get(col, "") for col in existing})
+            writer.writerow({col: _sanitize(row.get(col, "NA")) for col in existing})
     else:
         fieldnames = list(row.keys())
         with path.open("w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerow(row)
+            writer.writerow({col: _sanitize(row.get(col, "NA")) for col in fieldnames})
 
 
 _WANDB_KEYS_PRINTED: set[tuple[str, str]] = set()
@@ -615,16 +625,15 @@ def _summarize_wandb_payload(wandb_run, payload: dict) -> None:
 
 
 def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception, wandb_run=None) -> None:
+    model_cfg = build_model_config(args, allow_set_kernel=False)
     row = {
         "script": "train_toy_lm_banked",
         "task": "lm",
         "dataset": args.dataset or "char",
         "dataset_id": args.dataset or "char",
-        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-        "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+        **model_config_fields(model_cfg),
         "precision": args.precision,
         "cache_fp": getattr(args, "cache_fp", "NA"),
-        "attn": args.attn,
         "batch": args.batch,
         "seq_len": args.seq_len,
         "seq_stride": args.seq_stride,
@@ -696,12 +705,6 @@ def _gpu_free_gb(device: Optional[torch.device] = None) -> Optional[float]:
     return free / (1024**3)
 
 
-def _attn_impl_label(args, sdpa_mode: bool) -> str:
-    if sdpa_mode:
-        return "dot_explicit" if args.attn_baseline == "explicit" else "dot_builtin"
-    return f"ska/{args.ska_backend}"
-
-
 def _sanity_check_explicit_attention(device: torch.device, d_model: int, nhead: int, tol: float = 1e-5) -> None:
     torch.manual_seed(1337)
     B, L = 2, 4
@@ -748,7 +751,8 @@ def run_lm_benchmark(
     rep,
     run_uid,
 ):
-    attn_impl = _attn_impl_label(args, args.sdpa_baseline)
+    model_cfg = build_model_config(args, allow_set_kernel=False)
+    is_baseline = model_cfg.model_type == "baseline"
     cache_fp = getattr(args, "cache_fp", "NA")
     free_gb_at_start = _gpu_free_gb(device)
     # Normalize benchmark batch
@@ -764,7 +768,7 @@ def run_lm_benchmark(
         seq_len = tgt_ids.size(1)
     # Pre-skip based on VRAM estimate or dry-run
     if args.gpu_vram > 0 and bench_batch_size is not None:
-        if args.sdpa_baseline:
+        if is_baseline:
             decision = should_skip_dense(bench_batch_size, max_len, args.d_model, args.nhead, args.precision, args.gpu_vram)
         else:
             decision = should_skip_ska(bench_batch_size, max_len, args.window, args.stride, args.nhead, args.precision, args.gpu_vram)
@@ -774,8 +778,7 @@ def run_lm_benchmark(
                 "task": "lm",
                 "dataset": args.dataset or "custom",
                 "dataset_id": args.dataset or "custom",
-                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                "attn_impl": attn_impl,
+                **model_config_fields(model_cfg),
                 "precision": args.precision,
                 "cache_fp": cache_fp,
                 "status": "skipped",
@@ -794,8 +797,7 @@ def run_lm_benchmark(
             "task": "lm",
             "dataset": args.dataset or "custom",
             "dataset_id": args.dataset or "custom",
-            "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-            "attn_impl": attn_impl,
+            **model_config_fields(model_cfg),
             "precision": args.precision,
             "cache_fp": cache_fp,
             "status": "dry_run",
@@ -858,8 +860,7 @@ def run_lm_benchmark(
                 "task": "lm",
                 "dataset": args.dataset or "custom",
                 "dataset_id": args.dataset or "custom",
-                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                "attn_impl": attn_impl,
+                **model_config_fields(model_cfg),
                 "precision": args.precision,
                 "cache_fp": cache_fp,
                 "status": "oom",
@@ -898,8 +899,9 @@ def run_lm_benchmark(
     scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
     throughput_per_m = scores_per_s / 1e6
     scores_per_token = scores_total / tokens_total if tokens_total > 0 else 0.0
+    impl_label = model_impl_label(model_cfg)
     print(
-        f"[benchmark][lm] backend={args.ska_backend} ({attn_impl}) precision={args.precision} "
+        f"[benchmark][lm] backend={impl_label} precision={args.precision} "
         f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
     )
     if wandb_run.enabled:
@@ -926,11 +928,9 @@ def run_lm_benchmark(
         "task": "lm",
         "dataset": args.dataset or "custom",
         "dataset_id": args.dataset or "custom",
-        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-        "attn_impl": attn_impl,
+        **model_config_fields(model_cfg),
         "precision": args.precision,
         "cache_fp": cache_fp,
-        "attn": args.attn,
         "batch": bench_batch_size or args.batch,
         "seq_len": max_len,
         "seq_stride": args.seq_stride,
@@ -971,13 +971,7 @@ def run_lm_benchmark(
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--attn", choices=["dot", "cosine", "rbf", "intersect", "ska_true"], default="dot")
-    ap.add_argument(
-        "--attn-baseline",
-        choices=["pytorch", "explicit"],
-        default="pytorch",
-        help="Baseline attention implementation when using --sdpa-baseline.",
-    )
+    add_model_args(ap, default_model_type="ska", default_ska_score_mode="delta_plus_dot")
     ap.add_argument("--epochs", type=int, default=5)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--d-model", type=int, default=128)
@@ -990,7 +984,6 @@ def main():
     ap.add_argument("--adapter-rank", type=int, default=0)
     ap.add_argument("--router-topk", type=int, default=0)
     ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
-    ap.add_argument("--ska-backend", choices=["python", "triton", "keops"], default="python")
     ap.add_argument(
         "--dot-naive",
         action="store_true",
@@ -1001,7 +994,6 @@ def main():
     ap.add_argument("--reuse-vocab", dest="reuse_vocab", action="store_true", help="Reuse/save streaming vocab files to skip re-tokenization.")
     ap.add_argument("--no-reuse-vocab", dest="reuse_vocab", action="store_false", help="Disable vocab caching for streaming datasets.")
     ap.set_defaults(reuse_vocab=True)
-    ap.add_argument("--sdpa-baseline", action="store_true", help="Use standard SDPA instead of banked attention.")
     ap.add_argument("--streaming", dest="streaming", action="store_true", help="Stream datasets instead of materializing tensors.")
     ap.add_argument("--no-streaming", dest="streaming", action="store_false", help="Disable streaming data loaders.")
     ap.set_defaults(streaming=None)
@@ -1078,6 +1070,7 @@ def main():
     )
     ap.add_argument("--reps", type=int, default=1, help="Number of repetitions per seed.")
     args = ap.parse_args()
+    args.model_config = build_model_config(args, allow_set_kernel=False)
     if args.limit and args.dataset_lines == 0:
         args.dataset_lines = int(args.limit)
     if args.benchmark:
@@ -1090,7 +1083,7 @@ def main():
         print("[Data] ignoring --limit/--dataset-lines outside benchmark; use --subset-path instead.")
         args.dataset_lines = 0
     _configure_dot_naive(args.dot_naive)
-    if args.sdpa_baseline and args.attn_baseline == "explicit":
+    if args.model_config.model_type == "baseline" and args.model_config.baseline_impl == "explicit":
         _sanity_check_explicit_attention(torch.device(args.device), args.d_model, args.nhead)
     if args.cache_mode == "full" and args.num_workers > 0:
         print("[Data] cache-mode=full forces num_workers=0 to avoid duplicating cached tensors.")
@@ -1127,6 +1120,8 @@ def main():
 def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     set_seed(seed)
     print(f"[Run] seed={seed} rep={rep} uid={run_uid}")
+    model_cfg = getattr(args, "model_config", build_model_config(args, allow_set_kernel=False))
+    is_baseline = model_cfg.model_type == "baseline"
 
     if args.streaming is None:
         args.streaming = bool(args.dataset == "wikitext103")
@@ -1161,6 +1156,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "dataset_id": args.dataset or "char",
         "data_mode": "text",
         "tokenizer_type": tokenizer_type,
+        **model_config_fields(model_cfg),
         "seq_len": args.seq_len,
         "seq_stride": args.seq_stride,
         "window": args.window,
@@ -1168,14 +1164,11 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "minhash_k": args.minhash_k,
         "router_topk": args.router_topk,
         "adapter_rank": args.adapter_rank,
-        "set_kernel": "NA",
         "steps": "NA",
-        "ska_backend": args.ska_backend,
         "precision": args.precision,
         "batch": args.batch,
         "sample_count": args.sample_count,
         "grad_log_interval": args.grad_log_interval,
-        "sdpa_baseline": args.sdpa_baseline,
         "streaming": bool(args.streaming),
         "precompute_bank": args.precompute_bank,
         "reuse_vocab": args.reuse_vocab,
@@ -1186,7 +1179,6 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,
-        "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
     }
     run_name = args.wandb_run_name or None
     if run_name and multi_run:
@@ -1370,7 +1362,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     device = torch.device(args.device)
     free_gb_at_start = _gpu_free_gb(device)
 
-    if args.cache_only and cache_mode in ("tokens", "full") and (args.sdpa_baseline or cache_mode == "tokens"):
+    if args.cache_only and cache_mode in ("tokens", "full") and (is_baseline or cache_mode == "tokens"):
         print("[Cache] cache-only complete (tokens).")
         wandb_run.finish()
         return
@@ -1389,7 +1381,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     else:
         benchmark_batch = None
 
-    if not args.sdpa_baseline:
+    if not is_baseline:
         if streaming_data is None:
             sequences_train = [row.clone() for row in train_X]
             sequences_val = [row.clone() for row in val_X] if (val_X is not None and val_X.numel() > 0) else []
@@ -1524,18 +1516,11 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         args.d_model,
         args.nhead,
         args.layers,
-        attn_baseline="explicit" if (args.sdpa_baseline and args.attn_baseline == "explicit") else "pytorch",
+        attn_baseline="explicit" if (is_baseline and model_cfg.baseline_impl == "explicit") else "pytorch",
     ).to(device)
-    if not args.sdpa_baseline:
-        ska_score_mode = "delta_plus_dot"
-        ska_gamma = 0.3
-        if args.attn == "dot":
-            ska_score_mode = "dot"
-            ska_gamma = 0.0
-        elif args.attn == "rbf":
-            ska_score_mode = "delta_rbf"
-        elif args.attn == "intersect":
-            ska_score_mode = "intersect_plus_dot"
+    if not is_baseline:
+        ska_score_mode = model_cfg.ska_score_mode or "delta_plus_dot"
+        ska_gamma = 0.0 if ska_score_mode == "dot" else 0.3
         set_attn = SetBankAttention(
             d_model=args.d_model,
             num_heads=args.nhead,
@@ -1589,10 +1574,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "task": "lm",
                 "dataset": dataset_id,
                 "dataset_id": dataset_id,
-                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
+                **model_config_fields(model_cfg),
                 "precision": args.precision,
-                "attn": args.attn,
                 "batch": bench_size or args.batch,
                 "seq_len": seq_len,
                 "seq_stride": args.seq_stride,
@@ -1631,7 +1614,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             if wandb_run.enabled:
                 wandb_run.finish()
             return
-        if args.sdpa_baseline:
+        if is_baseline:
             if benchmark_batch is None:
                 print("[benchmark] no data available.")
                 return
@@ -1670,9 +1653,9 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             scores_total = float(bench_batch * tgt_ids.size(1) * tgt_ids.size(1) * args.nhead)
             scores_per_s = scores_total / elapsed if elapsed > 0 else 0.0
             throughput_per_m = scores_per_s / 1e6
-            attn_impl = "dot_explicit" if args.attn_baseline == "explicit" else "dot_builtin"
+            impl_label = model_impl_label(model_cfg)
             print(
-                f"[benchmark][lm] backend=sdpa ({attn_impl}) precision={args.precision} "
+                f"[benchmark][lm] backend={impl_label} precision={args.precision} "
                 f"tokens/s={throughput:.1f} elapsed={elapsed:.3f}s"
             )
             if wandb_run.enabled:
@@ -1691,10 +1674,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "task": "lm",
                 "dataset": dataset_id,
                 "dataset_id": dataset_id,
-                "mode": "sdpa",
-                "attn_impl": attn_impl,
+                **model_config_fields(model_cfg),
                 "precision": args.precision,
-                "attn": args.attn,
                 "batch": bench_batch,
                 "seq_len": tgt_ids.size(1),
                 "seq_stride": args.seq_stride,
@@ -1799,7 +1780,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 tgt_ids=(train_Y if train else val_Y),
             )
         active_cache = train_cache if train else val_cache
-        if not args.sdpa_baseline and active_cache is None:
+        if not is_baseline and active_cache is None:
             return 0.0, refs_epoch, hyps_epoch
         for batch_idx, src_ids, tgt_ids, ref_tokens in iterator:
             batch_idx = batch_idx.to(device)
@@ -1807,7 +1788,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             tgt_ids = tgt_ids.to(device, non_blocking=True)
             tgt_in = torch.cat([tgt_ids[:, :1], tgt_ids[:, :-1]], dim=1)
 
-            if not args.sdpa_baseline:
+            if not is_baseline:
                 phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
                 Phi, Sig, Size, q_ptrs = active_cache.gather_flat(batch_idx, phi_dynamic)
                 token_states = backbone(src_ids)
@@ -1851,7 +1832,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
 
         return total_loss / max(1, total_tokens), refs_epoch, hyps_epoch
 
-    attn_impl = "dot_explicit" if (args.sdpa_baseline and args.attn_baseline == "explicit") else "dot_builtin"
+    impl_label = model_impl_label(model_cfg)
     for epoch in range(1, args.epochs + 1):
         grad_norm_sum = 0.0
         grad_norm_count = 0
@@ -1880,11 +1861,9 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                         "task": "lm",
                         "dataset": args.dataset or "custom",
                         "dataset_id": args.dataset or "custom",
-                        "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                        "attn_impl": attn_impl,
+                        **model_config_fields(model_cfg),
                         "precision": args.precision,
                         "cache_fp": getattr(args, "cache_fp", "NA"),
-                        "attn": args.attn,
                         "batch": args.batch,
                         "seq_len": args.seq_len,
                         "seq_stride": args.seq_stride,
@@ -1926,11 +1905,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         train_grad_norm_ffn = (
             grad_comp_sums["ffn"] / grad_comp_counts["ffn"] if grad_comp_counts["ffn"] else None
         )
-        mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
-        if args.sdpa_baseline:
-            mode_tag = f"{mode_tag}/{attn_impl}"
+        mode_tag = impl_label
+        kernel_tag = model_cfg.ska_score_mode if model_cfg.model_type == "ska" else model_cfg.baseline_impl
         msg = (
-            f"[LM-Banked][{mode_tag}][{args.attn}] epoch {epoch:02d} "
+            f"[LM-Banked][{mode_tag}][{kernel_tag}] epoch {epoch:02d} "
             f"train loss {train_loss:.4f} ppl {train_ppl:.2f} BLEU {train_bleu:.3f} | "
             f"val loss {val_loss:.4f} ppl {val_ppl:.2f} BLEU {val_bleu:.3f}"
         )
@@ -1947,8 +1925,14 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "val/loss": val_loss,
                 "val/ppl": val_ppl,
                 "val/bleu": val_bleu,
-                "impl/attn_impl": attn_impl,
+                "impl/model_type": model_cfg.model_type,
             }
+            if model_cfg.baseline_impl:
+                payload["impl/baseline_impl"] = model_cfg.baseline_impl
+            if model_cfg.ska_backend:
+                payload["impl/ska_backend"] = model_cfg.ska_backend
+            if model_cfg.ska_score_mode:
+                payload["impl/ska_score_mode"] = model_cfg.ska_score_mode
             payload["train/time_s"] = train_time_s
             payload["train/time_per_epoch_s"] = train_time_s
             if peak_vram_mib is not None:
@@ -1979,11 +1963,9 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "task": "lm",
                 "dataset": args.dataset or "custom",
                 "dataset_id": args.dataset or "custom",
-                "mode": "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}",
-                "attn_impl": attn_impl,
+                **model_config_fields(model_cfg),
                 "precision": args.precision,
                 "cache_fp": getattr(args, "cache_fp", "NA"),
-                "attn": args.attn,
                 "batch": args.batch,
                 "seq_len": args.seq_len,
                 "seq_stride": args.seq_stride,

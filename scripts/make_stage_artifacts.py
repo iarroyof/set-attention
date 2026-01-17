@@ -17,12 +17,43 @@ def load_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def _add_impl_label(df: pd.DataFrame) -> pd.DataFrame:
+    if "model_type" in df.columns:
+        def _label(row: pd.Series) -> str:
+            model_type = str(row.get("model_type", "NA"))
+            if model_type == "baseline":
+                return f"baseline/{row.get('baseline_impl', 'NA')}"
+            if model_type == "ska":
+                return f"ska/{row.get('ska_backend', 'NA')}/{row.get('ska_score_mode', 'NA')}"
+            return model_type
+
+        labeled = df.copy()
+        labeled["impl_label"] = labeled.apply(_label, axis=1)
+        return labeled
+    if "attn_impl" in df.columns:
+        labeled = df.copy()
+        labeled["impl_label"] = labeled["attn_impl"].astype(str)
+        return labeled
+    labeled = df.copy()
+    labeled["impl_label"] = "unknown"
+    return labeled
+
+
 def stage_a_tables(metrics_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs: Dict[str, Path] = {}
     # Keep only quality metrics columns
     quality_cols = [c for c in metrics_df.columns if any(k in c for k in ("loss", "ppl", "bleu", "rouge", "acc", "top5"))]
-    key_cols = ["task", "dataset_id", "mode", "attn_impl", "precision"]
+    key_cols = [
+        "task",
+        "dataset_id",
+        "model_type",
+        "baseline_impl",
+        "ska_backend",
+        "ska_score_mode",
+        "precision",
+    ]
+    key_cols = [c for c in key_cols if c in metrics_df.columns]
     keep = [c for c in metrics_df.columns if c in key_cols or c in quality_cols]
     df = metrics_df[keep].copy()
     # Group by core keys and take mean/std if _mean/_std exist
@@ -43,6 +74,7 @@ def stage_a_tables(metrics_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
 def stage_b_plots(bench_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs: Dict[str, Path] = {}
+    bench_df = _add_impl_label(bench_df)
     try:
         import matplotlib.pyplot as plt  # type: ignore
     except Exception:
@@ -51,7 +83,11 @@ def stage_b_plots(bench_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
         cols = [
             "task",
             "dataset_id",
-            "attn_impl",
+            "model_type",
+            "baseline_impl",
+            "ska_backend",
+            "ska_score_mode",
+            "impl_label",
             "precision",
             "seq_len",
             "tokens_per_s",
@@ -67,7 +103,7 @@ def stage_b_plots(bench_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
     lm = bench_df[bench_df["task"] == "lm"].copy()
     if "seq_len" in lm:
         fig, ax = plt.subplots()
-        for impl, sub in lm.groupby("attn_impl"):
+        for impl, sub in lm.groupby("impl_label"):
             ax.plot(sub["seq_len"], sub["tokens_per_s"], marker="o", label=impl)
         ax.set_xlabel("seq_len")
         ax.set_ylabel("tokens/s")
@@ -79,7 +115,7 @@ def stage_b_plots(bench_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
         plt.close(fig)
         # VRAM vs seq_len
         fig, ax = plt.subplots()
-        for impl, sub in lm.groupby("attn_impl"):
+        for impl, sub in lm.groupby("impl_label"):
             ax.plot(sub["seq_len"], sub["max_vram_mb"], marker="o", label=impl)
         ax.set_xlabel("seq_len")
         ax.set_ylabel("max_vram_mb")
@@ -95,7 +131,7 @@ def stage_b_plots(bench_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
     if not seq.empty:
         if "max_len" in seq:
             fig, ax = plt.subplots()
-            for impl, sub in seq.groupby("attn_impl"):
+            for impl, sub in seq.groupby("impl_label"):
                 ax.plot(sub["max_len"], sub["tokens_per_s"], marker="o", label=impl)
             ax.set_xlabel("seq_len")
             ax.set_ylabel("tokens/s")
@@ -107,7 +143,7 @@ def stage_b_plots(bench_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
             plt.close(fig)
 
             fig, ax = plt.subplots()
-            for impl, sub in seq.groupby("attn_impl"):
+            for impl, sub in seq.groupby("impl_label"):
                 ax.plot(sub["max_len"], sub["max_vram_mb"], marker="o", label=impl)
             ax.set_xlabel("seq_len")
             ax.set_ylabel("max_vram_mb")
@@ -122,7 +158,7 @@ def stage_b_plots(bench_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
     textdiff = bench_df[bench_df["task"] == "textdiff"].copy()
     if not textdiff.empty and "text_seq_len" in textdiff:
         fig, ax = plt.subplots()
-        for impl, sub in textdiff.groupby("attn_impl"):
+        for impl, sub in textdiff.groupby("impl_label"):
             ax.plot(sub["text_seq_len"], sub["sequences_per_s"], marker="o", label=impl)
         ax.set_xlabel("text_seq_len")
         ax.set_ylabel("seq/s")
@@ -134,7 +170,7 @@ def stage_b_plots(bench_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
         plt.close(fig)
 
         fig, ax = plt.subplots()
-        for impl, sub in textdiff.groupby("attn_impl"):
+        for impl, sub in textdiff.groupby("impl_label"):
             ax.plot(sub["text_seq_len"], sub["max_vram_mb"], marker="o", label=impl)
         ax.set_xlabel("text_seq_len")
         ax.set_ylabel("max_vram_mb")
@@ -149,9 +185,9 @@ def stage_b_plots(bench_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
     vit = bench_df[bench_df["task"] == "vit"].copy()
     if not vit.empty:
         fig, ax = plt.subplots()
-        impls = list(vit["attn_impl"].unique())
+        impls = list(vit["impl_label"].unique())
         xs = range(len(impls))
-        vals = [vit[vit["attn_impl"] == impl]["images_per_s"].mean() for impl in impls]
+        vals = [vit[vit["impl_label"] == impl]["images_per_s"].mean() for impl in impls]
         ax.bar(xs, vals)
         ax.set_xticks(xs)
         ax.set_xticklabels(impls, rotation=45)
@@ -163,7 +199,7 @@ def stage_b_plots(bench_df: pd.DataFrame, out_dir: Path) -> Dict[str, Path]:
         plt.close(fig)
 
         fig, ax = plt.subplots()
-        vals = [vit[vit["attn_impl"] == impl]["max_vram_mb"].mean() for impl in impls]
+        vals = [vit[vit["impl_label"] == impl]["max_vram_mb"].mean() for impl in impls]
         ax.bar(xs, vals)
         ax.set_xticks(xs)
         ax.set_xticklabels(impls, rotation=45)

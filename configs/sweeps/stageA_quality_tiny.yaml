@@ -5,6 +5,10 @@ parameters:
   epochs: {value: 5}
   production: {value: true}
   wandb-project: {value: set-attention-test}
+  model-type: {values: [baseline, ska]}
+  baseline-impl: {value: explicit}
+  ska-backend: {value: python}
+  ska-score-mode: {value: delta_plus_dot}
 
   lm-dataset: {value: wikitext2}
   lm-subset-path: {value: subsets/wikitext2_train_01pct.json}
