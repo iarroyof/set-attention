@@ -674,24 +674,24 @@ def main():
                 if args.seq_limit is not None:
                     seq_cmd.extend(["--seq-limit", str(args.seq_limit)])
                 if args.cache_mode == "full":
-                seq_cmd.extend(
-                    [
-                        "--seq-window",
-                        str(args.seq_window),
-                        "--seq-stride",
-                        str(args.seq_stride),
-                        "--seq-minhash-k",
-                        str(args.seq_minhash_k),
-                        "--seq-router-topk",
-                        str(args.seq_router_topk),
-                        "--ska-backend",
-                        args.ska_backend,
-                        "--ska-score-mode",
-                        args.ska_score_mode,
-                        "--model-type",
-                        "ska",
-                    ]
-                )
+                    seq_cmd.extend(
+                        [
+                            "--seq-window",
+                            str(args.seq_window),
+                            "--seq-stride",
+                            str(args.seq_stride),
+                            "--seq-minhash-k",
+                            str(args.seq_minhash_k),
+                            "--seq-router-topk",
+                            str(args.seq_router_topk),
+                            "--ska-backend",
+                            args.ska_backend,
+                            "--ska-score-mode",
+                            args.ska_score_mode,
+                            "--model-type",
+                            "ska",
+                        ]
+                    )
                 if seq_cache_args:
                     seq_cmd.extend(seq_cache_args)
                 _run(
