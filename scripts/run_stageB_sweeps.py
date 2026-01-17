@@ -347,6 +347,13 @@ def main():
     ap.add_argument("--gpu-vram", type=float, default=24.0, help="GPU VRAM in GB for skip estimation.")
     ap.add_argument("--seeds", nargs="*", default=None)
     ap.add_argument("--reps", type=int, default=1)
+    ap.add_argument(
+        "--tasks",
+        nargs="+",
+        choices=["lm", "seq2seq", "textdiff", "vit"],
+        default=["lm", "textdiff"],
+        help="Subset of tasks to run (default: lm textdiff).",
+    )
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--skip-oom", action="store_true", default=True, help="Append --skip-oom to child runs (default: enabled).")
     ap.add_argument("--no-skip-oom", dest="skip_oom", action="store_false", help="Disable --skip-oom passthrough.")
@@ -527,6 +534,7 @@ def main():
             common_args.extend(["--grad-log-interval", str(args.grad_log_interval)])
     seeds = _parse_seeds(args.seeds, default=2024)
     reps = max(1, int(args.reps))
+    tasks = set(args.tasks)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -559,9 +567,10 @@ def main():
                     return True
             return False
 
-        if not _has_artifacts(lm_root, lm_required):
-            missing.append(f"lm:{args.lm_dataset}")
-        if args.seq_lengths:
+        if "lm" in tasks:
+            if not _has_artifacts(lm_root, lm_required):
+                missing.append(f"lm:{args.lm_dataset}")
+        if "seq2seq" in tasks and args.seq_lengths:
             seq_root = hf_root / "artifacts" / "seq2seq" / args.seq_dataset
             seq_required = [
                 "bank_src_train.pt",
@@ -575,7 +584,7 @@ def main():
             ]
             if not _has_artifacts(seq_root, seq_required):
                 missing.append(f"seq2seq:{args.seq_dataset}")
-        if args.textdiff_lengths:
+        if "textdiff" in tasks and args.textdiff_lengths:
             text_root = hf_root / "artifacts" / "textdiff" / args.textdiff_dataset
             text_required = ["bank_train.pt", "bank_val.pt", "routing_train.pt", "routing_val.pt"]
             if not _has_artifacts(text_root, text_required):
@@ -605,57 +614,58 @@ def main():
         if args.overwrite_cache:
             common.append("--overwrite-cache")
 
-        for L in args.lm_lengths:
-            lm_stride = args.lm_seq_stride if args.lm_seq_stride > 0 else L
-            lm_cmd = common + [
-                "--task",
-                "lm",
-                "--lm-dataset",
-                args.lm_dataset,
-                "--lm-subset-path",
-                args.lm_subset_path,
-                "--lm-seq-len",
-                str(L),
-                "--lm-seq-stride",
-                str(lm_stride),
-                "--lm-precision",
-                args.lm_precision,
-            ]
-            if args.lm_limit is not None:
-                lm_cmd.extend(["--lm-limit", str(args.lm_limit)])
-            if args.cache_mode == "full":
-                lm_cmd.extend(
-                    [
-                        "--lm-window",
-                        str(args.lm_window),
-                        "--lm-stride",
-                        str(args.lm_stride),
-                        "--lm-minhash-k",
-                        str(args.lm_minhash_k),
-                        "--lm-router-topk",
-                        str(args.lm_router_topk),
-                        "--ska-backend",
-                        args.ska_backend,
-                        "--ska-score-mode",
-                        args.ska_score_mode,
-                        "--model-type",
-                        "ska",
-                    ]
+        if "lm" in tasks:
+            for L in args.lm_lengths:
+                lm_stride = args.lm_seq_stride if args.lm_seq_stride > 0 else L
+                lm_cmd = common + [
+                    "--task",
+                    "lm",
+                    "--lm-dataset",
+                    args.lm_dataset,
+                    "--lm-subset-path",
+                    args.lm_subset_path,
+                    "--lm-seq-len",
+                    str(L),
+                    "--lm-seq-stride",
+                    str(lm_stride),
+                    "--lm-precision",
+                    args.lm_precision,
+                ]
+                if args.lm_limit is not None:
+                    lm_cmd.extend(["--lm-limit", str(args.lm_limit)])
+                if args.cache_mode == "full":
+                    lm_cmd.extend(
+                        [
+                            "--lm-window",
+                            str(args.lm_window),
+                            "--lm-stride",
+                            str(args.lm_stride),
+                            "--lm-minhash-k",
+                            str(args.lm_minhash_k),
+                            "--lm-router-topk",
+                            str(args.lm_router_topk),
+                            "--ska-backend",
+                            args.ska_backend,
+                            "--ska-score-mode",
+                            args.ska_score_mode,
+                            "--model-type",
+                            "ska",
+                        ]
+                    )
+                if lm_cache_args:
+                    lm_cmd.extend(lm_cache_args)
+                _run(
+                    lm_cmd,
+                    args.dry_run,
+                    args.min_free_gb,
+                    args.wait_gpu_interval,
+                    args.wait_gpu_timeout,
+                    args.require_idle_gpu,
+                    args.post_run_grace,
+                    args.post_run_wait,
                 )
-            if lm_cache_args:
-                lm_cmd.extend(lm_cache_args)
-            _run(
-                lm_cmd,
-                args.dry_run,
-                args.min_free_gb,
-                args.wait_gpu_interval,
-                args.wait_gpu_timeout,
-                args.require_idle_gpu,
-                args.post_run_grace,
-                args.post_run_wait,
-            )
 
-        if args.seq_lengths:
+        if "seq2seq" in tasks and args.seq_lengths:
             for L in args.seq_lengths:
                 seq_cmd = common + [
                     "--task",
@@ -705,53 +715,54 @@ def main():
                     args.post_run_wait,
                 )
 
-        for L in args.textdiff_lengths:
-            text_stride = args.textdiff_stride if args.textdiff_stride > 0 else L
-            text_cmd = common + [
-                "--task",
-                "textdiff",
-                "--textdiff-dataset",
-                args.textdiff_dataset,
-                "--textdiff-seq-len",
-                str(L),
-                "--textdiff-stride",
-                str(text_stride),
-                "--textdiff-precision",
-                args.textdiff_precision,
-            ]
-            if args.textdiff_subset_path:
-                text_cmd.extend(["--textdiff-subset-path", args.textdiff_subset_path])
-            if args.cache_mode == "full":
-                text_cmd.extend(
-                    [
-                        "--textdiff-window",
-                        str(args.textdiff_window),
-                        "--textdiff-bank-stride",
-                        str(args.textdiff_bank_stride),
-                        "--textdiff-minhash-k",
-                        str(args.textdiff_minhash_k),
-                        "--textdiff-router-topk",
-                        str(args.textdiff_router_topk),
-                        "--ska-backend",
-                        args.ska_backend,
-                        "--ska-score-mode",
-                        args.ska_score_mode,
-                        "--model-type",
-                        "ska",
-                    ]
+        if "textdiff" in tasks:
+            for L in args.textdiff_lengths:
+                text_stride = args.textdiff_stride if args.textdiff_stride > 0 else L
+                text_cmd = common + [
+                    "--task",
+                    "textdiff",
+                    "--textdiff-dataset",
+                    args.textdiff_dataset,
+                    "--textdiff-seq-len",
+                    str(L),
+                    "--textdiff-stride",
+                    str(text_stride),
+                    "--textdiff-precision",
+                    args.textdiff_precision,
+                ]
+                if args.textdiff_subset_path:
+                    text_cmd.extend(["--textdiff-subset-path", args.textdiff_subset_path])
+                if args.cache_mode == "full":
+                    text_cmd.extend(
+                        [
+                            "--textdiff-window",
+                            str(args.textdiff_window),
+                            "--textdiff-bank-stride",
+                            str(args.textdiff_bank_stride),
+                            "--textdiff-minhash-k",
+                            str(args.textdiff_minhash_k),
+                            "--textdiff-router-topk",
+                            str(args.textdiff_router_topk),
+                            "--ska-backend",
+                            args.ska_backend,
+                            "--ska-score-mode",
+                            args.ska_score_mode,
+                            "--model-type",
+                            "ska",
+                        ]
+                    )
+                if textdiff_cache_args:
+                    text_cmd.extend(textdiff_cache_args)
+                _run(
+                    text_cmd,
+                    args.dry_run,
+                    args.min_free_gb,
+                    args.wait_gpu_interval,
+                    args.wait_gpu_timeout,
+                    args.require_idle_gpu,
+                    args.post_run_grace,
+                    args.post_run_wait,
                 )
-            if textdiff_cache_args:
-                text_cmd.extend(textdiff_cache_args)
-            _run(
-                text_cmd,
-                args.dry_run,
-                args.min_free_gb,
-                args.wait_gpu_interval,
-                args.wait_gpu_timeout,
-                args.require_idle_gpu,
-                args.post_run_grace,
-                args.post_run_wait,
-            )
         print("[sweep] precache complete; exiting.")
         return
 
@@ -771,364 +782,485 @@ def main():
     variant_label = _variant_label()
 
     # LM sweeps
-    for L in args.lm_lengths:
-        for seed in seeds:
-            for rep in range(1, reps + 1):
-                csv_name = f"lm_{args.lm_dataset}_L{L}_{variant_label}_s{seed}_r{rep}.csv"
-                if args.model_type == "ska" and not _scaled_window_stride_ok(
-                    L,
-                    args.lm_window,
-                    args.lm_stride,
-                    args.lm_lengths[0] if args.lm_lengths else None,
-                    args.lm_window,
-                    args.lm_stride,
-                ):
-                    _append_status_row(
-                        out_dir / csv_name,
-                        {
-                            "script": "train_toy_lm_banked",
-                            "task": "lm",
-                            "dataset": args.lm_dataset,
-                            "dataset_id": args.lm_dataset,
-                            **_model_fields(),
-                            "precision": args.lm_precision,
-                            "seed": seed,
-                            "rep": rep,
-                            "run_uid": f"skip-{int(time.time())}-{seed}-{rep}",
-                            "status": "skipped",
-                            "skip_reason": (
-                                f"incompatible_window_stride(seq_len={L},"
-                                f" window={args.lm_window}, stride={args.lm_stride})"
-                            ),
-                        },
-                    )
-                    continue
-                metrics_name = f"metrics_lm_{args.lm_dataset}_L{L}_{variant_label}_s{seed}_r{rep}.csv"
-                lm_stride = args.lm_seq_stride if args.lm_seq_stride > 0 else L
-                cmd = [
-                    sys.executable,
-                    "scripts/train_toy_lm_banked.py",
-                    "--dataset",
-                    args.lm_dataset,
-                ]
-                if args.lm_subset_path:
-                    cmd.extend(["--subset-path", args.lm_subset_path])
-                if args.stageb_mode == "benchmark":
-                    cmd.extend(
-                        [
-                            "--benchmark",
-                            "--bench-warmup",
-                            "5",
-                            "--bench-iters",
-                            "20",
-                            "--benchmark-csv",
-                            str(out_dir / csv_name),
-                        ]
-                    )
-                else:
-                    cmd.extend(
-                        [
-                            "--epochs",
-                            str(args.epochs),
-                            "--eval-seed",
-                            str(args.eval_seed),
-                            "--metrics-csv",
-                            str(out_dir / metrics_name),
-                        ]
-                    )
-                cmd.extend(
-                    [
-                        "--batch",
-                        str(args.lm_batch),
-                        "--seq-len",
-                        str(L),
-                        "--seq-stride",
-                        str(lm_stride),
-                        "--precision",
-                        args.lm_precision,
-                        "--gpu-vram",
-                        str(args.gpu_vram),
-                        "--seed",
-                        str(seed),
-                        "--reps",
-                        str(1),
-                        "--num-workers",
-                        str(args.lm_num_workers),
-                        "--model-type",
-                        args.model_type,
-                        "--baseline-impl",
-                        args.baseline_impl,
-                        "--ska-backend",
-                        args.ska_backend,
-                        "--ska-score-mode",
-                        args.ska_score_mode,
+    if "lm" in tasks:
+        for L in args.lm_lengths:
+            for seed in seeds:
+                for rep in range(1, reps + 1):
+                    csv_name = f"lm_{args.lm_dataset}_L{L}_{variant_label}_s{seed}_r{rep}.csv"
+                    if args.model_type == "ska" and not _scaled_window_stride_ok(
+                        L,
+                        args.lm_window,
+                        args.lm_stride,
+                        args.lm_lengths[0] if args.lm_lengths else None,
+                        args.lm_window,
+                        args.lm_stride,
+                    ):
+                        _append_status_row(
+                            out_dir / csv_name,
+                            {
+                                "script": "train_toy_lm_banked",
+                                "task": "lm",
+                                "dataset": args.lm_dataset,
+                                "dataset_id": args.lm_dataset,
+                                **_model_fields(),
+                                "precision": args.lm_precision,
+                                "seed": seed,
+                                "rep": rep,
+                                "run_uid": f"skip-{int(time.time())}-{seed}-{rep}",
+                                "status": "skipped",
+                                "skip_reason": (
+                                    f"incompatible_window_stride(seq_len={L},"
+                                    f" window={args.lm_window}, stride={args.lm_stride})"
+                                ),
+                            },
+                        )
+                        continue
+                    metrics_name = f"metrics_lm_{args.lm_dataset}_L{L}_{variant_label}_s{seed}_r{rep}.csv"
+                    lm_stride = args.lm_seq_stride if args.lm_seq_stride > 0 else L
+                    cmd = [
+                        sys.executable,
+                        "scripts/train_toy_lm_banked.py",
+                        "--dataset",
+                        args.lm_dataset,
                     ]
-                )
-                if args.model_type == "baseline" and args.baseline_impl == "explicit":
-                    cmd.append("--dot-naive")
-                if args.skip_oom:
-                    cmd.append("--skip-oom")
-                if args.lm_limit is not None:
-                    cmd.extend(["--limit", str(args.lm_limit)])
-                if args.cache_mode != "none":
-                    cmd.extend(["--cache-mode", args.cache_mode])
-                if args.model_type == "ska":
+                    if args.lm_subset_path:
+                        cmd.extend(["--subset-path", args.lm_subset_path])
+                    if args.stageb_mode == "benchmark":
+                        cmd.extend(
+                            [
+                                "--benchmark",
+                                "--bench-warmup",
+                                "5",
+                                "--bench-iters",
+                                "20",
+                                "--benchmark-csv",
+                                str(out_dir / csv_name),
+                            ]
+                        )
+                    else:
+                        cmd.extend(
+                            [
+                                "--epochs",
+                                str(args.epochs),
+                                "--eval-seed",
+                                str(args.eval_seed),
+                                "--metrics-csv",
+                                str(out_dir / metrics_name),
+                            ]
+                        )
                     cmd.extend(
                         [
-                            "--window",
-                            str(args.lm_window),
-                            "--stride",
-                            str(args.lm_stride),
-                            "--minhash-k",
-                            str(args.lm_minhash_k),
-                            "--router-topk",
-                            str(args.lm_router_topk),
+                            "--batch",
+                            str(args.lm_batch),
+                            "--seq-len",
+                            str(L),
+                            "--seq-stride",
+                            str(lm_stride),
+                            "--precision",
+                            args.lm_precision,
+                            "--gpu-vram",
+                            str(args.gpu_vram),
+                            "--seed",
+                            str(seed),
+                            "--reps",
+                            str(1),
+                            "--num-workers",
+                            str(args.lm_num_workers),
+                            "--model-type",
+                            args.model_type,
+                            "--baseline-impl",
+                            args.baseline_impl,
+                            "--ska-backend",
+                            args.ska_backend,
+                            "--ska-score-mode",
+                            args.ska_score_mode,
                         ]
                     )
-                if args.artifact_cache_root:
-                    cmd.extend(["--artifact-cache-root", args.artifact_cache_root])
-                if args.overwrite_cache:
-                    cmd.append("--overwrite-cache")
-                if common_args:
-                    cmd.extend(common_args)
-                if lm_args:
-                    cmd.extend(lm_args)
-                if "--precompute-bank" in cmd:
-                    raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
-                rc = _run(
-                    cmd,
-                    args.dry_run,
-                    args.min_free_gb,
-                    args.wait_gpu_interval,
-                    args.wait_gpu_timeout,
-                    args.require_idle_gpu,
-                    args.post_run_grace,
-                    args.post_run_wait,
-                )
-                if rc != 0:
-                    _append_status_row(
-                        out_dir / csv_name,
-                        {
-                            "script": "train_toy_lm_banked",
-                            "task": "lm",
-                            "dataset": args.lm_dataset,
-                            "dataset_id": args.lm_dataset,
-                            **_model_fields(),
-                            "precision": args.lm_precision,
-                            "seed": seed,
-                            "rep": rep,
-                            "run_uid": f"exitcode-{int(time.time())}-{seed}-{rep}",
-                            "status": "exitcode",
-                            "exit_code": rc,
-                            "skip_reason": f"exitcode={rc}",
-                        },
+                    if args.model_type == "baseline" and args.baseline_impl == "explicit":
+                        cmd.append("--dot-naive")
+                    if args.skip_oom:
+                        cmd.append("--skip-oom")
+                    if args.lm_limit is not None:
+                        cmd.extend(["--limit", str(args.lm_limit)])
+                    if args.cache_mode != "none":
+                        cmd.extend(["--cache-mode", args.cache_mode])
+                    if args.model_type == "ska":
+                        cmd.extend(
+                            [
+                                "--window",
+                                str(args.lm_window),
+                                "--stride",
+                                str(args.lm_stride),
+                                "--minhash-k",
+                                str(args.lm_minhash_k),
+                                "--router-topk",
+                                str(args.lm_router_topk),
+                            ]
+                        )
+                    if args.artifact_cache_root:
+                        cmd.extend(["--artifact-cache-root", args.artifact_cache_root])
+                    if args.overwrite_cache:
+                        cmd.append("--overwrite-cache")
+                    if common_args:
+                        cmd.extend(common_args)
+                    if lm_args:
+                        cmd.extend(lm_args)
+                    if "--precompute-bank" in cmd:
+                        raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
+                    rc = _run(
+                        cmd,
+                        args.dry_run,
+                        args.min_free_gb,
+                        args.wait_gpu_interval,
+                        args.wait_gpu_timeout,
+                        args.require_idle_gpu,
+                        args.post_run_grace,
+                        args.post_run_wait,
                     )
-                    print(f"[sweep] command failed with code {rc}: {' '.join(cmd)}")
+                    if rc != 0:
+                        _append_status_row(
+                            out_dir / csv_name,
+                            {
+                                "script": "train_toy_lm_banked",
+                                "task": "lm",
+                                "dataset": args.lm_dataset,
+                                "dataset_id": args.lm_dataset,
+                                **_model_fields(),
+                                "precision": args.lm_precision,
+                                "seed": seed,
+                                "rep": rep,
+                                "run_uid": f"exitcode-{int(time.time())}-{seed}-{rep}",
+                                "status": "exitcode",
+                                "exit_code": rc,
+                                "skip_reason": f"exitcode={rc}",
+                            },
+                        )
+                        print(f"[sweep] command failed with code {rc}: {' '.join(cmd)}")
 
     # Seq2Seq sweeps (optional)
-    for L in args.seq_lengths:
-        for seed in seeds:
-            for rep in range(1, reps + 1):
-                csv_name = f"seq_{args.seq_dataset}_L{L}_{variant_label}_s{seed}_r{rep}.csv"
-                if args.model_type == "ska" and not _scaled_window_stride_ok(
-                    L,
-                    args.seq_window,
-                    args.seq_stride,
-                    args.seq_lengths[0] if args.seq_lengths else None,
-                    args.seq_window,
-                    args.seq_stride,
-                ):
-                    _append_status_row(
-                        out_dir / csv_name,
-                        {
-                            "script": "train_seq2seq_text_banked",
-                            "task": "seq2seq",
-                            "dataset": args.seq_dataset,
-                            "dataset_id": args.seq_dataset,
-                            **_model_fields(),
-                            "precision": args.seq_precision,
-                            "seed": seed,
-                            "rep": rep,
-                            "run_uid": f"skip-{int(time.time())}-{seed}-{rep}",
-                            "status": "skipped",
-                            "skip_reason": (
-                                f"incompatible_window_stride(seq_len={L},"
-                                f" window={args.seq_window}, stride={args.seq_stride})"
-                            ),
-                        },
-                    )
-                    continue
-                metrics_name = f"metrics_seq_{args.seq_dataset}_L{L}_{variant_label}_s{seed}_r{rep}.csv"
-                cmd = [
-                    sys.executable,
-                    "scripts/train_seq2seq_text_banked.py",
-                    "--dataset",
-                    args.seq_dataset,
-                    "--max-len",
-                    str(L),
-                    "--tokenizer-type",
-                    args.seq_tokenizer_type,
-                ]
-                if args.seq_subset_path:
-                    cmd.extend(["--subset-path", args.seq_subset_path])
-                if args.stageb_mode == "benchmark":
-                    cmd.extend(
-                        [
-                            "--benchmark",
-                            "--bench-warmup",
-                            "5",
-                            "--bench-iters",
-                            "20",
-                            "--benchmark-csv",
-                            str(out_dir / csv_name),
-                        ]
-                    )
-                else:
-                    cmd.extend(
-                        [
-                            "--epochs",
-                            str(args.epochs),
-                            "--eval-seed",
-                            str(args.eval_seed),
-                            "--metrics-csv",
-                            str(out_dir / metrics_name),
-                        ]
-                    )
-                cmd.extend(
-                    [
-                        "--batch",
-                        str(args.seq_batch),
-                        "--precision",
-                        args.seq_precision,
-                        "--gpu-vram",
-                        str(args.gpu_vram),
-                        "--seed",
-                        str(seed),
-                        "--reps",
-                        str(1),
-                        "--num-workers",
-                        str(args.seq_num_workers),
-                        "--model-type",
-                        args.model_type,
-                        "--baseline-impl",
-                        args.baseline_impl,
-                        "--ska-backend",
-                        args.ska_backend,
-                        "--ska-score-mode",
-                        args.ska_score_mode,
+    if "seq2seq" in tasks:
+        for L in args.seq_lengths:
+            for seed in seeds:
+                for rep in range(1, reps + 1):
+                    csv_name = f"seq_{args.seq_dataset}_L{L}_{variant_label}_s{seed}_r{rep}.csv"
+                    if args.model_type == "ska" and not _scaled_window_stride_ok(
+                        L,
+                        args.seq_window,
+                        args.seq_stride,
+                        args.seq_lengths[0] if args.seq_lengths else None,
+                        args.seq_window,
+                        args.seq_stride,
+                    ):
+                        _append_status_row(
+                            out_dir / csv_name,
+                            {
+                                "script": "train_seq2seq_text_banked",
+                                "task": "seq2seq",
+                                "dataset": args.seq_dataset,
+                                "dataset_id": args.seq_dataset,
+                                **_model_fields(),
+                                "precision": args.seq_precision,
+                                "seed": seed,
+                                "rep": rep,
+                                "run_uid": f"skip-{int(time.time())}-{seed}-{rep}",
+                                "status": "skipped",
+                                "skip_reason": (
+                                    f"incompatible_window_stride(seq_len={L},"
+                                    f" window={args.seq_window}, stride={args.seq_stride})"
+                                ),
+                            },
+                        )
+                        continue
+                    metrics_name = f"metrics_seq_{args.seq_dataset}_L{L}_{variant_label}_s{seed}_r{rep}.csv"
+                    cmd = [
+                        sys.executable,
+                        "scripts/train_seq2seq_text_banked.py",
+                        "--dataset",
+                        args.seq_dataset,
+                        "--max-len",
+                        str(L),
+                        "--tokenizer-type",
+                        args.seq_tokenizer_type,
                     ]
-                )
-                if args.model_type == "baseline" and args.baseline_impl == "explicit":
-                    cmd.append("--dot-naive")
-                if args.skip_oom:
-                    cmd.append("--skip-oom")
-                if args.seq_limit is not None:
-                    cmd.extend(["--limit", str(args.seq_limit)])
-                if args.cache_mode != "none":
-                    cmd.extend(["--cache-mode", args.cache_mode])
-                if args.model_type == "ska":
+                    if args.seq_subset_path:
+                        cmd.extend(["--subset-path", args.seq_subset_path])
+                    if args.stageb_mode == "benchmark":
+                        cmd.extend(
+                            [
+                                "--benchmark",
+                                "--bench-warmup",
+                                "5",
+                                "--bench-iters",
+                                "20",
+                                "--benchmark-csv",
+                                str(out_dir / csv_name),
+                            ]
+                        )
+                    else:
+                        cmd.extend(
+                            [
+                                "--epochs",
+                                str(args.epochs),
+                                "--eval-seed",
+                                str(args.eval_seed),
+                                "--metrics-csv",
+                                str(out_dir / metrics_name),
+                            ]
+                        )
                     cmd.extend(
                         [
-                            "--window",
-                            str(args.seq_window),
-                            "--stride",
-                            str(args.seq_stride),
-                            "--minhash-k",
-                            str(args.seq_minhash_k),
-                            "--router-topk",
-                            str(args.seq_router_topk),
+                            "--batch",
+                            str(args.seq_batch),
+                            "--precision",
+                            args.seq_precision,
+                            "--gpu-vram",
+                            str(args.gpu_vram),
+                            "--seed",
+                            str(seed),
+                            "--reps",
+                            str(1),
+                            "--num-workers",
+                            str(args.seq_num_workers),
+                            "--model-type",
+                            args.model_type,
+                            "--baseline-impl",
+                            args.baseline_impl,
+                            "--ska-backend",
+                            args.ska_backend,
+                            "--ska-score-mode",
+                            args.ska_score_mode,
                         ]
                     )
-                if args.artifact_cache_root:
-                    cmd.extend(["--artifact-cache-root", args.artifact_cache_root])
-                if args.overwrite_cache:
-                    cmd.append("--overwrite-cache")
-                if common_args:
-                    cmd.extend(common_args)
-                if seq_args:
-                    cmd.extend(seq_args)
-                if "--precompute-bank" in cmd:
-                    raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
-                rc = _run(
-                    cmd,
-                    args.dry_run,
-                    args.min_free_gb,
-                    args.wait_gpu_interval,
-                    args.wait_gpu_timeout,
-                    args.require_idle_gpu,
-                    args.post_run_grace,
-                    args.post_run_wait,
-                )
-                if rc != 0:
-                    _append_status_row(
-                        out_dir / csv_name,
-                        {
-                            "script": "train_seq2seq_text_banked",
-                            "task": "seq2seq",
-                            "dataset": args.seq_dataset,
-                            "dataset_id": args.seq_dataset,
-                            **_model_fields(),
-                            "precision": args.seq_precision,
-                            "seed": seed,
-                            "rep": rep,
-                            "run_uid": f"exitcode-{int(time.time())}-{seed}-{rep}",
-                            "status": "exitcode",
-                            "exit_code": rc,
-                            "skip_reason": f"exitcode={rc}",
-                        },
+                    if args.model_type == "baseline" and args.baseline_impl == "explicit":
+                        cmd.append("--dot-naive")
+                    if args.skip_oom:
+                        cmd.append("--skip-oom")
+                    if args.seq_limit is not None:
+                        cmd.extend(["--limit", str(args.seq_limit)])
+                    if args.cache_mode != "none":
+                        cmd.extend(["--cache-mode", args.cache_mode])
+                    if args.model_type == "ska":
+                        cmd.extend(
+                            [
+                                "--window",
+                                str(args.seq_window),
+                                "--stride",
+                                str(args.seq_stride),
+                                "--minhash-k",
+                                str(args.seq_minhash_k),
+                                "--router-topk",
+                                str(args.seq_router_topk),
+                            ]
+                        )
+                    if args.artifact_cache_root:
+                        cmd.extend(["--artifact-cache-root", args.artifact_cache_root])
+                    if args.overwrite_cache:
+                        cmd.append("--overwrite-cache")
+                    if common_args:
+                        cmd.extend(common_args)
+                    if seq_args:
+                        cmd.extend(seq_args)
+                    if "--precompute-bank" in cmd:
+                        raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
+                    rc = _run(
+                        cmd,
+                        args.dry_run,
+                        args.min_free_gb,
+                        args.wait_gpu_interval,
+                        args.wait_gpu_timeout,
+                        args.require_idle_gpu,
+                        args.post_run_grace,
+                        args.post_run_wait,
                     )
-                    print(f"[sweep] command failed with code {rc}: {' '.join(cmd)}")
+                    if rc != 0:
+                        _append_status_row(
+                            out_dir / csv_name,
+                            {
+                                "script": "train_seq2seq_text_banked",
+                                "task": "seq2seq",
+                                "dataset": args.seq_dataset,
+                                "dataset_id": args.seq_dataset,
+                                **_model_fields(),
+                                "precision": args.seq_precision,
+                                "seed": seed,
+                                "rep": rep,
+                                "run_uid": f"exitcode-{int(time.time())}-{seed}-{rep}",
+                                "status": "exitcode",
+                                "exit_code": rc,
+                                "skip_reason": f"exitcode={rc}",
+                            },
+                        )
+                        print(f"[sweep] command failed with code {rc}: {' '.join(cmd)}")
 
     # Text diffusion sweeps (optional)
-    for L in args.textdiff_lengths:
+    if "textdiff" in tasks:
+        for L in args.textdiff_lengths:
+            for seed in seeds:
+                for rep in range(1, reps + 1):
+                    csv_name = f"textdiff_{args.textdiff_dataset}_L{L}_{variant_label}_s{seed}_r{rep}.csv"
+                    if args.model_type == "ska" and not _scaled_window_stride_ok(
+                        L,
+                        args.textdiff_window,
+                        args.textdiff_bank_stride,
+                        args.textdiff_lengths[0] if args.textdiff_lengths else None,
+                        args.textdiff_window,
+                        args.textdiff_bank_stride,
+                    ):
+                        _append_status_row(
+                            out_dir / csv_name,
+                            {
+                                "script": "train_toy_diffusion_banked",
+                                "task": "textdiff",
+                                "dataset": args.textdiff_dataset,
+                                "dataset_id": args.textdiff_dataset,
+                                **_model_fields(),
+                                "precision": args.textdiff_precision,
+                                "seed": seed,
+                                "rep": rep,
+                                "run_uid": f"skip-{int(time.time())}-{seed}-{rep}",
+                                "status": "skipped",
+                                "skip_reason": (
+                                    f"incompatible_window_stride(seq_len={L},"
+                                    f" window={args.textdiff_window},"
+                                    f" stride={args.textdiff_bank_stride})"
+                                ),
+                            },
+                        )
+                        continue
+                    metrics_name = f"metrics_textdiff_{args.textdiff_dataset}_L{L}_{variant_label}_s{seed}_r{rep}.csv"
+                    text_stride = args.textdiff_stride if args.textdiff_stride > 0 else L
+                    cmd = [
+                        sys.executable,
+                        "scripts/train_toy_diffusion_banked.py",
+                        "--data-mode",
+                        "text",
+                        "--text-dataset",
+                        args.textdiff_dataset,
+                        "--text-seq-len",
+                        str(L),
+                        "--text-stride",
+                        str(text_stride),
+                    ]
+                    if args.textdiff_subset_path:
+                        cmd.extend(["--text-subset-path", args.textdiff_subset_path])
+                    if args.stageb_mode == "benchmark":
+                        cmd.extend(
+                            [
+                                "--benchmark",
+                                "--bench-warmup",
+                                "5",
+                                "--bench-iters",
+                                "20",
+                                "--benchmark-csv",
+                                str(out_dir / csv_name),
+                            ]
+                        )
+                    else:
+                        cmd.extend(
+                            [
+                                "--epochs",
+                                str(args.epochs),
+                                "--eval-seed",
+                                str(args.eval_seed),
+                                "--metrics-csv",
+                                str(out_dir / metrics_name),
+                            ]
+                        )
+                    cmd.extend(
+                        [
+                            "--batch",
+                            str(args.textdiff_batch),
+                            "--precision",
+                            args.textdiff_precision,
+                            "--gpu-vram",
+                            str(args.gpu_vram),
+                            "--seed",
+                            str(seed),
+                            "--reps",
+                            str(1),
+                            "--num-workers",
+                            str(args.textdiff_num_workers),
+                            "--model-type",
+                            args.model_type,
+                            "--baseline-impl",
+                            args.baseline_impl,
+                            "--ska-backend",
+                            args.ska_backend,
+                            "--ska-score-mode",
+                            args.ska_score_mode,
+                        ]
+                    )
+                    if args.model_type == "baseline" and args.baseline_impl == "explicit":
+                        cmd.append("--dot-naive")
+                    if args.skip_oom:
+                        cmd.append("--skip-oom")
+                    if args.cache_mode != "none":
+                        cmd.extend(["--cache-mode", args.cache_mode])
+                    if args.model_type == "ska":
+                        cmd.extend(
+                            [
+                                "--window",
+                                str(args.textdiff_window),
+                                "--stride",
+                                str(args.textdiff_bank_stride),
+                                "--minhash-k",
+                                str(args.textdiff_minhash_k),
+                                "--router-topk",
+                                str(args.textdiff_router_topk),
+                            ]
+                        )
+                    if args.artifact_cache_root:
+                        cmd.extend(["--artifact-cache-root", args.artifact_cache_root])
+                    if args.overwrite_cache:
+                        cmd.append("--overwrite-cache")
+                    if common_args:
+                        cmd.extend(common_args)
+                    if textdiff_args:
+                        cmd.extend(textdiff_args)
+                    if "--precompute-bank" in cmd:
+                        raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
+                    rc = _run(
+                        cmd,
+                        args.dry_run,
+                        args.min_free_gb,
+                        args.wait_gpu_interval,
+                        args.wait_gpu_timeout,
+                        args.require_idle_gpu,
+                        args.post_run_grace,
+                        args.post_run_wait,
+                    )
+                    if rc != 0:
+                        _append_status_row(
+                            out_dir / csv_name,
+                            {
+                                "script": "train_toy_diffusion_banked",
+                                "task": "textdiff",
+                                "dataset": args.textdiff_dataset,
+                                "dataset_id": args.textdiff_dataset,
+                                **_model_fields(),
+                                "precision": args.textdiff_precision,
+                                "seed": seed,
+                                "rep": rep,
+                                "run_uid": f"exitcode-{int(time.time())}-{seed}-{rep}",
+                                "status": "exitcode",
+                                "exit_code": rc,
+                                "skip_reason": f"exitcode={rc}",
+                            },
+                        )
+                        print(f"[sweep] command failed with code {rc}: {' '.join(cmd)}")
+
+    # ViT sweeps (no length axis)
+    if "vit" in tasks:
         for seed in seeds:
             for rep in range(1, reps + 1):
-                csv_name = f"textdiff_{args.textdiff_dataset}_L{L}_{variant_label}_s{seed}_r{rep}.csv"
-                if args.model_type == "ska" and not _scaled_window_stride_ok(
-                    L,
-                    args.textdiff_window,
-                    args.textdiff_bank_stride,
-                    args.textdiff_lengths[0] if args.textdiff_lengths else None,
-                    args.textdiff_window,
-                    args.textdiff_bank_stride,
-                ):
-                    _append_status_row(
-                        out_dir / csv_name,
-                        {
-                            "script": "train_toy_diffusion_banked",
-                            "task": "textdiff",
-                            "dataset": args.textdiff_dataset,
-                            "dataset_id": args.textdiff_dataset,
-                            **_model_fields(),
-                            "precision": args.textdiff_precision,
-                            "seed": seed,
-                            "rep": rep,
-                            "run_uid": f"skip-{int(time.time())}-{seed}-{rep}",
-                            "status": "skipped",
-                            "skip_reason": (
-                                f"incompatible_window_stride(seq_len={L},"
-                                f" window={args.textdiff_window},"
-                                f" stride={args.textdiff_bank_stride})"
-                            ),
-                        },
-                    )
-                    continue
-                metrics_name = f"metrics_textdiff_{args.textdiff_dataset}_L{L}_{variant_label}_s{seed}_r{rep}.csv"
-                text_stride = args.textdiff_stride if args.textdiff_stride > 0 else L
+                csv_name = f"vit_{variant_label}_s{seed}_r{rep}.csv"
+                metrics_name = f"metrics_vit_{variant_label}_s{seed}_r{rep}.csv"
                 cmd = [
                     sys.executable,
-                    "scripts/train_toy_diffusion_banked.py",
+                    "scripts/train_tiny_vit_banked.py",
                     "--data-mode",
-                    "text",
-                    "--text-dataset",
-                    args.textdiff_dataset,
-                    "--text-seq-len",
-                    str(L),
-                    "--text-stride",
-                    str(text_stride),
+                    "cifar10",
                 ]
-                if args.textdiff_subset_path:
-                    cmd.extend(["--text-subset-path", args.textdiff_subset_path])
                 if args.stageb_mode == "benchmark":
                     cmd.extend(
                         [
@@ -1155,9 +1287,9 @@ def main():
                 cmd.extend(
                     [
                         "--batch",
-                        str(args.textdiff_batch),
+                        str(args.vit_batch),
                         "--precision",
-                        args.textdiff_precision,
+                        args.vit_precision,
                         "--gpu-vram",
                         str(args.gpu_vram),
                         "--seed",
@@ -1165,7 +1297,7 @@ def main():
                         "--reps",
                         str(1),
                         "--num-workers",
-                        str(args.textdiff_num_workers),
+                        str(args.vit_num_workers),
                         "--model-type",
                         args.model_type,
                         "--baseline-impl",
@@ -1180,29 +1312,27 @@ def main():
                     cmd.append("--dot-naive")
                 if args.skip_oom:
                     cmd.append("--skip-oom")
-                if args.cache_mode != "none":
-                    cmd.extend(["--cache-mode", args.cache_mode])
+                if args.vit_limit is not None:
+                    cmd.extend(["--limit", str(args.vit_limit)])
+                if args.vit_subset_path:
+                    cmd.extend(["--subset-path", args.vit_subset_path])
                 if args.model_type == "ska":
                     cmd.extend(
                         [
                             "--window",
-                            str(args.textdiff_window),
+                            str(args.vit_window),
                             "--stride",
-                            str(args.textdiff_bank_stride),
+                            str(args.vit_stride),
                             "--minhash-k",
-                            str(args.textdiff_minhash_k),
+                            str(args.vit_minhash_k),
                             "--router-topk",
-                            str(args.textdiff_router_topk),
+                            str(args.vit_router_topk),
                         ]
                     )
-                if args.artifact_cache_root:
-                    cmd.extend(["--artifact-cache-root", args.artifact_cache_root])
-                if args.overwrite_cache:
-                    cmd.append("--overwrite-cache")
                 if common_args:
                     cmd.extend(common_args)
-                if textdiff_args:
-                    cmd.extend(textdiff_args)
+                if vit_args:
+                    cmd.extend(vit_args)
                 if "--precompute-bank" in cmd:
                     raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
                 rc = _run(
@@ -1219,12 +1349,12 @@ def main():
                     _append_status_row(
                         out_dir / csv_name,
                         {
-                            "script": "train_toy_diffusion_banked",
-                            "task": "textdiff",
-                            "dataset": args.textdiff_dataset,
-                            "dataset_id": args.textdiff_dataset,
+                            "script": "train_tiny_vit_banked",
+                            "task": "vit",
+                            "dataset": "cifar10",
+                            "dataset_id": "cifar10",
                             **_model_fields(),
-                            "precision": args.textdiff_precision,
+                            "precision": args.vit_precision,
                             "seed": seed,
                             "rep": rep,
                             "run_uid": f"exitcode-{int(time.time())}-{seed}-{rep}",
@@ -1234,121 +1364,6 @@ def main():
                         },
                     )
                     print(f"[sweep] command failed with code {rc}: {' '.join(cmd)}")
-
-    # ViT sweeps (no length axis)
-    for seed in seeds:
-        for rep in range(1, reps + 1):
-            csv_name = f"vit_{variant_label}_s{seed}_r{rep}.csv"
-            metrics_name = f"metrics_vit_{variant_label}_s{seed}_r{rep}.csv"
-            cmd = [
-                sys.executable,
-                "scripts/train_tiny_vit_banked.py",
-                "--data-mode",
-                "cifar10",
-            ]
-            if args.stageb_mode == "benchmark":
-                cmd.extend(
-                    [
-                        "--benchmark",
-                        "--bench-warmup",
-                        "5",
-                        "--bench-iters",
-                        "20",
-                        "--benchmark-csv",
-                        str(out_dir / csv_name),
-                    ]
-                )
-            else:
-                cmd.extend(
-                    [
-                        "--epochs",
-                        str(args.epochs),
-                        "--eval-seed",
-                        str(args.eval_seed),
-                        "--metrics-csv",
-                        str(out_dir / metrics_name),
-                    ]
-                )
-            cmd.extend(
-                [
-                    "--batch",
-                    str(args.vit_batch),
-                    "--precision",
-                    args.vit_precision,
-                    "--gpu-vram",
-                    str(args.gpu_vram),
-                    "--seed",
-                    str(seed),
-                    "--reps",
-                    str(1),
-                    "--num-workers",
-                    str(args.vit_num_workers),
-                    "--model-type",
-                    args.model_type,
-                    "--baseline-impl",
-                    args.baseline_impl,
-                    "--ska-backend",
-                    args.ska_backend,
-                    "--ska-score-mode",
-                    args.ska_score_mode,
-                ]
-            )
-            if args.model_type == "baseline" and args.baseline_impl == "explicit":
-                cmd.append("--dot-naive")
-            if args.skip_oom:
-                cmd.append("--skip-oom")
-            if args.vit_limit is not None:
-                cmd.extend(["--limit", str(args.vit_limit)])
-            if args.vit_subset_path:
-                cmd.extend(["--subset-path", args.vit_subset_path])
-            if args.model_type == "ska":
-                cmd.extend(
-                    [
-                        "--window",
-                        str(args.vit_window),
-                        "--stride",
-                        str(args.vit_stride),
-                        "--minhash-k",
-                        str(args.vit_minhash_k),
-                        "--router-topk",
-                        str(args.vit_router_topk),
-                    ]
-                )
-            if common_args:
-                cmd.extend(common_args)
-            if vit_args:
-                cmd.extend(vit_args)
-            if "--precompute-bank" in cmd:
-                raise RuntimeError("BUG: --precompute-bank must not appear in Stage B sweeps")
-            rc = _run(
-                cmd,
-                args.dry_run,
-                args.min_free_gb,
-                args.wait_gpu_interval,
-                args.wait_gpu_timeout,
-                args.require_idle_gpu,
-                args.post_run_grace,
-                args.post_run_wait,
-            )
-            if rc != 0:
-                _append_status_row(
-                    out_dir / csv_name,
-                    {
-                        "script": "train_tiny_vit_banked",
-                        "task": "vit",
-                        "dataset": "cifar10",
-                        "dataset_id": "cifar10",
-                        **_model_fields(),
-                        "precision": args.vit_precision,
-                        "seed": seed,
-                        "rep": rep,
-                        "run_uid": f"exitcode-{int(time.time())}-{seed}-{rep}",
-                        "status": "exitcode",
-                        "exit_code": rc,
-                        "skip_reason": f"exitcode={rc}",
-                    },
-                )
-                print(f"[sweep] command failed with code {rc}: {' '.join(cmd)}")
 
 
 if __name__ == "__main__":

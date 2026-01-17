@@ -9,6 +9,9 @@ parameters:
   # Stage B mode: benchmark (throughput) or train (full training).
   stageb-mode:
     value: benchmark
+  # Task selection (default: scaling-focused tasks).
+  tasks:
+    value: [lm, textdiff]
   # Enforce W&B logging for production runs.
   production:
     value: true

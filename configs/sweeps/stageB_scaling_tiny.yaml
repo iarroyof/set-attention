@@ -3,6 +3,7 @@ parameters:
   output-dir: {value: out/smoke_stageB}
   cache-mode: {value: full}
   stageb-mode: {value: train}
+  tasks: {value: [lm]}
   epochs: {value: 15}
   production: {value: true}
   wandb-project: {value: set-attention-test}
