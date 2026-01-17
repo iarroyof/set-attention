@@ -83,6 +83,23 @@ from common.repro import set_seed
 def _append_benchmark_row(csv_path: str, row: dict) -> None:
     if not csv_path:
         return
+    if row.get("model_type") != "ska":
+        for key in ("window", "stride", "minhash_k", "router_topk"):
+            if key in row:
+                row[key] = "NA"
+    if "bench_warmup" in row:
+        task = row.get("task")
+        if task in ("lm", "seq2seq"):
+            row.setdefault("sequences_per_s", "NA")
+            row.setdefault("images_per_s", "NA")
+        elif task in ("textdiff", "diffusion"):
+            row.setdefault("tokens_per_s", "NA")
+            row.setdefault("tokens_total", "NA")
+            row.setdefault("images_per_s", "NA")
+        elif task == "vit":
+            row.setdefault("tokens_per_s", "NA")
+            row.setdefault("tokens_total", "NA")
+            row.setdefault("sequences_per_s", "NA")
 
     def _sanitize(value: object) -> object:
         return "NA" if value is None else value
@@ -932,6 +949,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     cache_fp = "NA"
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
+    window_val = args.window if not is_baseline else "NA"
+    stride_val = args.stride if not is_baseline else "NA"
+    minhash_val = args.minhash_k if not is_baseline else "NA"
+    router_val = args.router_topk if not is_baseline else "NA"
     wandb_config = {
         "script": "train_seq2seq_text_banked",
         "dataset": args.dataset or "custom",
@@ -942,10 +963,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "precision": args.precision,
         "seq_len": args.max_len,
         "seq_stride": "NA",
-        "window": args.window,
-        "stride": args.stride,
-        "minhash_k": args.minhash_k,
-        "router_topk": args.router_topk,
+        "window": window_val,
+        "stride": stride_val,
+        "minhash_k": minhash_val,
+        "router_topk": router_val,
         "adapter_rank": args.adapter_rank,
         "steps": "NA",
         "precompute_bank": args.precompute_bank,
