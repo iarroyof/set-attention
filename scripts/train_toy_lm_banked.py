@@ -62,6 +62,7 @@ from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.profiling import profiler
 from set_attention.utils.sample_logging import format_text_samples
 from set_attention.utils.wandb import init_wandb
+from set_attention.utils.grad_stats import component_grad_norms, global_grad_norm, iter_named_parameters
 from set_attention.experiments.nlp_eval import corpus_bleu
 from set_attention.training.text_utils import build_text_dataloader, ids_to_tokens
 
@@ -580,6 +581,8 @@ def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = Non
             keys = sorted(f"{prefix}/{key}" for key in row.keys())
             print(f"[wandb-keys] {key_id[0]} {prefix}: {', '.join(keys)}")
             _WANDB_KEYS_PRINTED.add(key_id)
+    if os.environ.get("SA_LOG_CSV_TO_WANDB") != "1":
+        return
     payload: dict[str, object] = {}
     for key, value in row.items():
         if isinstance(value, (list, tuple, dict)):
@@ -590,6 +593,25 @@ def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = Non
     if summarize:
         for key, value in row.items():
             wandb_run.set_summary(f"{prefix}/{key}", value)
+
+
+def _prime_wandb_summary(wandb_run, config: dict, extra: dict | None = None) -> None:
+    if not getattr(wandb_run, "enabled", False):
+        return
+    for key, value in config.items():
+        wandb_run.set_summary(key, value if value is not None else "NA")
+    if extra:
+        for key, value in extra.items():
+            wandb_run.set_summary(key, value)
+
+
+def _summarize_wandb_payload(wandb_run, payload: dict) -> None:
+    if not getattr(wandb_run, "enabled", False):
+        return
+    for key, value in payload.items():
+        if isinstance(value, (list, tuple, dict)):
+            continue
+        wandb_run.set_summary(key, value)
 
 
 def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception, wandb_run=None) -> None:
@@ -1046,6 +1068,7 @@ def main():
     ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log per epoch.")
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed controlling which samples are logged.")
     ap.add_argument("--eval-seed", type=int, default=1337, help="Seed to make validation evaluation deterministic across variants.")
+    ap.add_argument("--grad-log-interval", type=int, default=1, help="Log grad norms every N steps (0=disable).")
     ap.add_argument("--seed", type=int, default=2024, help="Base RNG seed used when --seeds is not provided.")
     ap.add_argument(
         "--seeds",
@@ -1131,11 +1154,13 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         print(f"[Data] Using subset indices from {args.subset_path} (count={len(subset_indices)})")
 
     wandb_tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
+    tokenizer_type = "hf" if args.hf_tokenizer_name else "whitespace"
     wandb_config = {
         "script": "train_toy_lm_banked",
         "dataset": args.dataset or "char",
         "dataset_id": args.dataset or "char",
         "data_mode": "text",
+        "tokenizer_type": tokenizer_type,
         "seq_len": args.seq_len,
         "seq_stride": args.seq_stride,
         "window": args.window,
@@ -1143,18 +1168,21 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "minhash_k": args.minhash_k,
         "router_topk": args.router_topk,
         "adapter_rank": args.adapter_rank,
+        "set_kernel": "NA",
+        "steps": "NA",
         "ska_backend": args.ska_backend,
         "precision": args.precision,
         "batch": args.batch,
         "sample_count": args.sample_count,
+        "grad_log_interval": args.grad_log_interval,
         "sdpa_baseline": args.sdpa_baseline,
         "streaming": bool(args.streaming),
         "precompute_bank": args.precompute_bank,
         "reuse_vocab": args.reuse_vocab,
-        "vocab_path": args.vocab_path or "",
+        "vocab_path": args.vocab_path or "NA",
         "vocab_workers": args.vocab_workers,
-        "hf_tokenizer_name": args.hf_tokenizer_name or "",
-        "hf_cache_dir": args.hf_cache_dir or "",
+        "hf_tokenizer_name": args.hf_tokenizer_name or "NA",
+        "hf_cache_dir": args.hf_cache_dir or "NA",
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,
@@ -1169,6 +1197,34 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         run_name,
         wandb_config,
         wandb_tags,
+    )
+    _prime_wandb_summary(
+        wandb_run,
+        wandb_config,
+        {
+            "train/acc": "NA",
+            "train/coverage": "NA",
+            "train/rougeL": "NA",
+            "train/sets_per_seq": "NA",
+            "train/time_s": "NA",
+            "train/time_per_epoch_s": "NA",
+            "train/peak_vram_mib": "NA",
+            "train/top5": "NA",
+            "train/grad_norm": "NA",
+            "train/grad_norm_ska": "NA",
+            "train/grad_norm_baseline_attn": "NA",
+            "train/grad_norm_ffn": "NA",
+            "val/1nn": "NA",
+            "val/acc": "NA",
+            "val/chamfer": "NA",
+            "val/mmd": "NA",
+            "val/rougeL": "NA",
+            "val/token_acc": "NA",
+            "val/top5": "NA",
+            "samples/val_text": "NA",
+            "samples/generated": "NA",
+            "samples/val_preview": "NA",
+        },
     )
 
     hf_cache = ensure_hf_cache(args.hf_cache_dir)
@@ -1496,6 +1552,18 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         set_attn = None
         router = None
     head = nn.Linear(args.d_model, vocab_size).to(device)
+    component_named_params = list(
+        iter_named_parameters(
+            {
+                "backbone": backbone,
+                "set_attn": set_attn,
+                "router": router,
+                "adapter": adapter,
+                "head": head,
+                "atom_emb": atom_emb,
+            }
+        )
+    )
 
     params = list(backbone.parameters()) + list(head.parameters())
     if set_attn is not None:
@@ -1684,7 +1752,14 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         wandb_run.finish()
         return
 
+    global_step = 0
+    grad_norm_sum = 0.0
+    grad_norm_count = 0
+    grad_comp_sums = {"ska": 0.0, "baseline_attn": 0.0, "ffn": 0.0}
+    grad_comp_counts = {"ska": 0, "baseline_attn": 0, "ffn": 0}
+
     def run_epoch(train: bool):
+        nonlocal global_step, grad_norm_sum, grad_norm_count, grad_comp_sums, grad_comp_counts
         if not train:
             torch.manual_seed(args.eval_seed)
             random.seed(args.eval_seed)
@@ -1747,6 +1822,25 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             if train:
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
+                if args.grad_log_interval > 0:
+                    if global_step % args.grad_log_interval == 0:
+                        grad_norm = global_grad_norm(params)
+                        grad_norm_sum += grad_norm
+                        grad_norm_count += 1
+                        comp_norms = component_grad_norms(component_named_params)
+                        for key, value in comp_norms.items():
+                            grad_comp_sums[key] += value
+                            grad_comp_counts[key] += 1
+                        if wandb_run.enabled:
+                            payload = {"train/grad_norm": grad_norm}
+                            if "ska" in comp_norms:
+                                payload["train/grad_norm_ska"] = comp_norms["ska"]
+                            if "baseline_attn" in comp_norms:
+                                payload["train/grad_norm_baseline_attn"] = comp_norms["baseline_attn"]
+                            if "ffn" in comp_norms:
+                                payload["train/grad_norm_ffn"] = comp_norms["ffn"]
+                            wandb_run.log(payload, step=global_step)
+                global_step += 1
                 optimizer.step()
 
             total_loss += float(loss.detach()) * tgt_ids.numel()
@@ -1759,9 +1853,22 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
 
     attn_impl = "dot_explicit" if (args.sdpa_baseline and args.attn_baseline == "explicit") else "dot_builtin"
     for epoch in range(1, args.epochs + 1):
+        grad_norm_sum = 0.0
+        grad_norm_count = 0
+        grad_comp_sums = {"ska": 0.0, "baseline_attn": 0.0, "ffn": 0.0}
+        grad_comp_counts = {"ska": 0, "baseline_attn": 0, "ffn": 0}
         try:
             with profiler(args.profile) as prof:
+                if torch.cuda.is_available():
+                    torch.cuda.reset_peak_memory_stats()
+                train_t0 = time.time()
                 train_loss, train_refs_epoch, train_hyps_epoch = run_epoch(train=True)
+                train_time_s = time.time() - train_t0
+                peak_vram_mib = (
+                    float(torch.cuda.max_memory_allocated()) / (1024**2)
+                    if torch.cuda.is_available()
+                    else None
+                )
                 val_loss, val_refs_epoch, val_hyps_epoch = run_epoch(train=False)
         except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
             is_oom = "out of memory" in str(exc).lower()
@@ -1807,6 +1914,18 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         val_bleu = corpus_bleu(val_refs_epoch, val_hyps_epoch) if val_refs_epoch else 0.0
         train_ppl = math.exp(min(train_loss, 20.0))
         val_ppl = math.exp(min(val_loss, 20.0))
+        train_grad_norm = (grad_norm_sum / grad_norm_count) if grad_norm_count else None
+        train_grad_norm_ska = (
+            grad_comp_sums["ska"] / grad_comp_counts["ska"] if grad_comp_counts["ska"] else None
+        )
+        train_grad_norm_baseline = (
+            grad_comp_sums["baseline_attn"] / grad_comp_counts["baseline_attn"]
+            if grad_comp_counts["baseline_attn"]
+            else None
+        )
+        train_grad_norm_ffn = (
+            grad_comp_sums["ffn"] / grad_comp_counts["ffn"] if grad_comp_counts["ffn"] else None
+        )
         mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
         if args.sdpa_baseline:
             mode_tag = f"{mode_tag}/{attn_impl}"
@@ -1830,10 +1949,18 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "val/bleu": val_bleu,
                 "impl/attn_impl": attn_impl,
             }
-            if args.profile:
-                payload["train/time_s"] = prof["time_s"]
-                if torch.cuda.is_available():
-                    payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
+            payload["train/time_s"] = train_time_s
+            payload["train/time_per_epoch_s"] = train_time_s
+            if peak_vram_mib is not None:
+                payload["train/peak_vram_mib"] = peak_vram_mib
+            if train_grad_norm is not None:
+                payload["train/grad_norm_epoch_mean"] = train_grad_norm
+            if train_grad_norm_ska is not None:
+                payload["train/grad_norm_ska_epoch_mean"] = train_grad_norm_ska
+            if train_grad_norm_baseline is not None:
+                payload["train/grad_norm_baseline_attn_epoch_mean"] = train_grad_norm_baseline
+            if train_grad_norm_ffn is not None:
+                payload["train/grad_norm_ffn_epoch_mean"] = train_grad_norm_ffn
             sample_text = format_text_samples(
                 val_refs_epoch,
                 val_hyps_epoch,
@@ -1842,7 +1969,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             )
             if sample_text:
                 payload["samples/val_text"] = sample_text
+                payload["samples/generated"] = sample_text
             wandb_run.log(payload, step=epoch)
+            if epoch == args.epochs:
+                _summarize_wandb_payload(wandb_run, payload)
         if args.metrics_csv:
             row = {
                 "script": "train_toy_lm_banked",
@@ -1869,9 +1999,18 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "train_loss": train_loss,
                 "train_ppl": train_ppl,
                 "train_bleu": train_bleu,
+                "train_grad_norm": train_grad_norm if train_grad_norm is not None else "NA",
+                "train_grad_norm_ska": train_grad_norm_ska if train_grad_norm_ska is not None else "NA",
+                "train_grad_norm_baseline_attn": (
+                    train_grad_norm_baseline if train_grad_norm_baseline is not None else "NA"
+                ),
+                "train_grad_norm_ffn": train_grad_norm_ffn if train_grad_norm_ffn is not None else "NA",
                 "val_loss": val_loss,
                 "val_ppl": val_ppl,
                 "val_bleu": val_bleu,
+                "train_time_s": train_time_s,
+                "train_time_per_epoch_s": train_time_s,
+                "train_peak_vram_mib": peak_vram_mib if peak_vram_mib is not None else "NA",
             }
             _append_benchmark_row(args.metrics_csv, row)
             _log_csv_row_wandb(

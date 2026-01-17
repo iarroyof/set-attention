@@ -40,12 +40,13 @@ from set_attention.data.ska_artifacts import (
 from set_attention.experiments.data_toy import ToyDiffConfig, make_toy_continuous_sequences
 from set_attention.experiments.diffusion_core import SimpleDDPM
 from set_attention.experiments.models import PositionalEncoding, timestep_embedding
+from set_attention.experiments.nlp_eval import distinct_n, self_bleu
 from set_attention.eval.mmd_simple import mmd2_unbiased_from_feats
 from set_attention.utils.metrics import chamfer_l2, one_nn_two_sample
 from set_attention.utils.profiling import profiler
 from set_attention.utils.sample_logging import select_sample_indices
 from set_attention.utils.wandb import init_wandb
-from set_attention.experiments.nlp_eval import corpus_bleu
+from set_attention.utils.grad_stats import component_grad_norms, global_grad_norm, iter_named_parameters
 from set_attention.sets.bank_builders import build_windowed_bank_from_ids
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
 from set_attention.heads.banked_attention import SetBankAttention
@@ -294,6 +295,8 @@ def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = Non
             keys = sorted(f"{prefix}/{key}" for key in row.keys())
             print(f"[wandb-keys] {key_id[0]} {prefix}: {', '.join(keys)}")
             _WANDB_KEYS_PRINTED.add(key_id)
+    if os.environ.get("SA_LOG_CSV_TO_WANDB") != "1":
+        return
     payload: dict[str, object] = {}
     for key, value in row.items():
         if isinstance(value, (list, tuple, dict)):
@@ -304,6 +307,25 @@ def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = Non
     if summarize:
         for key, value in row.items():
             wandb_run.set_summary(f"{prefix}/{key}", value)
+
+
+def _prime_wandb_summary(wandb_run, config: dict, extra: dict | None = None) -> None:
+    if not getattr(wandb_run, "enabled", False):
+        return
+    for key, value in config.items():
+        wandb_run.set_summary(key, value if value is not None else "NA")
+    if extra:
+        for key, value in extra.items():
+            wandb_run.set_summary(key, value)
+
+
+def _summarize_wandb_payload(wandb_run, payload: dict) -> None:
+    if not getattr(wandb_run, "enabled", False):
+        return
+    for key, value in payload.items():
+        if isinstance(value, (list, tuple, dict)):
+            continue
+        wandb_run.set_summary(key, value)
 
 
 def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception, wandb_run=None) -> None:
@@ -909,7 +931,20 @@ def main():
     )
     ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
-    ap.add_argument("--eval-seed", type=int, default=1337, help="Seed to make validation evaluation deterministic across variants.")
+    ap.add_argument(
+        "--diversity-max-samples",
+        type=int,
+        default=256,
+        help="Max generated samples to use for self-BLEU/distinct-n (0=all).",
+    )
+    ap.add_argument("--self-bleu-n", type=int, default=4, help="Max n-gram for self-BLEU.")
+    ap.add_argument(
+        "--eval-seed",
+        type=int,
+        default=1337,
+        help="Seed to make validation evaluation deterministic across variants.",
+    )
+    ap.add_argument("--grad-log-interval", type=int, default=1, help="Log grad norms every N steps (0=disable).")
     ap.add_argument("--seed", type=int, default=2024, help="Base RNG seed when --seeds is not provided.")
     ap.add_argument(
         "--seeds",
@@ -1007,11 +1042,13 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
     dataset_label = args.text_dataset if args.data_mode == "text" else args.config
     seq_len = args.text_seq_len if args.data_mode == "text" else args.data_seq_len
     seq_stride = args.text_stride if args.data_mode == "text" else "NA"
+    tokenizer_type = "whitespace" if args.data_mode == "text" else "NA"
     wandb_config = {
         "script": "train_toy_diffusion_banked",
         "dataset": dataset_label,
         "dataset_id": dataset_label,
         "data_mode": args.data_mode,
+        "tokenizer_type": tokenizer_type,
         "ska_backend": args.ska_backend,
         "precision": args.precision,
         "seq_len": seq_len,
@@ -1021,16 +1058,21 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         "minhash_k": args.minhash_k,
         "router_topk": args.router_topk,
         "adapter_rank": args.adapter_rank,
+        "set_kernel": "NA",
         "steps": args.steps,
         "batch": args.batch,
         "sdpa_baseline": args.sdpa_baseline,
         "precompute_bank": args.precompute_bank,
         "streaming": False,
         "reuse_vocab": False,
-        "vocab_path": "",
+        "vocab_path": "NA",
         "vocab_workers": 0,
-        "hf_cache_dir": args.text_cache_dir or "",
+        "hf_tokenizer_name": "NA",
+        "hf_cache_dir": args.text_cache_dir or "NA",
         "sample_count": args.sample_count,
+        "diversity_max_samples": args.diversity_max_samples,
+        "self_bleu_n": args.self_bleu_n,
+        "grad_log_interval": args.grad_log_interval,
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,
@@ -1045,6 +1087,33 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         run_name,
         wandb_config,
         wandb_tags,
+    )
+    _prime_wandb_summary(
+        wandb_run,
+        wandb_config,
+        {
+            "train/acc": "NA",
+            "train/coverage": "NA",
+            "train/sets_per_seq": "NA",
+            "train/top5": "NA",
+            "train/time_s": "NA",
+            "train/time_per_epoch_s": "NA",
+            "train/peak_vram_mib": "NA",
+            "train/grad_norm": "NA",
+            "train/grad_norm_ska": "NA",
+            "train/grad_norm_baseline_attn": "NA",
+            "train/grad_norm_ffn": "NA",
+            "val/loss": "NA",
+            "val/acc": "NA",
+            "val/top5": "NA",
+            "val/self_bleu": "NA",
+            "val/distinct_1": "NA",
+            "val/distinct_2": "NA",
+            "val/self_bleu_samples": "NA",
+            "samples/val_text": "NA",
+            "samples/generated": "NA",
+            "samples/val_preview": "NA",
+        },
     )
 
     cfg_yaml = {}
@@ -1364,6 +1433,15 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         attn_baseline=args.attn_baseline,
     ).to(device)
     ddpm = SimpleDDPM(T=args.steps, device=device)
+    component_named_params = list(
+        iter_named_parameters(
+            {
+                "model": model,
+                "adapter": adapter,
+                "atom_emb": atom_emb,
+            }
+        )
+    )
     params = list(model.parameters())
     if not args.sdpa_baseline and atom_emb is not None:
         params += list(atom_emb.parameters())
@@ -1393,10 +1471,19 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         return
 
     attn_impl = _attn_impl_label(args, args.sdpa_baseline)
+    global_step = 0
+    grad_comp_sums = {"ska": 0.0, "baseline_attn": 0.0, "ffn": 0.0}
+    grad_comp_counts = {"ska": 0, "baseline_attn": 0, "ffn": 0}
     for epoch in range(1, args.epochs + 1):
+        grad_norm_sum = 0.0
+        grad_norm_count = 0
+        grad_comp_sums = {"ska": 0.0, "baseline_attn": 0.0, "ffn": 0.0}
+        grad_comp_counts = {"ska": 0, "baseline_attn": 0, "ffn": 0}
         model.train()
         total_loss = 0.0
         count = 0
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
         train_gen = torch.Generator().manual_seed(seed + epoch)
         try:
             with profiler(args.profile) as prof:
@@ -1416,10 +1503,45 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                     loss = ddpm.loss(model, xb, lambda t, dim: timestep_embedding(t, args.d_model), args.d_model)
                     optimizer.zero_grad(set_to_none=True)
                     loss.backward()
+                    if args.grad_log_interval > 0:
+                        if global_step % args.grad_log_interval == 0:
+                            grad_norm = global_grad_norm(params)
+                            grad_norm_sum += grad_norm
+                            grad_norm_count += 1
+                            comp_norms = component_grad_norms(component_named_params)
+                            for key, value in comp_norms.items():
+                                grad_comp_sums[key] += value
+                                grad_comp_counts[key] += 1
+                            if wandb_run.enabled:
+                                payload = {"train/grad_norm": grad_norm}
+                                if "ska" in comp_norms:
+                                    payload["train/grad_norm_ska"] = comp_norms["ska"]
+                                if "baseline_attn" in comp_norms:
+                                    payload["train/grad_norm_baseline_attn"] = comp_norms["baseline_attn"]
+                                if "ffn" in comp_norms:
+                                    payload["train/grad_norm_ffn"] = comp_norms["ffn"]
+                                wandb_run.log(payload, step=global_step)
+                    global_step += 1
                     optimizer.step()
                     total_loss += float(loss.detach()) * xb.size(0)
                     count += xb.size(0)
             train_loss = total_loss / max(1, count)
+            train_time_s = prof.get("time_s", 0.0)
+            peak_vram_mib = (
+                float(torch.cuda.max_memory_allocated()) / (1024**2) if torch.cuda.is_available() else None
+            )
+            train_grad_norm = (grad_norm_sum / grad_norm_count) if grad_norm_count else None
+            train_grad_norm_ska = (
+                grad_comp_sums["ska"] / grad_comp_counts["ska"] if grad_comp_counts["ska"] else None
+            )
+            train_grad_norm_baseline = (
+                grad_comp_sums["baseline_attn"] / grad_comp_counts["baseline_attn"]
+                if grad_comp_counts["baseline_attn"]
+                else None
+            )
+            train_grad_norm_ffn = (
+                grad_comp_sums["ffn"] / grad_comp_counts["ffn"] if grad_comp_counts["ffn"] else None
+            )
 
             model.eval()
             sample_indices = select_sample_indices(val_data.size(0), args.sample_count, args.sample_seed + epoch)
@@ -1429,10 +1551,9 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 torch.manual_seed(args.eval_seed)
                 random.seed(args.eval_seed)
                 mmds, chamfers, nn1s = [], [], []
-                text_token_matches = 0.0
-                text_token_total = 0.0
-                text_refs_all: List[List[str]] = []
-                text_hyps_all: List[List[str]] = []
+                val_loss_total = 0.0
+                val_count = 0
+                val_generated_tokens: List[List[str]] = []
                 val_gen = torch.Generator().manual_seed(args.eval_seed)
                 for batch_idx, xb in build_tensor_dataloader(
                     val_data,
@@ -1448,6 +1569,9 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                         phi_dynamic = adapter(atom_emb.weight) if adapter is not None else phi_snapshot
                         Phi, Sig, Size, q_ptrs = val_cache.gather_flat(batch_idx.to(device), phi_dynamic)
                         model.set_current_bank(Phi, Sig, Size, q_ptrs)
+                    val_loss = ddpm.loss(model, xb, lambda t, dim: timestep_embedding(t, args.d_model), args.d_model)
+                    val_loss_total += float(val_loss.detach()) * xb.size(0)
+                    val_count += xb.size(0)
                     batch_indices = batch_idx.detach().cpu().tolist()
                     need_samples = any(idx in sample_lookup for idx in batch_indices)
                     want_generated = need_samples or text_mode
@@ -1465,16 +1589,13 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                         else:
                             tgt_ids = decode_embeddings_to_ids(xb, text_embedding_table)
                         pred_ids = decode_embeddings_to_ids(gen_batch.to(device), text_embedding_table)
-                        text_token_matches += float((pred_ids == tgt_ids).sum().item())
-                        text_token_total += float(pred_ids.numel())
                         ref_token_batch = [
                             [text_itos[int(tok)] for tok in seq.tolist()] for seq in tgt_ids.detach().cpu()
                         ]
                         hyp_token_batch = [
                             [text_itos[int(tok)] for tok in seq.tolist()] for seq in pred_ids.detach().cpu()
                         ]
-                        text_refs_all.extend(ref_token_batch)
-                        text_hyps_all.extend(hyp_token_batch)
+                        val_generated_tokens.extend(hyp_token_batch)
                     if need_samples and gen_batch is not None:
                         for local_pos, global_idx in enumerate(batch_indices):
                             order = sample_lookup.get(int(global_idx))
@@ -1532,8 +1653,21 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         val_mmd_mean = safe_mean(mmds)
         val_chamfer_mean = safe_mean(chamfers)
         val_nn1_mean = safe_mean(nn1s)
-        text_token_acc = (text_token_matches / text_token_total) if text_token_total > 0 else None
-        text_bleu = corpus_bleu(text_refs_all, text_hyps_all) if text_refs_all else None
+        val_loss_mean = val_loss_total / max(1, val_count)
+        val_self_bleu = None
+        val_distinct_1 = None
+        val_distinct_2 = None
+        self_bleu_samples = None
+        if text_mode and val_generated_tokens:
+            diversity_samples = val_generated_tokens
+            if args.diversity_max_samples > 0 and len(diversity_samples) > args.diversity_max_samples:
+                rng = random.Random(args.eval_seed + epoch)
+                indices = rng.sample(range(len(diversity_samples)), args.diversity_max_samples)
+                diversity_samples = [diversity_samples[i] for i in indices]
+            self_bleu_samples = len(diversity_samples)
+            val_self_bleu = self_bleu(diversity_samples, max_n=args.self_bleu_n)
+            val_distinct_1 = distinct_n(diversity_samples, n=1)
+            val_distinct_2 = distinct_n(diversity_samples, n=2)
 
         attn_impl = _attn_impl_label(args, args.sdpa_baseline)
         mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
@@ -1541,11 +1675,9 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
             mode_tag = f"{mode_tag}/{attn_impl}"
         msg = (
             f"[Diffusion-Banked][{mode_tag}] epoch {epoch:02d} "
-            f"train loss {train_loss:.4f} | val MMD {val_mmd_mean:.4f} | "
+            f"train loss {train_loss:.4f} | val loss {val_loss_mean:.4f} | val MMD {val_mmd_mean:.4f} | "
             f"Chamfer {val_chamfer_mean:.4f} | 1NN {val_nn1_mean:.3f}"
         )
-        if text_mode and text_token_acc is not None:
-            msg += f" | token acc {text_token_acc * 100:.2f}% | BLEU {text_bleu or 0.0:.3f}"
         if args.profile:
             msg += f" | time {prof['time_s']:.2f}s"
             if torch.cuda.is_available():
@@ -1578,20 +1710,36 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         if wandb_run.enabled:
             wandb_payload = {
                 "train/loss": train_loss,
+                "val/loss": val_loss_mean,
                 "val/mmd": val_mmd_mean,
                 "val/chamfer": val_chamfer_mean,
                 "val/1nn": val_nn1_mean,
                 "impl/attn_impl": attn_impl,
             }
-            if text_mode and text_token_acc is not None:
-                wandb_payload["val/token_acc"] = text_token_acc
-                if text_bleu is not None:
-                    wandb_payload["val/bleu"] = text_bleu
-            if args.profile:
-                wandb_payload["train/time_s"] = prof["time_s"]
+            if val_self_bleu is not None:
+                wandb_payload["val/self_bleu"] = val_self_bleu
+                wandb_payload["val/distinct_1"] = val_distinct_1
+                wandb_payload["val/distinct_2"] = val_distinct_2
+                wandb_payload["val/self_bleu_samples"] = self_bleu_samples
+            wandb_payload["train/time_s"] = train_time_s
+            wandb_payload["train/time_per_epoch_s"] = train_time_s
+            if peak_vram_mib is not None:
+                wandb_payload["train/peak_vram_mib"] = peak_vram_mib
+            if train_grad_norm is not None:
+                wandb_payload["train/grad_norm_epoch_mean"] = train_grad_norm
+            if train_grad_norm_ska is not None:
+                wandb_payload["train/grad_norm_ska_epoch_mean"] = train_grad_norm_ska
+            if train_grad_norm_baseline is not None:
+                wandb_payload["train/grad_norm_baseline_attn_epoch_mean"] = train_grad_norm_baseline
+            if train_grad_norm_ffn is not None:
+                wandb_payload["train/grad_norm_ffn_epoch_mean"] = train_grad_norm_ffn
             if sample_text is not None:
                 wandb_payload["samples/generated"] = sample_text
+                if text_mode:
+                    wandb_payload["samples/val_text"] = sample_text
             wandb_run.log(wandb_payload, step=epoch)
+            if epoch == args.epochs:
+                _summarize_wandb_payload(wandb_run, wandb_payload)
         if args.metrics_csv:
             row = {
                 "script": "train_toy_diffusion_banked",
@@ -1612,13 +1760,25 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 "run_uid": run_uid,
                 "epoch": epoch,
                 "train_loss": train_loss,
+                "val_loss": val_loss_mean,
                 "val_mmd": val_mmd_mean,
                 "val_chamfer": val_chamfer_mean,
                 "val_1nn": val_nn1_mean,
-                "val_token_acc": text_token_acc if text_token_acc is not None else "NA",
-                "val_bleu": text_bleu if text_bleu is not None else "NA",
+                "train_grad_norm": train_grad_norm if train_grad_norm is not None else "NA",
+                "train_grad_norm_ska": train_grad_norm_ska if train_grad_norm_ska is not None else "NA",
+                "train_grad_norm_baseline_attn": (
+                    train_grad_norm_baseline if train_grad_norm_baseline is not None else "NA"
+                ),
+                "train_grad_norm_ffn": train_grad_norm_ffn if train_grad_norm_ffn is not None else "NA",
+                "val_self_bleu": val_self_bleu if val_self_bleu is not None else "NA",
+                "val_distinct_1": val_distinct_1 if val_distinct_1 is not None else "NA",
+                "val_distinct_2": val_distinct_2 if val_distinct_2 is not None else "NA",
+                "val_self_bleu_samples": self_bleu_samples if self_bleu_samples is not None else "NA",
                 "cache_fp": getattr(args, "cache_fp", "NA"),
                 "status": "ok",
+                "train_time_s": train_time_s,
+                "train_time_per_epoch_s": train_time_s,
+                "train_peak_vram_mib": peak_vram_mib if peak_vram_mib is not None else "NA",
             }
             _append_benchmark_row(args.metrics_csv, row)
             _log_csv_row_wandb(

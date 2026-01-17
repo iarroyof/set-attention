@@ -23,6 +23,7 @@ except Exception:
 
 from set_attention.data import resolve_data_root
 from set_attention.utils.wandb import init_wandb
+from set_attention.utils.grad_stats import component_grad_norms, global_grad_norm, iter_named_parameters
 
 from set_attention.sets.bank_builders import build_windowed_bank_from_ids
 from set_attention.sets.atom_adapter import AtomFeatureAdapter
@@ -89,6 +90,8 @@ def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = Non
             keys = sorted(f"{prefix}/{key}" for key in row.keys())
             print(f"[wandb-keys] {key_id[0]} {prefix}: {', '.join(keys)}")
             _WANDB_KEYS_PRINTED.add(key_id)
+    if os.environ.get("SA_LOG_CSV_TO_WANDB") != "1":
+        return
     payload: dict[str, object] = {}
     for key, value in row.items():
         if isinstance(value, (list, tuple, dict)):
@@ -99,6 +102,25 @@ def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = Non
     if summarize:
         for key, value in row.items():
             wandb_run.set_summary(f"{prefix}/{key}", value)
+
+
+def _prime_wandb_summary(wandb_run, config: dict, extra: dict | None = None) -> None:
+    if not getattr(wandb_run, "enabled", False):
+        return
+    for key, value in config.items():
+        wandb_run.set_summary(key, value if value is not None else "NA")
+    if extra:
+        for key, value in extra.items():
+            wandb_run.set_summary(key, value)
+
+
+def _summarize_wandb_payload(wandb_run, payload: dict) -> None:
+    if not getattr(wandb_run, "enabled", False):
+        return
+    for key, value in payload.items():
+        if isinstance(value, (list, tuple, dict)):
+            continue
+        wandb_run.set_summary(key, value)
 
 
 def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception, wandb_run=None) -> None:
@@ -648,6 +670,7 @@ def main():
     ap.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     ap.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     ap.add_argument("--eval-seed", type=int, default=1337, help="Seed to make validation evaluation deterministic across variants.")
+    ap.add_argument("--grad-log-interval", type=int, default=1, help="Log grad norms every N steps (0=disable).")
     ap.add_argument(
         "--seeds",
         type=str,
@@ -734,6 +757,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "dataset": args.data_mode,
         "dataset_id": args.data_mode,
         "data_mode": args.data_mode,
+        "tokenizer_type": "NA",
         "ska_backend": args.ska_backend,
         "precision": args.precision,
         "seq_len": "NA",
@@ -743,15 +767,19 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "minhash_k": args.minhash_k,
         "router_topk": args.router_topk,
         "adapter_rank": args.adapter_rank,
+        "set_kernel": "NA",
+        "steps": "NA",
         "batch": args.batch,
         "sdpa_baseline": args.sdpa_baseline,
         "precompute_bank": args.precompute_bank,
         "streaming": False,
         "reuse_vocab": False,
-        "vocab_path": "",
+        "vocab_path": "NA",
         "vocab_workers": 0,
-        "hf_cache_dir": "",
+        "hf_tokenizer_name": "NA",
+        "hf_cache_dir": "NA",
         "sample_count": args.sample_count,
+        "grad_log_interval": args.grad_log_interval,
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,
@@ -766,6 +794,32 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         run_name,
         wandb_config,
         wandb_tags,
+    )
+    _prime_wandb_summary(
+        wandb_run,
+        wandb_config,
+        {
+            "train/bleu": "NA",
+            "train/ppl": "NA",
+            "train/rougeL": "NA",
+            "train/time_s": "NA",
+            "train/time_per_epoch_s": "NA",
+            "train/peak_vram_mib": "NA",
+            "train/grad_norm": "NA",
+            "train/grad_norm_ska": "NA",
+            "train/grad_norm_baseline_attn": "NA",
+            "train/grad_norm_ffn": "NA",
+            "val/bleu": "NA",
+            "val/ppl": "NA",
+            "val/rougeL": "NA",
+            "val/1nn": "NA",
+            "val/mmd": "NA",
+            "val/chamfer": "NA",
+            "val/token_acc": "NA",
+            "samples/val_text": "NA",
+            "samples/generated": "NA",
+            "samples/val_preview": "NA",
+        },
     )
 
     data_root = resolve_data_root(args.data_root)
@@ -905,6 +959,18 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         ).to(device)
         router = TokenSetRouter(d_model=128, num_heads=args.heads, topk=args.router_topk).to(device)
     head = nn.Linear(128, 10).to(device)
+    component_named_params = list(
+        iter_named_parameters(
+            {
+                "backbone": backbone,
+                "set_attn": set_attn,
+                "router": router,
+                "adapter": adapter,
+                "atom_emb": atom_emb,
+                "head": head,
+            }
+        )
+    )
 
     params = list(backbone.parameters()) + list(head.parameters())
     if not args.sdpa_baseline:
@@ -1014,7 +1080,14 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             metrics["samples"] = ordered
         return metrics
 
+    global_step = 0
+    grad_comp_sums = {"ska": 0.0, "baseline_attn": 0.0, "ffn": 0.0}
+    grad_comp_counts = {"ska": 0, "baseline_attn": 0, "ffn": 0}
     for ep in range(1, args.epochs + 1):
+        grad_norm_sum = 0.0
+        grad_norm_count = 0
+        grad_comp_sums = {"ska": 0.0, "baseline_attn": 0.0, "ffn": 0.0}
+        grad_comp_counts = {"ska": 0, "baseline_attn": 0, "ffn": 0}
         try:
             set_mode(True)
             total_loss, total_acc, total_top5, total_n = 0.0, 0.0, 0.0, 0
@@ -1022,7 +1095,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             seq_seen_total = 0
             coverage_mask = torch.zeros(coverage_size, dtype=torch.bool)
             with profiler(args.profile) as prof:
-                if args.profile and torch.cuda.is_available():
+                if torch.cuda.is_available():
                     torch.cuda.reset_peak_memory_stats()
                 for idx_batch, xb, yb in loader:
                     batch_idx = idx_batch.to(device)
@@ -1041,6 +1114,25 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     loss = F.cross_entropy(logits, yb)
                     optim.zero_grad(set_to_none=True)
                     loss.backward()
+                    if args.grad_log_interval > 0:
+                        if global_step % args.grad_log_interval == 0:
+                            grad_norm = global_grad_norm(params)
+                            grad_norm_sum += grad_norm
+                            grad_norm_count += 1
+                            comp_norms = component_grad_norms(component_named_params)
+                            for key, value in comp_norms.items():
+                                grad_comp_sums[key] += value
+                                grad_comp_counts[key] += 1
+                            if wandb_run.enabled:
+                                payload = {"train/grad_norm": grad_norm}
+                                if "ska" in comp_norms:
+                                    payload["train/grad_norm_ska"] = comp_norms["ska"]
+                                if "baseline_attn" in comp_norms:
+                                    payload["train/grad_norm_baseline_attn"] = comp_norms["baseline_attn"]
+                                if "ffn" in comp_norms:
+                                    payload["train/grad_norm_ffn"] = comp_norms["ffn"]
+                                wandb_run.log(payload, step=global_step)
+                    global_step += 1
                     optim.step()
                     pred = logits.argmax(dim=-1)
                     topk = logits.topk(min(5, logits.size(-1)), dim=-1).indices
@@ -1101,6 +1193,22 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         avg_top5 = total_top5 / denom
         avg_sets_per_seq = sets_seen_total / max(1, seq_seen_total)
         coverage_ratio = coverage_mask.float().mean().item() if coverage_mask.numel() > 0 else 0.0
+        train_time_s = prof.get("time_s", 0.0)
+        peak_vram_mib = (
+            float(torch.cuda.max_memory_allocated()) / (1024**2) if torch.cuda.is_available() else None
+        )
+        train_grad_norm = (grad_norm_sum / grad_norm_count) if grad_norm_count else None
+        train_grad_norm_ska = (
+            grad_comp_sums["ska"] / grad_comp_counts["ska"] if grad_comp_counts["ska"] else None
+        )
+        train_grad_norm_baseline = (
+            grad_comp_sums["baseline_attn"] / grad_comp_counts["baseline_attn"]
+            if grad_comp_counts["baseline_attn"]
+            else None
+        )
+        train_grad_norm_ffn = (
+            grad_comp_sums["ffn"] / grad_comp_counts["ffn"] if grad_comp_counts["ffn"] else None
+        )
         coverage_display = "NA" if args.sdpa_baseline else f"{coverage_ratio * 100:.1f}%"
         if val_loader is not None:
             sample_indices = select_sample_indices(len(val_loader.dataset), args.sample_count, args.sample_seed + ep)
@@ -1161,11 +1269,21 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     payload["samples/val_preview"] = "\n".join(preview_lines)
                 if wandb_images:
                     payload["samples/val_images"] = wandb_images
-            if args.profile:
-                payload["train/time_s"] = prof["time_s"]
-                if torch.cuda.is_available():
-                    payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
+            payload["train/time_s"] = train_time_s
+            payload["train/time_per_epoch_s"] = train_time_s
+            if peak_vram_mib is not None:
+                payload["train/peak_vram_mib"] = peak_vram_mib
+            if train_grad_norm is not None:
+                payload["train/grad_norm_epoch_mean"] = train_grad_norm
+            if train_grad_norm_ska is not None:
+                payload["train/grad_norm_ska_epoch_mean"] = train_grad_norm_ska
+            if train_grad_norm_baseline is not None:
+                payload["train/grad_norm_baseline_attn_epoch_mean"] = train_grad_norm_baseline
+            if train_grad_norm_ffn is not None:
+                payload["train/grad_norm_ffn_epoch_mean"] = train_grad_norm_ffn
             wandb_run.log(payload, step=ep)
+            if ep == args.epochs:
+                _summarize_wandb_payload(wandb_run, payload)
         if args.metrics_csv:
             row = {
                 "script": "train_tiny_vit_banked",
@@ -1193,6 +1311,15 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "val_top5": val_metrics["top5"] if val_metrics is not None else "NA",
                 "coverage_sets_per_seq": avg_sets_per_seq if not args.sdpa_baseline else "NA",
                 "coverage_ratio": coverage_ratio if not args.sdpa_baseline else "NA",
+                "train_grad_norm": train_grad_norm if train_grad_norm is not None else "NA",
+                "train_grad_norm_ska": train_grad_norm_ska if train_grad_norm_ska is not None else "NA",
+                "train_grad_norm_baseline_attn": (
+                    train_grad_norm_baseline if train_grad_norm_baseline is not None else "NA"
+                ),
+                "train_grad_norm_ffn": train_grad_norm_ffn if train_grad_norm_ffn is not None else "NA",
+                "train_time_s": train_time_s,
+                "train_time_per_epoch_s": train_time_s,
+                "train_peak_vram_mib": peak_vram_mib if peak_vram_mib is not None else "NA",
                 "cache_fp": getattr(args, "cache_fp", "NA"),
                 "status": "ok",
             }

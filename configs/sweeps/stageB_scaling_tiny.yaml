@@ -6,6 +6,7 @@ parameters:
   epochs: {value: 15}
   production: {value: true}
   wandb-project: {value: set-attention-test}
+  grad-log-interval: {value: 10}
 
   lm-dataset: {value: wikitext2}
   lm-subset-path: {value: subsets/wikitext2_train_01pct.json}

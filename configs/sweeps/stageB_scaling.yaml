@@ -15,6 +15,9 @@ parameters:
   # W&B project name.
   wandb-project:
     value: set-attention-paper
+  # Log grad norms every N steps (0=disable).
+  grad-log-interval:
+    value: 10
   # LM dataset identifier.
   lm-dataset:
     value: wikitext103

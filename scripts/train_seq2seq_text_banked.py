@@ -69,6 +69,7 @@ from set_attention.universe import SetFeatureCache, UniversePool
 from set_attention.kernels.sketches import MinHasher
 from set_attention.utils.profiling import profiler
 from set_attention.utils.wandb import init_wandb
+from set_attention.utils.grad_stats import component_grad_norms, global_grad_norm, iter_named_parameters
 from set_attention.experiments.nlp_eval import corpus_bleu, rouge_l
 from common.repro import set_seed
 
@@ -122,6 +123,8 @@ def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = Non
             keys = sorted(f"{prefix}/{key}" for key in row.keys())
             print(f"[wandb-keys] {key_id[0]} {prefix}: {', '.join(keys)}")
             _WANDB_KEYS_PRINTED.add(key_id)
+    if os.environ.get("SA_LOG_CSV_TO_WANDB") != "1":
+        return
     payload: dict[str, object] = {}
     for key, value in row.items():
         if isinstance(value, (list, tuple, dict)):
@@ -132,6 +135,25 @@ def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = Non
     if summarize:
         for key, value in row.items():
             wandb_run.set_summary(f"{prefix}/{key}", value)
+
+
+def _prime_wandb_summary(wandb_run, config: dict, extra: dict | None = None) -> None:
+    if not getattr(wandb_run, "enabled", False):
+        return
+    for key, value in config.items():
+        wandb_run.set_summary(key, value if value is not None else "NA")
+    if extra:
+        for key, value in extra.items():
+            wandb_run.set_summary(key, value)
+
+
+def _summarize_wandb_payload(wandb_run, payload: dict) -> None:
+    if not getattr(wandb_run, "enabled", False):
+        return
+    for key, value in payload.items():
+        if isinstance(value, (list, tuple, dict)):
+            continue
+        wandb_run.set_summary(key, value)
 
 
 def _append_exception_rows(args, seed: int, rep: int, run_uid: str, exc: Exception, wandb_run=None) -> None:
@@ -834,6 +856,7 @@ def main():
     parser.add_argument("--sample-count", type=int, default=10, help="Number of validation samples to log.")
     parser.add_argument("--sample-seed", type=int, default=1337, help="Seed for selecting logged samples.")
     parser.add_argument("--eval-seed", type=int, default=1337, help="Seed to make validation evaluation deterministic across variants.")
+    parser.add_argument("--grad-log-interval", type=int, default=1, help="Log grad norms every N steps (0=disable).")
     parser.add_argument("--seed", type=int, default=2024, help="Base RNG seed used when --seeds is not provided.")
     parser.add_argument(
         "--seeds",
@@ -929,19 +952,22 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         "router_topk": args.router_topk,
         "adapter_rank": args.adapter_rank,
         "set_kernel": args.set_kernel,
+        "steps": "NA",
         "sdpa_baseline": args.sdpa_baseline,
         "precompute_bank": args.precompute_bank,
         "streaming": False,
         "reuse_vocab": False,
-        "vocab_path": "",
+        "vocab_path": "NA",
         "vocab_workers": 0,
+        "hf_tokenizer_name": "NA",
         "batch": args.batch,
         "sample_count": args.sample_count,
+        "grad_log_interval": args.grad_log_interval,
         "seed": seed,
         "rep": rep,
         "run_uid": run_uid,
         "attn_impl": _attn_impl_label(args, args.sdpa_baseline),
-        "hf_cache_dir": args.hf_cache_dir,
+        "hf_cache_dir": args.hf_cache_dir or "NA",
     }
     run_name = args.wandb_run_name or None
     if run_name and multi_run:
@@ -952,6 +978,32 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         run_name,
         wandb_config,
         wandb_tags,
+    )
+    _prime_wandb_summary(
+        wandb_run,
+        wandb_config,
+        {
+            "train/acc": "NA",
+            "train/coverage": "NA",
+            "train/sets_per_seq": "NA",
+            "train/top5": "NA",
+            "train/time_s": "NA",
+            "train/time_per_epoch_s": "NA",
+            "train/peak_vram_mib": "NA",
+            "train/grad_norm": "NA",
+            "train/grad_norm_ska": "NA",
+            "train/grad_norm_baseline_attn": "NA",
+            "train/grad_norm_ffn": "NA",
+            "val/1nn": "NA",
+            "val/acc": "NA",
+            "val/chamfer": "NA",
+            "val/mmd": "NA",
+            "val/token_acc": "NA",
+            "val/top5": "NA",
+            "samples/val_text": "NA",
+            "samples/generated": "NA",
+            "samples/val_preview": "NA",
+        },
     )
 
     train_indices = None
@@ -1315,6 +1367,18 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         ).to(device)
         router = TokenSetRouter(d_model=args.atom_dim, num_heads=args.heads, topk=args.router_topk).to(device)
     out_proj = nn.Linear(args.atom_dim, len(train_tgt_stoi)).to(device)
+    component_named_params = list(
+        iter_named_parameters(
+            {
+                "model": model,
+                "set_attn": set_attn,
+                "router": router,
+                "adapter": adapter,
+                "atom_emb": atom_emb,
+                "out_proj": out_proj,
+            }
+        )
+    )
 
     params = list(model.parameters()) + list(out_proj.parameters())
     if not args.sdpa_baseline and set_attn is not None and router is not None:
@@ -1357,7 +1421,14 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         return
 
     attn_impl = _attn_impl_label(args, args.sdpa_baseline)
+    global_step = 0
+    grad_comp_sums = {"ska": 0.0, "baseline_attn": 0.0, "ffn": 0.0}
+    grad_comp_counts = {"ska": 0, "baseline_attn": 0, "ffn": 0}
     for epoch in range(1, args.epochs + 1):
+        grad_norm_sum = 0.0
+        grad_norm_count = 0
+        grad_comp_sums = {"ska": 0.0, "baseline_attn": 0.0, "ffn": 0.0}
+        grad_comp_counts = {"ska": 0, "baseline_attn": 0, "ffn": 0}
         model.train()
         if set_attn is not None:
             set_attn.train()
@@ -1370,6 +1441,8 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         train_loss_total = 0.0
         train_token_total = 0
         try:
+            if torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats()
             with profiler(args.profile) as prof:
                 for batch_idx_tensor, src_ids, tgt_ids, ref_tokens in build_text_dataloader(
                     train_pairs,
@@ -1403,6 +1476,25 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                     loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_ids.reshape(-1))
                     opt.zero_grad(set_to_none=True)
                     loss.backward()
+                    if args.grad_log_interval > 0:
+                        if global_step % args.grad_log_interval == 0:
+                            grad_norm = global_grad_norm(params)
+                            grad_norm_sum += grad_norm
+                            grad_norm_count += 1
+                            comp_norms = component_grad_norms(component_named_params)
+                            for key, value in comp_norms.items():
+                                grad_comp_sums[key] += value
+                                grad_comp_counts[key] += 1
+                            if wandb_run.enabled:
+                                payload = {"train/grad_norm": grad_norm}
+                                if "ska" in comp_norms:
+                                    payload["train/grad_norm_ska"] = comp_norms["ska"]
+                                if "baseline_attn" in comp_norms:
+                                    payload["train/grad_norm_baseline_attn"] = comp_norms["baseline_attn"]
+                                if "ffn" in comp_norms:
+                                    payload["train/grad_norm_ffn"] = comp_norms["ffn"]
+                                wandb_run.log(payload, step=global_step)
+                    global_step += 1
                     opt.step()
 
                     train_loss_total += float(loss.detach()) * tgt_ids.numel()
@@ -1450,21 +1542,37 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             raise
 
         tr_loss = train_loss_total / max(1, train_token_total)
+        train_time_s = prof.get("time_s", 0.0)
+        peak_vram_mib = (
+            float(torch.cuda.max_memory_allocated()) / (1024**2) if torch.cuda.is_available() else None
+        )
         tr_ppl = math.exp(min(tr_loss, 20.0))
         tr_bleu = corpus_bleu(train_refs, train_hyps)
         tr_rouge = rouge_l(train_refs, train_hyps)
+        train_grad_norm = (grad_norm_sum / grad_norm_count) if grad_norm_count else None
+        train_grad_norm_ska = (
+            grad_comp_sums["ska"] / grad_comp_counts["ska"] if grad_comp_counts["ska"] else None
+        )
+        train_grad_norm_baseline = (
+            grad_comp_sums["baseline_attn"] / grad_comp_counts["baseline_attn"]
+            if grad_comp_counts["baseline_attn"]
+            else None
+        )
+        train_grad_norm_ffn = (
+            grad_comp_sums["ffn"] / grad_comp_counts["ffn"] if grad_comp_counts["ffn"] else None
+        )
         mode_tag = "sdpa" if args.sdpa_baseline else f"ska/{args.ska_backend}/{args.precision}"
         if args.sdpa_baseline:
             mode_tag = f"{mode_tag}/{attn_impl}"
         kernel_tag = "sdpa" if args.sdpa_baseline else args.set_kernel
         msg = (
             f"[Seq2Seq-Text-Banked][{mode_tag}][{kernel_tag}] epoch {epoch:02d} "
-            f"train loss {tr_loss:.4f} ppl {tr_ppl:.2f} BLEU {tr_bleu:.3f} | ROUGE-L {tr_rouge:.3f} | time {prof['time_s']:.2f}s"
+            f"train loss {tr_loss:.4f} ppl {tr_ppl:.2f} BLEU {tr_bleu:.3f} | ROUGE-L {tr_rouge:.3f} | time {train_time_s:.2f}s"
         )
         if prof.get("cpu_pct") is not None:
             msg += f" | CPU {prof['cpu_pct']:.1f}%"
-        if torch.cuda.is_available():
-            msg += f" | VRAM {prof['gpu_peak_mem_mib']:.1f} MiB"
+        if peak_vram_mib is not None:
+            msg += f" | VRAM {peak_vram_mib:.1f} MiB"
             if prof.get("gpu_util_pct") is not None:
                 msg += f" | GPU {prof['gpu_util_pct']:.1f}%"
             if prof.get("gpu_mem_util_pct") is not None:
@@ -1476,11 +1584,20 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             wandb_payload = {
                 "train/bleu": tr_bleu,
                 "train/rougeL": tr_rouge,
-                "train/time_s": prof["time_s"],
+                "train/time_s": train_time_s,
                 "impl/attn_impl": attn_impl,
             }
-            if prof.get("gpu_peak_mem_mib") is not None:
-                wandb_payload["train/peak_vram_mib"] = prof["gpu_peak_mem_mib"]
+            wandb_payload["train/time_per_epoch_s"] = train_time_s
+            if peak_vram_mib is not None:
+                wandb_payload["train/peak_vram_mib"] = peak_vram_mib
+            if train_grad_norm is not None:
+                wandb_payload["train/grad_norm_epoch_mean"] = train_grad_norm
+            if train_grad_norm_ska is not None:
+                wandb_payload["train/grad_norm_ska_epoch_mean"] = train_grad_norm_ska
+            if train_grad_norm_baseline is not None:
+                wandb_payload["train/grad_norm_baseline_attn_epoch_mean"] = train_grad_norm_baseline
+            if train_grad_norm_ffn is not None:
+                wandb_payload["train/grad_norm_ffn_epoch_mean"] = train_grad_norm_ffn
             wandb_run.log(wandb_payload, step=epoch)
 
         val_refs, val_hyps, val_src = [], [], []
@@ -1568,6 +1685,18 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                         "val/rougeL": v_rouge,
                     }
                 )
+            payload["train/time_s"] = train_time_s
+            payload["train/time_per_epoch_s"] = train_time_s
+            if peak_vram_mib is not None:
+                payload["train/peak_vram_mib"] = peak_vram_mib
+            if train_grad_norm is not None:
+                payload["train/grad_norm_epoch_mean"] = train_grad_norm
+            if train_grad_norm_ska is not None:
+                payload["train/grad_norm_ska_epoch_mean"] = train_grad_norm_ska
+            if train_grad_norm_baseline is not None:
+                payload["train/grad_norm_baseline_attn_epoch_mean"] = train_grad_norm_baseline
+            if train_grad_norm_ffn is not None:
+                payload["train/grad_norm_ffn_epoch_mean"] = train_grad_norm_ffn
             payload["impl/attn_impl"] = attn_impl
             sample_text = format_text_samples(
                 val_refs,
@@ -1578,7 +1707,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             )
             if sample_text:
                 payload["samples/val_text"] = sample_text
+                payload["samples/generated"] = sample_text
             wandb_run.log(payload, step=epoch)
+            if epoch == args.epochs:
+                _summarize_wandb_payload(wandb_run, payload)
         if args.metrics_csv:
             row = {
                 "script": "train_seq2seq_text_banked",
@@ -1605,10 +1737,19 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "train_rougeL": tr_rouge,
                 "train_loss": tr_loss,
                 "train_ppl": tr_ppl,
+                "train_grad_norm": train_grad_norm if train_grad_norm is not None else "NA",
+                "train_grad_norm_ska": train_grad_norm_ska if train_grad_norm_ska is not None else "NA",
+                "train_grad_norm_baseline_attn": (
+                    train_grad_norm_baseline if train_grad_norm_baseline is not None else "NA"
+                ),
+                "train_grad_norm_ffn": train_grad_norm_ffn if train_grad_norm_ffn is not None else "NA",
                 "val_bleu": v_bleu if v_bleu is not None else "NA",
                 "val_rougeL": v_rouge if v_rouge is not None else "NA",
                 "val_loss": v_loss if v_loss is not None else "NA",
                 "val_ppl": v_ppl if v_ppl is not None else "NA",
+                "train_time_s": train_time_s,
+                "train_time_per_epoch_s": train_time_s,
+                "train_peak_vram_mib": peak_vram_mib if peak_vram_mib is not None else "NA",
                 "status": "ok",
             }
             _append_benchmark_row(args.metrics_csv, row)
