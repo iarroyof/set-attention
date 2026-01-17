@@ -357,6 +357,12 @@ def main():
     ap.add_argument("--stageb-mode", choices=["benchmark", "train"], default="benchmark", help="Stage B mode (default: benchmark).")
     ap.add_argument("--epochs", type=int, default=None, help="Required when --stageb-mode train is selected.")
     ap.add_argument("--eval-seed", type=int, default=1337, help="Validation seed for Stage B training runs.")
+    ap.add_argument(
+        "--grad-log-interval",
+        type=int,
+        default=None,
+        help="Pass through grad log interval to child runs (default: child script default).",
+    )
     ap.add_argument("--production", action="store_true", help="Enforce production logging requirements (W&B).")
     ap.add_argument("--wandb-project", type=str, default="", help="W&B project name (required with --production).")
     ap.add_argument("--min-free-gb", type=float, default=0.0, help="Wait for this much free GPU memory before running each job (0=disable).")
@@ -507,6 +513,13 @@ def main():
     lm_cache_args = _parse_extra(args.lm_cache_args)
     seq_cache_args = _parse_extra(args.seq_cache_args)
     textdiff_cache_args = _parse_extra(args.textdiff_cache_args)
+    if args.grad_log_interval is not None:
+        has_grad_flag = any(
+            arg == "--grad-log-interval" or arg.startswith("--grad-log-interval=")
+            for arg in common_args
+        )
+        if not has_grad_flag:
+            common_args.extend(["--grad-log-interval", str(args.grad_log_interval)])
     seeds = _parse_seeds(args.seeds, default=2024)
     reps = max(1, int(args.reps))
     out_dir = Path(args.output_dir)
