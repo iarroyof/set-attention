@@ -17,6 +17,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 try:
     from set_attention.data import resolve_data_root
+    from set_attention.data.cache import DEFAULT_DATA_ROOT
     from set_attention.data.artifact_cache import file_signature, resolve_hf_root
     from set_attention.data.hf_cache import ensure_hf_cache
 except Exception as exc:  # pragma: no cover - handled at runtime
@@ -42,6 +43,7 @@ FULL_REQUIRED = {
         "routing_tgt_val.pt",
     ],
 }
+LEGACY_HF_ROOT = DEFAULT_DATA_ROOT / "hf"
 
 
 class CacheJob:
@@ -333,9 +335,13 @@ def main() -> int:
 
     report_rows: list[dict[str, Any]] = []
     hf_root = resolve_hf_root(args.artifact_cache_root or None)
+    artifact_roots = [hf_root]
+    if LEGACY_HF_ROOT != hf_root and (LEGACY_HF_ROOT / "artifacts").exists():
+        artifact_roots.append(LEGACY_HF_ROOT)
+        print(f"[cache_yaml] Using legacy artifact root: {LEGACY_HF_ROOT}")
 
     for job in jobs:
-        hit_root = _find_cache_root(job, hf_root)
+        hit_root = _find_cache_root(job, artifact_roots)
         status = "HIT" if hit_root else "MISS"
 
         if status == "MISS" and not args.verify_only:
@@ -344,7 +350,7 @@ def main() -> int:
             if rc != 0:
                 status = "ERROR"
             else:
-                hit_root = _find_cache_root(job, hf_root)
+                hit_root = _find_cache_root(job, artifact_roots)
                 status = "BUILT" if hit_root else "MISS"
 
         report_rows.append(_job_report(job, status, hit_root))
@@ -381,8 +387,13 @@ def _check_hf_cache(wikitext_needed: set[str], wmt16_needed: bool, prefetch: boo
 
     if missing_wikitext and prefetch:
         cmd = [sys.executable, "scripts/prefetch_datasets.py", "--datasets"] + missing_wikitext
-        _run(cmd, dry_run=False)
-        missing_wikitext = [ds for ds in missing_wikitext if not _hf_cached("wikitext", WIKITEXT_CONFIGS[ds], cache_dir)]
+        rc = _run(cmd, dry_run=False)
+        if rc == 0:
+            missing_wikitext = [
+                ds for ds in missing_wikitext if not _hf_cached("wikitext", WIKITEXT_CONFIGS[ds], cache_dir)
+            ]
+        else:
+            print("[cache_yaml] Prefetch failed; keeping cache-miss warnings.")
 
     if missing_wikitext:
         print("[cache_yaml] Missing HF cache for:", ", ".join(missing_wikitext))
@@ -394,6 +405,13 @@ def _hf_cached(name: str, config: str, cache_dir: Path) -> bool:
     try:
         load_dataset(name, config, cache_dir=str(cache_dir), download_mode="reuse_dataset_if_exists", local_files_only=True)
     except Exception:
+        # Fallback: coarse on-disk check to avoid false negatives.
+        dataset_root = cache_dir / name
+        if dataset_root.exists() and any(dataset_root.iterdir()):
+            return True
+        config_root = dataset_root / config
+        if config_root.exists() and any(config_root.iterdir()):
+            return True
         return False
     return True
 
@@ -408,23 +426,24 @@ def _check_vit_data() -> None:
     print(f"[cache_yaml] CIFAR-10 data not found under {vision_root}. torchvision will download on first run.")
 
 
-def _find_cache_root(job: CacheJob, hf_root: Path) -> Optional[Path]:
-    base = hf_root / "artifacts" / job.task / job.dataset
-    if not base.exists():
-        return None
+def _find_cache_root(job: CacheJob, hf_roots: Iterable[Path]) -> Optional[Path]:
     required = ["tokens.pt"] if job.cache_mode == "tokens" else FULL_REQUIRED[job.task]
-    for fp_dir in base.iterdir():
-        meta_path = fp_dir / "meta.json"
-        if not fp_dir.is_dir() or not meta_path.exists():
+    for hf_root in hf_roots:
+        base = hf_root / "artifacts" / job.task / job.dataset
+        if not base.exists():
             continue
-        try:
-            meta = yaml.safe_load(meta_path.read_text())
-        except Exception:
-            continue
-        if not _meta_matches(job, meta):
-            continue
-        if all((fp_dir / name).exists() for name in required):
-            return fp_dir
+        for fp_dir in base.iterdir():
+            meta_path = fp_dir / "meta.json"
+            if not fp_dir.is_dir() or not meta_path.exists():
+                continue
+            try:
+                meta = yaml.safe_load(meta_path.read_text())
+            except Exception:
+                continue
+            if not _meta_matches(job, meta):
+                continue
+            if all((fp_dir / name).exists() for name in required):
+                return fp_dir
     return None
 
 
@@ -459,11 +478,15 @@ def _meta_matches(job: CacheJob, meta: dict[str, Any]) -> bool:
         return False
     if int(ska.get("router_topk", -1)) != int(job.router_topk or -1):
         return False
-    if job.ska_backend and ska.get("backend") != job.ska_backend:
+    if job.ska_backend and "backend" in ska and ska.get("backend") != job.ska_backend:
         return False
-    if job.precision and ska.get("precision") != job.precision:
-        return False
-    if job.score_mode and ska.get("score_mode") != job.score_mode:
+    if job.precision:
+        meta_precision = ska.get("precision")
+        if meta_precision is None:
+            meta_precision = meta.get("model", {}).get("precision")
+        if meta_precision is not None and meta_precision != job.precision:
+            return False
+    if job.score_mode and "score_mode" in ska and ska.get("score_mode") != job.score_mode:
         return False
     if job.task == "seq2seq" and job.tokenizer:
         tokenizer = meta.get("tokenizer", {})
