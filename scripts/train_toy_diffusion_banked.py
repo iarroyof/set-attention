@@ -1695,6 +1695,11 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
             f"train loss {train_loss:.4f} | val loss {val_loss_mean:.4f} | val MMD {val_mmd_mean:.4f} | "
             f"Chamfer {val_chamfer_mean:.4f} | 1NN {val_nn1_mean:.3f}"
         )
+        if val_self_bleu is not None:
+            msg += (
+                f" | self-BLEU {val_self_bleu:.4f} | distinct-1 {val_distinct_1:.4f}"
+                f" | distinct-2 {val_distinct_2:.4f}"
+            )
         if args.profile:
             msg += f" | time {prof['time_s']:.2f}s"
             if torch.cuda.is_available():
@@ -1739,11 +1744,12 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 wandb_payload["impl/ska_backend"] = model_cfg.ska_backend
             if model_cfg.ska_score_mode:
                 wandb_payload["impl/ska_score_mode"] = model_cfg.ska_score_mode
-            if val_self_bleu is not None:
-                wandb_payload["val/self_bleu"] = val_self_bleu
-                wandb_payload["val/distinct_1"] = val_distinct_1
-                wandb_payload["val/distinct_2"] = val_distinct_2
-                wandb_payload["val/self_bleu_samples"] = self_bleu_samples
+            wandb_payload["val/self_bleu"] = val_self_bleu if val_self_bleu is not None else "NA"
+            wandb_payload["val/distinct_1"] = val_distinct_1 if val_distinct_1 is not None else "NA"
+            wandb_payload["val/distinct_2"] = val_distinct_2 if val_distinct_2 is not None else "NA"
+            wandb_payload["val/self_bleu_samples"] = (
+                self_bleu_samples if self_bleu_samples is not None else "NA"
+            )
             wandb_payload["train/time_s"] = train_time_s
             wandb_payload["train/time_per_epoch_s"] = train_time_s
             if peak_vram_mib is not None:
