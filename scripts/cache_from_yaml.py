@@ -472,22 +472,24 @@ def _meta_matches(job: CacheJob, meta: dict[str, Any]) -> bool:
         if subset.get("sha256") != job.subset_sig.get("sha256"):
             return False
     seq = meta.get("sequence", {})
+    def _norm_int(value: Optional[int]) -> int:
+        return -1 if value is None else int(value)
     if job.task in ("lm", "textdiff"):
-        if int(seq.get("seq_len", -1)) != int(job.seq_len or -1):
+        if int(seq.get("seq_len", -1)) != _norm_int(job.seq_len):
             return False
-        if int(seq.get("stride", -1)) != int(job.seq_stride or -1):
+        if int(seq.get("stride", -1)) != _norm_int(job.seq_stride):
             return False
     if job.task == "seq2seq":
-        if int(seq.get("max_len", -1)) != int(job.max_len or -1):
+        if int(seq.get("max_len", -1)) != _norm_int(job.max_len):
             return False
     ska = meta.get("ska", {})
-    if int(ska.get("window", -1)) != int(job.window or -1):
+    if int(ska.get("window", -1)) != _norm_int(job.window):
         return False
-    if int(ska.get("stride", -1)) != int(job.bank_stride or -1):
+    if int(ska.get("stride", -1)) != _norm_int(job.bank_stride):
         return False
-    if int(ska.get("minhash_k", -1)) != int(job.minhash_k or -1):
+    if int(ska.get("minhash_k", -1)) != _norm_int(job.minhash_k):
         return False
-    if int(ska.get("router_topk", -1)) != int(job.router_topk or -1):
+    if int(ska.get("router_topk", -1)) != _norm_int(job.router_topk):
         return False
     if job.ska_backend and "backend" in ska and ska.get("backend") != job.ska_backend:
         return False
