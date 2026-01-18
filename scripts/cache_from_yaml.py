@@ -181,6 +181,7 @@ def main() -> int:
     ap.add_argument("--cache-mode", choices=["none", "tokens", "full"], default=None)
     ap.add_argument("--artifact-cache-root", type=str, default="")
     ap.add_argument("--overwrite-cache", action="store_true")
+    ap.add_argument("--cache-device", type=str, default="cpu", help="Device for cache builds (cpu/cuda).")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--verify-only", action="store_true", help="Only verify caches; do not build missing.")
     ap.add_argument("--prefetch", action="store_true", help="Run HF dataset prefetch when cache is missing.")
@@ -355,7 +356,7 @@ def main() -> int:
         status = "HIT" if hit_root else "MISS"
 
         if status == "MISS" and not args.verify_only:
-            cmd = _build_cache_cmd(job, args.artifact_cache_root, args.overwrite_cache)
+            cmd = _build_cache_cmd(job, args.artifact_cache_root, args.overwrite_cache, args.cache_device)
             rc = _run(cmd, args.dry_run)
             if rc != 0:
                 status = "ERROR"
@@ -503,7 +504,7 @@ def _meta_matches(job: CacheJob, meta: dict[str, Any]) -> bool:
     return True
 
 
-def _build_cache_cmd(job: CacheJob, artifact_cache_root: str, overwrite_cache: bool) -> list[str]:
+def _build_cache_cmd(job: CacheJob, artifact_cache_root: str, overwrite_cache: bool, cache_device: str) -> list[str]:
     cache_script = "scripts/cache_ska_artifacts.py" if job.cache_mode == "full" else "scripts/cache_tokens.py"
     cmd = [sys.executable, cache_script, "--task", job.task]
 
@@ -575,6 +576,8 @@ def _build_cache_cmd(job: CacheJob, artifact_cache_root: str, overwrite_cache: b
         cmd += ["--ska-backend", job.ska_backend]
     if job.cache_mode == "full":
         cmd += ["--model-type", "ska"]
+    if cache_device:
+        cmd += ["--device", cache_device]
     if artifact_cache_root:
         cmd += ["--artifact-cache-root", artifact_cache_root]
     if overwrite_cache:
