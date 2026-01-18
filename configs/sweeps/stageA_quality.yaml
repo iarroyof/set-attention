@@ -21,7 +21,7 @@ parameters:
   production:
     value: true
   wandb-project:
-    value: set-attention-paper
+    value: set-attention-stageA
 
   # ============================================
   # SWEEP AXES (Full Factorial)
@@ -80,7 +80,7 @@ parameters:
   seq-precision:
     value: fp32
   seq-batch:
-    value: 32
+    value: 8
   seq-max-len:
     value: 256
   seq-tokenizer-type:
@@ -105,7 +105,7 @@ parameters:
   textdiff-precision:
     value: fp32
   textdiff-batch:
-    value: 64
+    value: 8
   textdiff-seq-len:
     value: 256
   textdiff-stride:
@@ -126,7 +126,7 @@ parameters:
   vit-precision:
     value: fp32
   vit-batch:
-    value: 16
+    value: 8
   vit-subset-path:
     value: subsets/cifar10_train_10pct.json
   # SKA hyperparameters

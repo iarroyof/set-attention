@@ -18,11 +18,13 @@ parameters:
   cache-mode:
     value: full
   stageb-mode:
-    value: benchmark
+    value: train  # Not just benchmark
+  epochs:
+     value: 3
   production:
     value: true
   wandb-project:
-    value: set-attention-paper
+    value: set-attention-stageB
   # Reduced logging frequency for efficiency benchmarks
   grad-log-interval:
     value: 10
@@ -63,7 +65,7 @@ parameters:
     value: fp16
   # REDUCED batch size to push sequence lengths higher before OOM
   lm-batch:
-    value: 4
+    value: 8
   # AGGRESSIVE length sweep: baseline will OOM around 2048-4096
   lm-lengths:
     values: [512, 1024, 2048, 4096, 8192]
@@ -90,7 +92,7 @@ parameters:
   seq-precision:
     value: fp16
   seq-batch:
-    value: 16
+    value: 4
   seq-lengths:
     values: [128, 256, 512, 1024]
   seq-max-len:
@@ -117,7 +119,7 @@ parameters:
     value: fp16
   # REDUCED batch size for longer sequences
   textdiff-batch:
-    value: 32
+    value: 8
   # Scaling sweep for diffusion
   textdiff-lengths:
     values: [256, 512, 1024, 2048]
@@ -142,7 +144,7 @@ parameters:
   vit-precision:
     value: fp16
   vit-batch:
-    values: [128]
+    value: 128
   vit-subset-path:
     value: subsets/cifar10_train_10pct.json
   vit-window:
