@@ -1571,7 +1571,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             num_heads=args.nhead,
             tau=1.0,
             gamma=ska_gamma,
-            beta=1.0,
+            beta=1.0 / args.d_model,
             score_mode=ska_score_mode,
             eta=1.0,
             backend=args.ska_backend,

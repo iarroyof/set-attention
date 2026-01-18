@@ -1,152 +1,155 @@
+# =============================================================================
+# Stage B: Scaling Analysis (Memory & Throughput)
+# =============================================================================
+# Purpose: Demonstrate O(n²) baseline vs O(n) SKA memory scaling
+# Expected runs: 2 W&B runs (internal iteration over lengths)
+# Estimated time: ~2-4 hours on 2× RTX-4090
+# Key insight: Baseline will OOM at ~2048-4096 tokens, SKA continues to 8192+
+# =============================================================================
+
 program: scripts/run_stageB_sweeps.py
+
 parameters:
-  # Output directory for benchmark CSVs.
+  # ============================================
+  # Output & Logging
+  # ============================================
   output-dir:
     value: out/production/stageB
-  # Cache mode: none | tokens | full (tokens + bank/routing).
   cache-mode:
     value: full
-  # Stage B mode: benchmark (throughput) or train (full training).
   stageb-mode:
     value: benchmark
-  # Task selection (default: scaling-focused tasks).
-  tasks:
-    value: [lm, textdiff]
-  # Enforce W&B logging for production runs.
   production:
     value: true
-  # W&B project name.
   wandb-project:
     value: set-attention-paper
-  # Log grad norms every N steps (0=disable).
+  # Reduced logging frequency for efficiency benchmarks
   grad-log-interval:
     value: 10
-  # Model type: baseline or ska.
+
+  # ============================================
+  # Task Selection (Scaling-relevant tasks only)
+  # ============================================
+  # ViT excluded: CIFAR-10 is fixed 32×32, no sequence length scaling
+  # Seq2Seq excluded: encoder+decoder complicates memory analysis
+  tasks:
+    value: [lm, textdiff]
+
+  # ============================================
+  # SWEEP AXIS: Model Type
+  # ============================================
   model-type:
     values: [baseline, ska]
-  # Baseline attention implementation.
+
+  # ============================================
+  # Fixed Model Settings
+  # ============================================
   baseline-impl:
     value: explicit
-  # SKA backend implementation.
   ska-backend:
     value: python
-  # SKA score mode (kernel).
+  # Fixed to best kernel from Stage A (or delta_plus_dot as default)
   ska-score-mode:
     value: delta_plus_dot
-  # LM dataset identifier.
+
+  # ============================================
+  # LM (WikiText-103) - Aggressive Scaling Sweep
+  # ============================================
   lm-dataset:
     value: wikitext103
-  # LM train subset indices JSON (train-only).
   lm-subset-path:
     value: subsets/wikitext103_train_10pct.json
-  # LM compute precision.
   lm-precision:
     value: fp16
-  # LM batch size (sequences per step).
+  # REDUCED batch size to push sequence lengths higher before OOM
   lm-batch:
-    value: 8
-  # LM length sweep (tokens per sequence).
+    value: 4
+  # AGGRESSIVE length sweep: baseline will OOM around 2048-4096
   lm-lengths:
-    values: [256, 512, 1024]
-  # LM sequence stride (0 = same as seq-len).
+    values: [512, 1024, 2048, 4096, 8192]
   lm-seq-stride:
     value: 0
-  # LM SKA window length (tokens per set).
+  # SKA hyperparameters
   lm-window:
     value: 64
-  # LM SKA bank stride (tokens between windows).
   lm-stride:
     value: 32
-  # LM SKA minhash signature size.
   lm-minhash-k:
     value: 128
-  # LM SKA router top-k sets.
   lm-router-topk:
     value: 4
-  # Seq2Seq dataset identifier.
+
+  # ============================================
+  # Seq2Seq (WMT16 EN-RO) - Not run in this sweep
+  # ============================================
+  # Keeping config for completeness; not executed due to tasks=[lm, textdiff]
   seq-dataset:
     value: wmt16_en_ro
-  # Seq2Seq train subset indices JSON (train-only).
   seq-subset-path:
     value: subsets/wmt16_en_ro_train_10pct.json
-  # Seq2Seq compute precision.
   seq-precision:
     value: fp16
-  # Seq2Seq batch size (sentence pairs per step).
   seq-batch:
     value: 16
-  # Seq2Seq length sweep (max token length).
   seq-lengths:
-    values: [256]
-  # Seq2Seq max token length (src/tgt truncation length).
+    values: [128, 256, 512, 1024]
   seq-max-len:
     value: 256
-  # Seq2Seq tokenizer type (whitespace or ausa).
   seq-tokenizer-type:
     value: whitespace
-  # Seq2Seq SKA window length (tokens per set).
   seq-window:
     value: 64
-  # Seq2Seq SKA bank stride (tokens between windows).
   seq-stride:
     value: 32
-  # Seq2Seq SKA minhash signature size.
   seq-minhash-k:
     value: 128
-  # Seq2Seq SKA router top-k sets.
   seq-router-topk:
     value: 4
-  # TextDiff dataset identifier.
+
+  # ============================================
+  # TextDiff (WikiText-103) - Scaling Sweep
+  # ============================================
   textdiff-dataset:
     value: wikitext103
-  # TextDiff train subset indices JSON (train-only).
   textdiff-subset-path:
     value: subsets/wikitext103_train_10pct.json
-  # TextDiff compute precision.
   textdiff-precision:
     value: fp16
-  # TextDiff batch size (sequences per step).
+  # REDUCED batch size for longer sequences
   textdiff-batch:
-    value: 64
-  # TextDiff length sweep (tokens per sequence).
+    value: 32
+  # Scaling sweep for diffusion
   textdiff-lengths:
-    values: [256]
-  # TextDiff sequence length (tokens per sequence).
+    values: [256, 512, 1024, 2048]
   textdiff-seq-len:
     value: 256
-  # TextDiff sequence stride (tokens between sequences).
   textdiff-stride:
     value: 256
-  # TextDiff SKA window length (tokens per set).
+  # SKA hyperparameters
   textdiff-window:
     value: 64
-  # TextDiff SKA bank stride (tokens between windows).
   textdiff-bank-stride:
     value: 32
-  # TextDiff SKA minhash signature size.
   textdiff-minhash-k:
     value: 128
-  # TextDiff SKA router top-k sets.
   textdiff-router-topk:
     value: 4
-  # ViT compute precision.
+
+  # ============================================
+  # ViT (CIFAR-10) - Not run in this sweep
+  # ============================================
+  # Keeping config for completeness; not executed due to tasks=[lm, textdiff]
   vit-precision:
     value: fp16
-  # ViT batch size (images per step).
   vit-batch:
-    value: 128
-  # ViT SKA window length (patch tokens per set).
-  vit-window:
-    value: 8
-  # ViT SKA bank stride (patch tokens between windows).
-  vit-stride:
-    value: 4
-  # ViT SKA minhash signature size.
-  vit-minhash-k:
-    value: 64
-  # ViT SKA router top-k sets.
-  vit-router-topk:
-    value: 0
-  # ViT train subset indices JSON (train-only).
+    values: [128]
   vit-subset-path:
     value: subsets/cifar10_train_10pct.json
+  vit-window:
+    value: 8
+  vit-stride:
+    value: 4
+  vit-minhash-k:
+    value: 64
+  vit-router-topk:
+    value: 0

@@ -595,7 +595,7 @@ class BankedDenoiser(nn.Module):
                 num_heads=nhead,
                 tau=1.0,
                 gamma=ska_gamma,
-                beta=1.0,
+                beta=1.0 / d_model,
                 score_mode=ska_score_mode,
                 eta=1.0,
                 backend=ska_backend,

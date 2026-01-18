@@ -974,8 +974,9 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         )
 
     attn_baseline = "explicit" if (is_baseline and model_cfg.baseline_impl == "explicit") else "pytorch"
+    vit_dim = 128
     backbone = TinyViTBackbone(
-        dim=128,
+        dim=vit_dim,
         depth=4,
         heads=args.heads,
         patch=args.patch,
@@ -985,18 +986,18 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     if not is_baseline:
         ska_gamma = 0.0 if args.ska_score_mode == "dot" else 0.3
         set_attn = SetBankAttention(
-            d_model=128,
+            d_model=vit_dim,
             num_heads=args.heads,
             tau=1.0,
             gamma=ska_gamma,
-            beta=1.0,
+            beta=1.0 / vit_dim,
             score_mode=args.ska_score_mode,
             eta=1.0,
             backend=args.ska_backend,
             precision=args.precision,
         ).to(device)
-        router = TokenSetRouter(d_model=128, num_heads=args.heads, topk=args.router_topk).to(device)
-    head = nn.Linear(128, 10).to(device)
+        router = TokenSetRouter(d_model=vit_dim, num_heads=args.heads, topk=args.router_topk).to(device)
+    head = nn.Linear(vit_dim, 10).to(device)
     component_named_params = list(
         iter_named_parameters(
             {

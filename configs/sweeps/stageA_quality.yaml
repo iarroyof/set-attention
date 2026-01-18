@@ -1,140 +1,140 @@
+# =============================================================================
+# Stage A: Quality Comparison (Full Kernel Ablation)
+# =============================================================================
+# Purpose: Compare baseline vs SKA quality across all score modes
+# Expected runs: 20 W&B runs (12 unique configs after baseline dedup)
+# Estimated time: ~6-8 hours on 2× RTX-4090
+# =============================================================================
+
 program: scripts/run_stageA_sweeps.py
+
 parameters:
-  # Output directory for metrics CSVs.
+  # ============================================
+  # Output & Logging
+  # ============================================
   output-dir:
     value: out/production/stageA
-  # Cache mode: none | tokens | full (tokens + bank/routing).
   cache-mode:
     value: full
-  # Training epochs (Stage A quality run).
   epochs:
-    value: 5
-  # Enforce W&B logging for production runs.
+    value: 15
   production:
     value: true
-  # W&B project name.
   wandb-project:
-    value: set-attention-smoke
-  # Model type: baseline or ska.
+    value: set-attention-paper
+
+  # ============================================
+  # SWEEP AXES (Full Factorial)
+  # ============================================
+  
+  # Core comparison: baseline vs SKA
   model-type:
     values: [baseline, ska]
-  # Baseline attention implementation.
+  
+  # Kernel ablation: all 5 score modes
+  # NOTE: baseline runs ignore this (creates redundant runs, dedupe in analysis)
+  ska-score-mode:
+    values: [dot, delta_rbf, delta_plus_dot, intersect_norm, intersect_plus_dot]
+
+  # ============================================
+  # Fixed Model Settings
+  # ============================================
   baseline-impl:
     value: explicit
-  # SKA backend implementation.
   ska-backend:
     value: python
-  # SKA score mode (kernel).
-  ska-score-mode:
-    value: delta_plus_dot
-  # LM dataset identifier.
+
+  # ============================================
+  # LM (WikiText-103) - Quality Focus
+  # ============================================
   lm-dataset:
     value: wikitext103
-  # LM train subset indices JSON (train-only).
   lm-subset-path:
     value: subsets/wikitext103_train_10pct.json
-  # LM compute precision.
   lm-precision:
     value: fp32
-  # LM batch size (sequences per step).
   lm-batch:
     value: 8
-  # LM sequence length (tokens per sequence).
+  # Sweep sequence length for richer quality data
   lm-seq-len:
-    values: [256, 512]
-  # LM sequence stride (0 = same as seq-len).
+    value: 256
   lm-seq-stride:
     value: 0
-  # LM SKA window length (tokens per set).
+  # SKA hyperparameters (fixed - not ablating these in Stage A)
   lm-window:
     value: 64
-  # LM SKA bank stride (tokens between windows).
   lm-stride:
     value: 32
-  # LM SKA minhash signature size.
   lm-minhash-k:
     value: 128
-  # LM SKA router top-k sets.
   lm-router-topk:
     value: 4
-  # Seq2Seq dataset identifier.
+
+  # ============================================
+  # Seq2Seq (WMT16 EN-RO) - Quality Focus
+  # ============================================
   seq-dataset:
     value: wmt16_en_ro
-  # Seq2Seq train subset indices JSON (train-only).
   seq-subset-path:
     value: subsets/wmt16_en_ro_train_10pct.json
-  # Seq2Seq compute precision.
   seq-precision:
     value: fp32
-  # Seq2Seq batch size (sentence pairs per step).
   seq-batch:
     value: 32
-  # Seq2Seq max token length (src/tgt truncation length).
   seq-max-len:
     value: 256
-  # Seq2Seq tokenizer type (whitespace or ausa).
   seq-tokenizer-type:
     value: whitespace
-  # Seq2Seq SKA window length (tokens per set).
+  # SKA hyperparameters
   seq-window:
     value: 64
-  # Seq2Seq SKA bank stride (tokens between windows).
   seq-stride:
     value: 32
-  # Seq2Seq SKA minhash signature size.
   seq-minhash-k:
     value: 128
-  # Seq2Seq SKA router top-k sets.
   seq-router-topk:
     value: 4
-  # TextDiff dataset identifier.
+
+  # ============================================
+  # TextDiff (WikiText-103) - Quality Focus
+  # ============================================
   textdiff-dataset:
     value: wikitext103
-  # TextDiff train subset indices JSON (train-only).
   textdiff-subset-path:
     value: subsets/wikitext103_train_10pct.json
-  # TextDiff compute precision.
   textdiff-precision:
     value: fp32
-  # TextDiff batch size (sequences per step).
   textdiff-batch:
     value: 64
-  # TextDiff sequence length (tokens per sequence).
   textdiff-seq-len:
     value: 256
-  # TextDiff sequence stride (tokens between sequences).
   textdiff-stride:
     value: 256
-  # TextDiff SKA window length (tokens per set).
+  # SKA hyperparameters
   textdiff-window:
     value: 64
-  # TextDiff SKA bank stride (tokens between windows).
   textdiff-bank-stride:
     value: 32
-  # TextDiff SKA minhash signature size.
   textdiff-minhash-k:
     value: 128
-  # TextDiff SKA router top-k sets.
   textdiff-router-topk:
     value: 4
-  # ViT compute precision.
+
+  # ============================================
+  # ViT (CIFAR-10) - Quality Focus
+  # ============================================
   vit-precision:
     value: fp32
-  # ViT batch size (images per step).
   vit-batch:
-    value: 128
-  # ViT SKA window length (patch tokens per set).
-  vit-window:
-    value: 8
-  # ViT SKA bank stride (patch tokens between windows).
-  vit-stride:
-    value: 4
-  # ViT SKA minhash signature size.
-  vit-minhash-k:
-    value: 64
-  # ViT SKA router top-k sets.
-  vit-router-topk:
-    value: 0
-  # ViT train subset indices JSON (train-only).
+    value: 16
   vit-subset-path:
     value: subsets/cifar10_train_10pct.json
+  # SKA hyperparameters
+  vit-window:
+    value: 8
+  vit-stride:
+    value: 4
+  vit-minhash-k:
+    value: 64
+  vit-router-topk:
+    value: 0
