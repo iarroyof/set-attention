@@ -69,7 +69,11 @@ def _append_benchmark_row(csv_path: str, row: dict) -> None:
             row.setdefault("sequences_per_s", "NA")
 
     def _sanitize(value: object) -> object:
-        return "NA" if value is None else value
+        if value is None:
+            return "NA"
+        if isinstance(value, float) and math.isnan(value):
+            return "NA"
+        return value
 
     path = Path(csv_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,6 +142,8 @@ def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = Non
         return
     payload: dict[str, object] = {}
     for key, value in row.items():
+        if value is None or (isinstance(value, float) and math.isnan(value)):
+            value = "NA"
         if isinstance(value, (list, tuple, dict)):
             payload[f"{prefix}/{key}"] = json.dumps(value, sort_keys=True)
         else:
@@ -787,6 +793,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     router_val = args.router_topk if not is_baseline else "NA"
     wandb_config = {
         "script": "train_tiny_vit_banked",
+        "task": "vit",
         "dataset": args.data_mode,
         "dataset_id": args.data_mode,
         "data_mode": args.data_mode,

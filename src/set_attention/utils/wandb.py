@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 from typing import Any, Dict, Optional, Sequence
 
 
@@ -15,15 +16,28 @@ class WandbSession:
     def log(self, data: Dict[str, Any], step: Optional[int] = None) -> None:
         if self._run is None:
             return
+        sanitized = {}
+        for key, value in data.items():
+            if value is None:
+                sanitized[key] = "NA"
+            elif isinstance(value, float) and math.isnan(value):
+                sanitized[key] = "NA"
+            else:
+                sanitized[key] = value
         if step is not None:
-            self._run.log(data, step=step)
+            self._run.log(sanitized, step=step)
         else:
-            self._run.log(data)
+            self._run.log(sanitized)
 
     def set_summary(self, key: str, value: Any) -> None:
         if self._run is None:
             return
-        self._run.summary[key] = value
+        if value is None:
+            self._run.summary[key] = "NA"
+        elif isinstance(value, float) and math.isnan(value):
+            self._run.summary[key] = "NA"
+        else:
+            self._run.summary[key] = value
 
     def finish(self) -> None:
         if self._run is not None:
