@@ -144,6 +144,23 @@ _WANDB_KEYS_PRINTED: set[tuple[str, str]] = set()
 def _log_csv_row_wandb(wandb_run, row: dict, prefix: str, step: int | None = None, summarize: bool = False) -> None:
     if not getattr(wandb_run, "enabled", False):
         return
+    if row.get("model_type") != "ska":
+        for key in ("window", "stride", "minhash_k", "router_topk"):
+            if key in row:
+                row[key] = "NA"
+    if "bench_warmup" in row:
+        task = row.get("task")
+        if task in ("lm", "seq2seq"):
+            row.setdefault("sequences_per_s", "NA")
+            row.setdefault("images_per_s", "NA")
+        elif task in ("textdiff", "diffusion"):
+            row.setdefault("tokens_per_s", "NA")
+            row.setdefault("tokens_total", "NA")
+            row.setdefault("images_per_s", "NA")
+        elif task == "vit":
+            row.setdefault("tokens_per_s", "NA")
+            row.setdefault("tokens_total", "NA")
+            row.setdefault("sequences_per_s", "NA")
     if os.environ.get("SA_PRINT_WANDB_KEYS") == "1":
         key_id = (row.get("script", "unknown"), prefix)
         if key_id not in _WANDB_KEYS_PRINTED:
