@@ -14,7 +14,7 @@ parameters:
     value: true
   # W&B project name.
   wandb-project:
-    value: set-attention-paper
+    value: set-attention-smoke
   # Model type: baseline or ska.
   model-type:
     values: [baseline, ska]
