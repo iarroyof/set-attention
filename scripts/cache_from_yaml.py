@@ -90,7 +90,6 @@ class CacheJob:
             self.task,
             self.dataset,
             self.precision,
-            self.score_mode,
             self.ska_backend,
             self.seq_len,
             self.seq_stride,
@@ -150,8 +149,13 @@ def _normalize_tasks(tasks: Iterable[str]) -> list[str]:
 
 def _add_job(job: CacheJob, jobs: list[CacheJob], seen_any: set[tuple[Any, ...]], seen_full: set[tuple[Any, ...]]) -> None:
     base = job.key_base()
+    existing = next((j for j in jobs if j.key_base() == base), None)
     if job.cache_mode == "full":
         if base in seen_full:
+            if existing and job.score_mode and existing.score_mode != job.score_mode:
+                existing.score_mode = "shared"
+            if existing:
+                existing.sources = sorted(set(existing.sources + job.sources))
             return
         seen_full.add(base)
         if base in seen_any:
@@ -161,6 +165,10 @@ def _add_job(job: CacheJob, jobs: list[CacheJob], seen_any: set[tuple[Any, ...]]
         seen_any.add(base)
         return
     if base in seen_full or base in seen_any:
+        if existing and job.score_mode and existing.score_mode != job.score_mode:
+            existing.score_mode = "shared"
+        if existing:
+            existing.sources = sorted(set(existing.sources + job.sources))
         return
     jobs.append(job)
     seen_any.add(base)
@@ -202,6 +210,8 @@ def main() -> int:
         score_modes = _as_list(_param_value(params, "ska-score-mode"))
         if not score_modes:
             score_modes = [None]
+        elif len(score_modes) > 1:
+            score_modes = ["shared"]
         ska_backend = _param_value(params, "ska-backend")
 
         if args.tasks is not None:
@@ -486,8 +496,6 @@ def _meta_matches(job: CacheJob, meta: dict[str, Any]) -> bool:
             meta_precision = meta.get("model", {}).get("precision")
         if meta_precision is not None and meta_precision != job.precision:
             return False
-    if job.score_mode and "score_mode" in ska and ska.get("score_mode") != job.score_mode:
-        return False
     if job.task == "seq2seq" and job.tokenizer:
         tokenizer = meta.get("tokenizer", {})
         if tokenizer.get("type") != job.tokenizer:
@@ -565,8 +573,8 @@ def _build_cache_cmd(job: CacheJob, artifact_cache_root: str, overwrite_cache: b
 
     if job.ska_backend:
         cmd += ["--ska-backend", job.ska_backend]
-    if job.score_mode:
-        cmd += ["--ska-score-mode", job.score_mode, "--model-type", "ska"]
+    if job.cache_mode == "full":
+        cmd += ["--model-type", "ska"]
     if artifact_cache_root:
         cmd += ["--artifact-cache-root", artifact_cache_root]
     if overwrite_cache:

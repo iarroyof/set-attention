@@ -364,7 +364,6 @@ def _lm_token_spec(args, dataset_id: str, subset_sig: Optional[dict]) -> dict:
             "router_topk": int(args.router_topk),
             "backend": args.ska_backend,
             "precision": args.precision,
-            "score_mode": args.ska_score_mode,
         },
         model={
             "d_model": int(args.d_model),
@@ -401,7 +400,6 @@ def _lm_bank_spec(args, dataset_id: str, subset_sig: Optional[dict], tokens_fp: 
             "router_topk": int(args.router_topk),
             "backend": args.ska_backend,
             "precision": args.precision,
-            "score_mode": args.ska_score_mode,
         },
         model={
             "d_model": int(args.d_model),

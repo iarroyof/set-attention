@@ -277,7 +277,6 @@ def _seq_token_spec(args, dataset_id: str, data_sig: Optional[dict], max_len: in
             "router_topk": int(args.router_topk),
             "backend": args.ska_backend,
             "precision": args.precision,
-            "score_mode": args.ska_score_mode,
         },
         model={
             "d_model": int(args.atom_dim),
@@ -309,7 +308,6 @@ def _seq_bank_spec(args, dataset_id: str, data_sig: Optional[dict], max_len: int
             "router_topk": int(args.router_topk),
             "backend": args.ska_backend,
             "precision": args.precision,
-            "score_mode": args.ska_score_mode,
         },
         model={
             "d_model": int(args.atom_dim),

@@ -197,7 +197,6 @@ def _text_token_spec(args) -> dict:
             "minhash_k": int(args.minhash_k),
             "router_topk": int(args.router_topk),
             "backend": args.ska_backend,
-            "score_mode": args.ska_score_mode,
             "precision": args.precision,
         },
         model={
@@ -225,7 +224,6 @@ def _text_bank_spec(args, tokens_fp: str) -> dict:
             "minhash_k": int(args.minhash_k),
             "router_topk": int(args.router_topk),
             "backend": args.ska_backend,
-            "score_mode": args.ska_score_mode,
             "precision": args.precision,
         },
         model={
