@@ -595,10 +595,6 @@ def main() -> int:
                             router_topk=int(router_topk),
                             tokenizer=str(tokenizer),
                             sources=[yaml_path.name],
-                            # Model defaults for Seq2Seq
-                            d_model=128,
-                            nhead=4,
-                            layers=3,  # enc_layers/dec_layers
                         )
                         _add_job(job, jobs, seen_any, seen_full)
             elif task == "textdiff":
@@ -632,10 +628,6 @@ def main() -> int:
                             minhash_k=int(minhash_k),
                             router_topk=int(router_topk),
                             sources=[yaml_path.name],
-                            # Model defaults for TextDiff
-                            d_model=64,  # TextDiff uses 64
-                            nhead=4,
-                            layers=4,
                         )
                         _add_job(job, jobs, seen_any, seen_full)
 
