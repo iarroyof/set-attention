@@ -128,7 +128,7 @@ parameters:
   vit-batch:
     value: 8
   vit-subset-path:
-    value: subsets/cifar10_train_10pct.json
+    value: ""
   # SKA hyperparameters
   vit-window:
     value: 8
