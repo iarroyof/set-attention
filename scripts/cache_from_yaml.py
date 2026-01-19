@@ -131,6 +131,38 @@ class CacheJob:
         self.dataset_lines = dataset_lines
         self.hf_tokenizer_name = hf_tokenizer_name
         self.adapter_rank = adapter_rank
+        # TextDiff-specific defaults
+        self.text_train_line_limit = None
+        self.text_val_line_limit = None
+        self.text_train_limit = None
+        self.text_val_limit = None
+        self.text_embed_seed = 1337
+        # Seq2Seq-specific defaults
+        self.limit = None
+        self.val_limit = None
+
+    def _build_textdiff_data_signature(self) -> dict:
+        """Build subset signature matching _text_data_signature in train_toy_diffusion_banked.py"""
+        return {
+            "dataset": self.dataset,
+            "train_line_limit": self.text_train_line_limit,
+            "val_line_limit": self.text_val_line_limit,
+            "train_seq_limit": self.text_train_limit,
+            "val_seq_limit": self.text_val_limit,
+            "subset": self.subset_sig,
+            "embed_seed": self.text_embed_seed,
+            "seq_len": int(self.seq_len),
+            "stride": int(self.seq_stride),
+        }
+
+    def _build_seq2seq_data_signature(self) -> dict:
+        """Build subset signature matching _seq_data_signature in train_seq2seq_text_banked.py"""
+        return {
+            "dataset": self.dataset,
+            "limit": self.limit,
+            "val_limit": self.val_limit,
+            "subset": self.subset_sig,
+        }
 
     def key_base(self) -> tuple[Any, ...]:
         return (
@@ -192,7 +224,7 @@ class CacheJob:
                 task="textdiff",
                 dataset_id=self.dataset,
                 split="train+val",
-                subset=self.subset_sig,
+                subset=self._build_textdiff_data_signature(),
                 tokenizer={
                     "type": "whitespace",
                     "special_tokens": TEXTDIFF_SPECIAL_TOKENS,
@@ -223,7 +255,7 @@ class CacheJob:
                 task="seq2seq",
                 dataset_id=self.dataset,
                 split="train+val",
-                subset=self.subset_sig,
+                subset=self._build_seq2seq_data_signature(),
                 tokenizer={
                     "type": self.tokenizer,
                     "special_tokens": SEQ2SEQ_SPECIAL_TOKENS,
@@ -294,7 +326,7 @@ class CacheJob:
                 task="textdiff",
                 dataset_id=self.dataset,
                 split="train+val",
-                subset=self.subset_sig,
+                subset=self._build_textdiff_data_signature(),
                 tokenizer={
                     "type": "whitespace",
                     "special_tokens": TEXTDIFF_SPECIAL_TOKENS,
@@ -322,15 +354,14 @@ class CacheJob:
             ).to_dict()
         elif self.task == "seq2seq":
             # Match _seq_bank_spec in train_seq2seq_text_banked.py
+            # NOTE: Bank spec tokenizer differs from token spec - no special_tokens or max_len
             return ArtifactSpec(
                 task="seq2seq",
                 dataset_id=self.dataset,
                 split="train+val",
-                subset=self.subset_sig,
+                subset=self._build_seq2seq_data_signature(),
                 tokenizer={
                     "type": self.tokenizer,
-                    "special_tokens": SEQ2SEQ_SPECIAL_TOKENS,
-                    "max_len": int(self.max_len),
                     "tokenizer_config": _default_tokenizer_config(self.tokenizer, int(self.max_len)),
                     "tokens_fp": tokens_fp,
                 },
