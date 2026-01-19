@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Build/verify token + SKA caches for Stage A/B sweeps using sweep YAMLs."""
+"""Build/verify token + SKA caches for Stage A/B sweeps using sweep YAMLs.
+
+FIXED VERSION: Uses fingerprint-based cache lookup to match runtime behavior.
+"""
 from __future__ import annotations
 
 import argparse
@@ -18,7 +21,12 @@ except Exception:  # pragma: no cover - optional dependency
 try:
     from set_attention.data import resolve_data_root
     from set_attention.data.cache import DEFAULT_DATA_ROOT
-    from set_attention.data.artifact_cache import file_signature, resolve_hf_root
+    from set_attention.data.artifact_cache import (
+        file_signature,
+        resolve_hf_root,
+        fingerprint,
+        ArtifactSpec,
+    )
     from set_attention.data.hf_cache import ensure_hf_cache
 except Exception as exc:  # pragma: no cover - handled at runtime
     raise RuntimeError("Run with PYTHONPATH=src so set_attention modules are importable.") from exc
@@ -45,8 +53,32 @@ FULL_REQUIRED = {
 }
 LEGACY_HF_ROOT = DEFAULT_DATA_ROOT / "hf"
 
+# Special tokens must match training scripts exactly
+LM_SPECIAL_TOKENS = ["<pad>", "<s>", "</s>", "<unk>"]
+TEXTDIFF_SPECIAL_TOKENS = ["<pad>", "<s>", "</s>", "<unk>"]
+SEQ2SEQ_SPECIAL_TOKENS = ["<pad>", "<s>", "</s>"]  # Note: no <unk> for seq2seq
+
+# Model defaults per task (must match training scripts)
+MODEL_DEFAULTS = {
+    "lm": {"d_model": 128, "nhead": 4, "layers": 4},
+    "seq2seq": {"d_model": 128, "nhead": 8, "layers": 2},  # atom_dim->d_model, heads->nhead
+    "textdiff": {"d_model": 64, "nhead": 2, "layers": 2},
+}
+
+# Tokenizer types
+WHITESPACE_TOKENIZER_TYPE = "whitespace"
+
+
+def _default_tokenizer_config(kind: str, max_len: int) -> dict:
+    """Match train_seq2seq_text_banked.py tokenizer config."""
+    if kind == WHITESPACE_TOKENIZER_TYPE:
+        return {"lowercase": True, "min_freq": 2, "max_vocab": 200_000, "max_len": max_len}
+    return {}
+
 
 class CacheJob:
+    """Represents a cache build/verify job with all parameters needed for fingerprinting."""
+
     def __init__(
         self,
         *,
@@ -66,6 +98,13 @@ class CacheJob:
         router_topk: Optional[int] = None,
         tokenizer: Optional[str] = None,
         sources: Optional[list[str]] = None,
+        # Model architecture - defaults set per-task in build_token_spec
+        d_model: Optional[int] = None,
+        nhead: Optional[int] = None,
+        layers: Optional[int] = None,
+        dataset_lines: int = 0,
+        hf_tokenizer_name: str = "",
+        adapter_rank: int = 0,
     ) -> None:
         self.task = task
         self.cache_mode = cache_mode
@@ -81,9 +120,17 @@ class CacheJob:
         self.bank_stride = bank_stride
         self.minhash_k = minhash_k
         self.router_topk = router_topk
-        self.tokenizer = tokenizer
+        self.tokenizer = tokenizer or WHITESPACE_TOKENIZER_TYPE
         self.sources = sources or []
         self.subset_sig = file_signature(Path(subset_path)) if subset_path else None
+        # Model architecture - use task-specific defaults if not provided
+        defaults = MODEL_DEFAULTS.get(task, {})
+        self.d_model = d_model if d_model is not None else defaults.get("d_model", 128)
+        self.nhead = nhead if nhead is not None else defaults.get("nhead", 4)
+        self.layers = layers if layers is not None else defaults.get("layers", 4)
+        self.dataset_lines = dataset_lines
+        self.hf_tokenizer_name = hf_tokenizer_name
+        self.adapter_rank = adapter_rank
 
     def key_base(self) -> tuple[Any, ...]:
         return (
@@ -101,6 +148,221 @@ class CacheJob:
             self.tokenizer,
             self.subset_sig["sha256"] if self.subset_sig else None,
         )
+
+    def build_token_spec(self) -> dict:
+        """Build token spec matching training scripts exactly."""
+        routing_depends = bool(self.adapter_rank > 0)
+        
+        if self.task == "lm":
+            # Match _lm_token_spec in train_toy_lm_banked.py
+            return ArtifactSpec(
+                task="lm",
+                dataset_id=self.dataset,
+                split="train+val",
+                subset=self.subset_sig,
+                tokenizer={
+                    "type": "whitespace",
+                    "special_tokens": LM_SPECIAL_TOKENS,
+                    "hf_tokenizer_name": self.hf_tokenizer_name,
+                },
+                sequence={
+                    "seq_len": int(self.seq_len),
+                    "stride": int(self.seq_stride),
+                    "dataset_lines": int(self.dataset_lines),
+                },
+                ska={
+                    "window": int(self.window),
+                    "stride": int(self.bank_stride),
+                    "minhash_k": int(self.minhash_k),
+                    "router_topk": int(self.router_topk),
+                    "backend": self.ska_backend,
+                    "precision": self.precision,
+                },
+                model={
+                    "d_model": int(self.d_model),
+                    "nhead": int(self.nhead),
+                    "layers": int(self.layers),
+                    "precision": self.precision,
+                },
+                routing_depends_on_learned_params=routing_depends,
+            ).to_dict()
+        elif self.task == "textdiff":
+            # Match _text_token_spec in train_toy_diffusion_banked.py
+            return ArtifactSpec(
+                task="textdiff",
+                dataset_id=self.dataset,
+                split="train+val",
+                subset=self.subset_sig,
+                tokenizer={
+                    "type": "whitespace",
+                    "special_tokens": TEXTDIFF_SPECIAL_TOKENS,
+                },
+                sequence={
+                    "seq_len": int(self.seq_len),
+                    "stride": int(self.seq_stride),
+                },
+                ska={
+                    "window": int(self.window),
+                    "stride": int(self.bank_stride),
+                    "minhash_k": int(self.minhash_k),
+                    "router_topk": int(self.router_topk),
+                    "backend": self.ska_backend,
+                    "precision": self.precision,
+                },
+                model={
+                    "d_model": int(self.d_model),
+                    "nhead": int(self.nhead),
+                    "layers": int(self.layers),
+                    "precision": self.precision,
+                },
+                routing_depends_on_learned_params=routing_depends,
+            ).to_dict()
+        elif self.task == "seq2seq":
+            # Match _seq_token_spec in train_seq2seq_text_banked.py
+            return ArtifactSpec(
+                task="seq2seq",
+                dataset_id=self.dataset,
+                split="train+val",
+                subset=self.subset_sig,
+                tokenizer={
+                    "type": self.tokenizer,
+                    "special_tokens": SEQ2SEQ_SPECIAL_TOKENS,
+                    "max_len": int(self.max_len),
+                    "tokenizer_config": _default_tokenizer_config(self.tokenizer, int(self.max_len)),
+                },
+                sequence={"max_len": int(self.max_len)},
+                ska={
+                    "window": int(self.window),
+                    "stride": int(self.bank_stride),
+                    "minhash_k": int(self.minhash_k),
+                    "router_topk": int(self.router_topk),
+                    "backend": self.ska_backend,
+                    "precision": self.precision,
+                },
+                model={
+                    "d_model": int(self.d_model),
+                    "heads": int(self.nhead),  # seq2seq uses "heads" not "nhead"
+                    "layers": int(self.layers),
+                    "precision": self.precision,
+                },
+                routing_depends_on_learned_params=routing_depends,
+            ).to_dict()
+        else:
+            raise ValueError(f"Unknown task for spec building: {self.task}")
+
+    def build_bank_spec(self, tokens_fp: str) -> dict:
+        """Build bank spec matching training scripts exactly."""
+        routing_depends = bool(self.adapter_rank > 0)
+        
+        if self.task == "lm":
+            # Match _lm_bank_spec in train_toy_lm_banked.py
+            return ArtifactSpec(
+                task="lm",
+                dataset_id=self.dataset,
+                split="train+val",
+                subset=self.subset_sig,
+                tokenizer={
+                    "type": "whitespace",
+                    "special_tokens": LM_SPECIAL_TOKENS,
+                    "hf_tokenizer_name": self.hf_tokenizer_name,
+                    "tokens_fp": tokens_fp,
+                },
+                sequence={
+                    "seq_len": int(self.seq_len),
+                    "stride": int(self.seq_stride),
+                    "dataset_lines": int(self.dataset_lines),
+                },
+                ska={
+                    "window": int(self.window),
+                    "stride": int(self.bank_stride),
+                    "minhash_k": int(self.minhash_k),
+                    "router_topk": int(self.router_topk),
+                    "backend": self.ska_backend,
+                    "precision": self.precision,
+                },
+                model={
+                    "d_model": int(self.d_model),
+                    "nhead": int(self.nhead),
+                    "layers": int(self.layers),
+                    "precision": self.precision,
+                },
+                routing_depends_on_learned_params=routing_depends,
+            ).to_dict()
+        elif self.task == "textdiff":
+            # Match _text_bank_spec in train_toy_diffusion_banked.py
+            return ArtifactSpec(
+                task="textdiff",
+                dataset_id=self.dataset,
+                split="train+val",
+                subset=self.subset_sig,
+                tokenizer={
+                    "type": "whitespace",
+                    "special_tokens": TEXTDIFF_SPECIAL_TOKENS,
+                    "tokens_fp": tokens_fp,
+                },
+                sequence={
+                    "seq_len": int(self.seq_len),
+                    "stride": int(self.seq_stride),
+                },
+                ska={
+                    "window": int(self.window),
+                    "stride": int(self.bank_stride),
+                    "minhash_k": int(self.minhash_k),
+                    "router_topk": int(self.router_topk),
+                    "backend": self.ska_backend,
+                    "precision": self.precision,
+                },
+                model={
+                    "d_model": int(self.d_model),
+                    "nhead": int(self.nhead),
+                    "layers": int(self.layers),
+                    "precision": self.precision,
+                },
+                routing_depends_on_learned_params=routing_depends,
+            ).to_dict()
+        elif self.task == "seq2seq":
+            # Match _seq_bank_spec in train_seq2seq_text_banked.py
+            return ArtifactSpec(
+                task="seq2seq",
+                dataset_id=self.dataset,
+                split="train+val",
+                subset=self.subset_sig,
+                tokenizer={
+                    "type": self.tokenizer,
+                    "special_tokens": SEQ2SEQ_SPECIAL_TOKENS,
+                    "max_len": int(self.max_len),
+                    "tokenizer_config": _default_tokenizer_config(self.tokenizer, int(self.max_len)),
+                    "tokens_fp": tokens_fp,
+                },
+                sequence={"max_len": int(self.max_len)},
+                ska={
+                    "window": int(self.window),
+                    "stride": int(self.bank_stride),
+                    "minhash_k": int(self.minhash_k),
+                    "router_topk": int(self.router_topk),
+                    "backend": self.ska_backend,
+                    "precision": self.precision,
+                },
+                model={
+                    "d_model": int(self.d_model),
+                    "heads": int(self.nhead),
+                    "layers": int(self.layers),
+                    "precision": self.precision,
+                },
+                routing_depends_on_learned_params=routing_depends,
+            ).to_dict()
+        else:
+            raise ValueError(f"Unknown task for spec building: {self.task}")
+
+    def get_expected_fingerprints(self) -> tuple[str, Optional[str]]:
+        """Get expected token and bank fingerprints."""
+        token_spec = self.build_token_spec()
+        token_fp = fingerprint(token_spec)
+        if self.cache_mode == "tokens":
+            return token_fp, None
+        bank_spec = self.build_bank_spec(token_fp)
+        bank_fp = fingerprint(bank_spec)
+        return token_fp, bank_fp
 
 
 def _param_value(params: dict[str, Any], key: str) -> Any:
@@ -264,6 +526,12 @@ def main() -> int:
                             minhash_k=int(minhash_k),
                             router_topk=int(router_topk),
                             sources=[yaml_path.name],
+                            # Model defaults for LM
+                            d_model=128,
+                            nhead=4,
+                            layers=4,
+                            dataset_lines=0,
+                            hf_tokenizer_name="",
                         )
                         _add_job(job, jobs, seen_any, seen_full)
             elif task == "seq2seq":
@@ -296,6 +564,10 @@ def main() -> int:
                             router_topk=int(router_topk),
                             tokenizer=str(tokenizer),
                             sources=[yaml_path.name],
+                            # Model defaults for Seq2Seq
+                            d_model=128,
+                            nhead=4,
+                            layers=3,  # enc_layers/dec_layers
                         )
                         _add_job(job, jobs, seen_any, seen_full)
             elif task == "textdiff":
@@ -329,6 +601,10 @@ def main() -> int:
                             minhash_k=int(minhash_k),
                             router_topk=int(router_topk),
                             sources=[yaml_path.name],
+                            # Model defaults for TextDiff
+                            d_model=64,  # TextDiff uses 64
+                            nhead=4,
+                            layers=4,
                         )
                         _add_job(job, jobs, seen_any, seen_full)
 
@@ -352,7 +628,7 @@ def main() -> int:
         print(f"[cache_yaml] Using legacy artifact root: {LEGACY_HF_ROOT}")
 
     for job in jobs:
-        hit_root = _find_cache_root(job, artifact_roots)
+        hit_root = _find_cache_root(job, hf_root)
         status = "HIT" if hit_root else "MISS"
 
         if status == "MISS" and not args.verify_only:
@@ -361,7 +637,7 @@ def main() -> int:
             if rc != 0:
                 status = "ERROR"
             else:
-                hit_root = _find_cache_root(job, artifact_roots)
+                hit_root = _find_cache_root(job, hf_root)
                 status = "BUILT" if hit_root else "MISS"
 
         report_rows.append(_job_report(job, status, hit_root))
@@ -414,7 +690,7 @@ def _check_hf_cache(wikitext_needed: set[str], wmt16_needed: bool, prefetch: boo
 
 def _hf_cached(name: str, config: str, cache_dir: Path) -> bool:
     try:
-        load_dataset(name, config, cache_dir=str(cache_dir), download_mode="reuse_dataset_if_exists", local_files_only=True)
+        load_dataset(name, config, cache_dir=str(cache_dir), download_mode="reuse_dataset_if_exists", trust_remote_code=True)
     except Exception:
         # Fallback: coarse on-disk check to avoid false negatives.
         dataset_root = cache_dir / name
@@ -437,28 +713,35 @@ def _check_vit_data() -> None:
     print(f"[cache_yaml] CIFAR-10 data not found under {vision_root}. torchvision will download on first run.")
 
 
-def _find_cache_root(job: CacheJob, hf_roots: Iterable[Path]) -> Optional[Path]:
-    required = ["tokens.pt"] if job.cache_mode == "tokens" else FULL_REQUIRED[job.task]
-    for hf_root in hf_roots:
-        base = hf_root / "artifacts" / job.task / job.dataset
-        if not base.exists():
-            continue
-        for fp_dir in base.iterdir():
-            meta_path = fp_dir / "meta.json"
-            if not fp_dir.is_dir() or not meta_path.exists():
-                continue
-            try:
-                meta = yaml.safe_load(meta_path.read_text())
-            except Exception:
-                continue
-            if not _meta_matches(job, meta):
-                continue
-            if all((fp_dir / name).exists() for name in required):
-                return fp_dir
+def _find_cache_root(job: CacheJob, hf_root: Path) -> Optional[Path]:
+    """Find cache using fingerprint-based lookup (matches runtime behavior exactly)."""
+    required = ["tokens.pt"] if job.cache_mode == "tokens" else FULL_REQUIRED.get(job.task, [])
+
+    try:
+        token_fp, bank_fp = job.get_expected_fingerprints()
+    except Exception as e:
+        print(f"[cache_yaml] WARNING: Could not compute fingerprint for {job.task}: {e}")
+        return None
+
+    base = hf_root / "artifacts" / job.task / job.dataset
+
+    if job.cache_mode == "tokens":
+        token_dir = base / token_fp
+        if token_dir.exists() and all((token_dir / name).exists() for name in required):
+            return token_dir
+        return None
+
+    # For full mode, check bank directory
+    if bank_fp:
+        bank_dir = base / bank_fp
+        if bank_dir.exists() and all((bank_dir / name).exists() for name in required):
+            return bank_dir
+
     return None
 
 
 def _meta_matches(job: CacheJob, meta: dict[str, Any]) -> bool:
+    """Legacy meta matching - kept for reference but not used."""
     if meta.get("task") != job.task:
         return False
     if meta.get("dataset_id") != job.dataset:
@@ -588,6 +871,7 @@ def _build_cache_cmd(job: CacheJob, artifact_cache_root: str, overwrite_cache: b
 
 
 def _job_report(job: CacheJob, status: str, root: Optional[Path]) -> dict[str, Any]:
+    token_fp, bank_fp = job.get_expected_fingerprints()
     return {
         "task": job.task,
         "cache_mode": job.cache_mode,
@@ -606,6 +890,8 @@ def _job_report(job: CacheJob, status: str, root: Optional[Path]) -> dict[str, A
         "tokenizer": job.tokenizer or "",
         "sources": ",".join(sorted(set(job.sources))),
         "status": status,
+        "expected_token_fp": token_fp,
+        "expected_bank_fp": bank_fp or "",
         "cache_root": str(root) if root else "",
     }
 
@@ -613,10 +899,15 @@ def _job_report(job: CacheJob, status: str, root: Optional[Path]) -> dict[str, A
 def _print_report(rows: list[dict[str, Any]]) -> None:
     print("[cache_yaml] summary:")
     for row in rows:
+        fp_info = f"token_fp={row['expected_token_fp'][:8]}"
+        if row['expected_bank_fp']:
+            fp_info += f" bank_fp={row['expected_bank_fp'][:8]}"
         print(
             f"  {row['task']} mode={row['cache_mode']} "
             f"len={row['seq_len'] or row['max_len'] or '-'} "
+            f"precision={row['precision']} "
             f"score={row['score_mode'] or '-'} "
+            f"{fp_info} "
             f"status={row['status']}"
         )
 
