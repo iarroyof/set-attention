@@ -572,7 +572,7 @@ class BankedDenoiser(nn.Module):
     ):
         super().__init__()
         self.proj_in = nn.Linear(in_dim, d_model)
-        self.pos_enc = PositionalEncoding(d_model)
+        self.pos_enc = PositionalEncoding(d_model, max_len=seq_len)
         self.attn_baseline = attn_baseline
         self.use_explicit = attn_baseline == "explicit"
         if self.use_explicit:
