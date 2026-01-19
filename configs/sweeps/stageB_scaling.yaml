@@ -146,7 +146,7 @@ parameters:
   vit-batch:
     value: 128
   vit-subset-path:
-    value: subsets/cifar10_train_10pct.json
+    value: ""
   vit-window:
     value: 8
   vit-stride:
