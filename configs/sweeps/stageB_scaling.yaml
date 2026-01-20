@@ -35,7 +35,7 @@ parameters:
   # ViT excluded: CIFAR-10 is fixed 32×32, no sequence length scaling
   # Seq2Seq excluded: encoder+decoder complicates memory analysis
   tasks:
-    value: [lm, textdiff]
+    value: [lm, seq2seq, textdiff]
 
   # ============================================
   # SWEEP AXIS: Model Type

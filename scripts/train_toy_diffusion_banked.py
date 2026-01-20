@@ -569,6 +569,7 @@ class BankedDenoiser(nn.Module):
         precision: str = "fp32",
         use_ska: bool = True,
         attn_baseline: str = "pytorch",
+        seq_len: int = 128,
     ):
         super().__init__()
         self.proj_in = nn.Linear(in_dim, d_model)
@@ -1474,6 +1475,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         precision=args.precision,
         use_ska=not is_baseline,
         attn_baseline=attn_baseline,
+        seq_len=data_cfg.seq_len,
     ).to(device)
     ddpm = SimpleDDPM(T=args.steps, device=device)
     component_named_params = list(
