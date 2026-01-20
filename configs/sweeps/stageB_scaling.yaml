@@ -122,7 +122,7 @@ parameters:
     value: 8
   # Scaling sweep for diffusion
   textdiff-lengths:
-    values: [256, 512, 1024, 2048]
+    values: [256, 512, 1024]
   textdiff-seq-len:
     value: 256
   textdiff-stride:

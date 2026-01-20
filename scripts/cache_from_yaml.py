@@ -541,6 +541,11 @@ def main() -> int:
                 if dataset in WIKITEXT_CONFIGS:
                     wikitext_needed.add(dataset)
                 for seq_len in lengths:
+                    lm_stride = (
+                        int(seq_stride)
+                        if seq_stride is not None and int(seq_stride) > 0
+                        else int(seq_len)
+                    )
                     for score_mode in score_modes:
                         job = CacheJob(
                             task="lm",
@@ -551,7 +556,7 @@ def main() -> int:
                             score_mode=score_mode,
                             ska_backend=str(ska_backend) if ska_backend else None,
                             seq_len=int(seq_len),
-                            seq_stride=int(seq_stride),
+                            seq_stride=lm_stride,
                             window=int(window),
                             bank_stride=int(stride),
                             minhash_k=int(minhash_k),
