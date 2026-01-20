@@ -947,5 +947,6 @@ def _write_report(path: Path, rows: list[dict[str, Any]]) -> None:
             writer.writerow(row)
 
 
+
 if __name__ == "__main__":
     raise SystemExit(main())
