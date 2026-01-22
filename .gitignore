@@ -78,3 +78,27 @@ huggingface/
 build/
 dist/
 *.egg-info/
+
+# Local outputs and test results
+out/
+nohup.out
+nohup_logs/
+test_ska/
+test_stageA*/
+test_stageB*/
+subsets/
+*.csv
+
+# Hugging Face cache
+.hf/
+
+# Credentials
+.netrc
+
+# Wandb additional files
+.wandb/
+wandb-metadata.json
+wandb-summary.json
+
+# Stage/sweep artifacts
+stage_*.sh
