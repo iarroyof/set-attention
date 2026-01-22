@@ -1,0 +1,42 @@
+services:
+  set-attention:
+    build: .
+    image: set-attention:latest
+    container_name: set-attention
+    working_dir: /workspace
+    tty: true
+    stdin_open: true
+    command: ["bash", "-lc", "tail -f /dev/null"]
+    environment:
+      # Hugging Face caches (datasets + hub)
+      HOME: /workspace
+      HF_HOME: /workspace/.hf
+      HF_DATASETS_CACHE: /workspace/.hf/datasets
+      HF_HUB_CACHE: /workspace/.hf/hub
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      # Optional: keep fast transfer on (since you installed hf_transfer)
+      HF_HUB_ENABLE_HF_TRANSFER: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      WANDB_API_KEY: "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"
+    user: "${UID}:${GID}"
+    volumes:
+      # 1) Mount your repo so code edits persist (optional if you bake code into image)
+      - ./:/workspace
+
+      # 2) Persist HF cache on host
+      - ./.hf:/workspace/.hf
+
+      # 3) Persist outputs / subsets / wandb on host (if repo is not mounted)
+      # If you mount ./:/workspace, these are already persisted via the repo mount,
+      # but keeping them explicit is OK if you prefer separate dirs.
+      - ./out:/workspace/out
+      - ./subsets:/workspace/subsets
+      - ./wandb:/workspace/wandb
+
+    # If you use GPUs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]

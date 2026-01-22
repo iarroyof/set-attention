@@ -902,7 +902,7 @@ def main():
         action="store_true",
         help="Force dot-product attention modules to use naive (math) implementation.",
     )
-    ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp16")
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--num-workers", type=int, default=0)
     ap.add_argument("--samples", type=int, default=None, help="Override number of synthetic sequences.")
@@ -1464,6 +1464,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
             return
 
     attn_baseline = "explicit" if (is_baseline and model_cfg.baseline_impl == "explicit") else "pytorch"
+    print(f"[DEBUG] Creating model with data_cfg.seq_len={data_cfg.seq_len}, train_data.shape={train_data.shape}")
     model = BankedDenoiser(
         in_dim=data_cfg.dim,
         d_model=args.d_model,
@@ -1684,7 +1685,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                         ),
                     }
                     _append_benchmark_row(args.metrics_csv, row)
-                    _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=epoch, summarize=True)
+                    _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=global_step, summarize=True)
                 if wandb_run.enabled:
                     wandb_run.finish()
                 return
@@ -1790,7 +1791,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 wandb_payload["samples/generated"] = sample_text
                 if text_mode:
                     wandb_payload["samples/val_text"] = sample_text
-            wandb_run.log(wandb_payload, step=epoch)
+            wandb_run.log(wandb_payload, step=global_step)
             if epoch == args.epochs:
                 _summarize_wandb_payload(wandb_run, wandb_payload)
         if args.metrics_csv:
@@ -1837,7 +1838,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
                 wandb_run,
                 row,
                 "csv/metrics",
-                step=epoch,
+                step=global_step,
                 summarize=(epoch == args.epochs),
             )
 

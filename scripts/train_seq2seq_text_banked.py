@@ -843,7 +843,7 @@ def main():
         action="store_true",
         help="Force dot-product attention in baseline to use naive (math) mode.",
     )
-    parser.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    parser.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp16")
     parser.add_argument(
         "--precompute-bank",
         action="store_true",
@@ -1568,7 +1568,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                         ),
                     }
                     _append_benchmark_row(args.metrics_csv, row)
-                    _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=epoch, summarize=True)
+                    _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=global_step, summarize=True)
                 if wandb_run.enabled:
                     wandb_run.finish()
                 return
@@ -1635,7 +1635,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 wandb_payload["train/grad_norm_baseline_attn_epoch_mean"] = train_grad_norm_baseline
             if train_grad_norm_ffn is not None:
                 wandb_payload["train/grad_norm_ffn_epoch_mean"] = train_grad_norm_ffn
-            wandb_run.log(wandb_payload, step=epoch)
+            wandb_run.log(wandb_payload, step=global_step)
 
         val_refs, val_hyps, val_src = [], [], []
         if has_val:
@@ -1751,7 +1751,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             if sample_text:
                 payload["samples/val_text"] = sample_text
                 payload["samples/generated"] = sample_text
-            wandb_run.log(payload, step=epoch)
+            wandb_run.log(payload, step=global_step)
             if epoch == args.epochs:
                 _summarize_wandb_payload(wandb_run, payload)
         if args.metrics_csv:
@@ -1798,7 +1798,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 wandb_run,
                 row,
                 "csv/metrics",
-                step=epoch,
+                step=global_step,
                 summarize=(epoch == args.epochs),
             )
 

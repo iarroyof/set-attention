@@ -1036,7 +1036,7 @@ def main():
     ap.add_argument("--no-streaming", dest="streaming", action="store_false", help="Disable streaming data loaders.")
     ap.set_defaults(streaming=None)
     ap.add_argument("--precompute-bank", action="store_true", help="Move precomputed banks and caches to the training device.")
-    ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp16")
     ap.add_argument("--benchmark", action="store_true")
     ap.add_argument("--bench-warmup", type=int, default=5)
     ap.add_argument("--bench-iters", type=int, default=20)
@@ -1926,7 +1926,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                         ),
                     }
                     _append_benchmark_row(args.metrics_csv, row)
-                    _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=epoch, summarize=True)
+                    _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=global_step, summarize=True)
                 if wandb_run.enabled:
                     wandb_run.finish()
                 return
@@ -1997,7 +1997,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
             if sample_text:
                 payload["samples/val_text"] = sample_text
                 payload["samples/generated"] = sample_text
-            wandb_run.log(payload, step=epoch)
+            wandb_run.log(payload, step=global_step)
             if epoch == args.epochs:
                 _summarize_wandb_payload(wandb_run, payload)
         if args.metrics_csv:
@@ -2042,7 +2042,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 wandb_run,
                 row,
                 "csv/metrics",
-                step=epoch,
+                step=global_step,
                 summarize=(epoch == args.epochs),
             )
 

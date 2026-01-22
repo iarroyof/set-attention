@@ -397,7 +397,7 @@ def main():
     # LM defaults
     ap.add_argument("--lm-dataset", type=str, default="wikitext2")
     ap.add_argument("--lm-subset-path", type=str, default="")
-    ap.add_argument("--lm-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--lm-precision", type=str, default="fp16", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--lm-batch", type=int, default=8)
     ap.add_argument("--lm-seq-len", type=int, default=256)
     ap.add_argument("--lm-seq-stride", type=int, default=256)
@@ -410,7 +410,7 @@ def main():
 
     # Seq2Seq defaults
     ap.add_argument("--seq-dataset", type=str, default="wmt16_en_ro")
-    ap.add_argument("--seq-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--seq-precision", type=str, default="fp16", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--seq-batch", type=int, default=32)
     ap.add_argument("--seq-max-len", type=int, default=256)
     ap.add_argument("--seq-subset-path", type=str, default="")
@@ -425,7 +425,7 @@ def main():
     # Diffusion text defaults
     ap.add_argument("--textdiff-dataset", type=str, default="wikitext2")
     ap.add_argument("--textdiff-subset-path", type=str, default="")
-    ap.add_argument("--textdiff-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--textdiff-precision", type=str, default="fp16", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--textdiff-batch", type=int, default=64)
     ap.add_argument("--textdiff-seq-len", type=int, default=256)
     ap.add_argument("--textdiff-stride", type=int, default=256)
@@ -436,7 +436,7 @@ def main():
     ap.add_argument("--textdiff-num-workers", type=int, default=0)
 
     # ViT defaults
-    ap.add_argument("--vit-precision", type=str, default="fp32", choices=["fp32", "fp16", "bf16"])
+    ap.add_argument("--vit-precision", type=str, default="fp16", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--vit-batch", type=int, default=128)
     ap.add_argument("--vit-window", type=int, default=8)
     ap.add_argument("--vit-stride", type=int, default=4)

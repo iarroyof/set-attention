@@ -8,6 +8,11 @@
 # =============================================================================
 
 program: scripts/run_stageB_sweeps.py
+name: StageB_Scaling_GPU_1
+method: grid
+metric:
+  name: val/loss
+  goal: minimize
 
 parameters:
   # ============================================
@@ -20,7 +25,7 @@ parameters:
   stageb-mode:
     value: train  # Not just benchmark
   epochs:
-     value: 3
+     value: 5
   production:
     value: true
   wandb-project:
@@ -65,7 +70,7 @@ parameters:
     value: fp16
   # REDUCED batch size to push sequence lengths higher before OOM
   lm-batch:
-    value: 8
+    value: 4
   # AGGRESSIVE length sweep: baseline will OOM around 2048-4096
   lm-lengths:
     values: [512, 1024, 2048, 4096, 8192]
@@ -119,7 +124,7 @@ parameters:
     value: fp16
   # REDUCED batch size for longer sequences
   textdiff-batch:
-    value: 8
+    value: 4
   # Scaling sweep for diffusion
   textdiff-lengths:
     values: [256, 512, 1024]
@@ -148,7 +153,7 @@ parameters:
   vit-subset-path:
     value: ""
   vit-window:
-    value: 8
+    value: 4
   vit-stride:
     value: 4
   vit-minhash-k:

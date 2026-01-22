@@ -1,0 +1,13 @@
+torch>=2.0
+einops>=0.7
+numpy>=1.22
+pyyaml>=6.0
+
+[dev]
+pytest>=7.0
+pytest-cov>=4.0
+ruff>=0.5
+black>=24.3.0
+
+[wandb]
+wandb>=0.16

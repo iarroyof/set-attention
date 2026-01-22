@@ -44,7 +44,7 @@ def file_signature(path: Path) -> Dict[str, Any]:
     return {
         "path": str(path),
         "size": int(stat.st_size),
-        "mtime": int(stat.st_mtime),
+        # # "mtime": int(stat.st_mtime),  # Removed: causes fingerprint mismatch  # Removed: causes fingerprint mismatch when file is touched
         "sha256": h.hexdigest(),
     }
 

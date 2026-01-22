@@ -7,6 +7,11 @@
 # =============================================================================
 
 program: scripts/run_stageA_sweeps.py
+name: StageA_Quality_GPU_0
+method: grid
+metric:
+  name: val/loss
+  goal: minimize
 
 parameters:
   # ============================================
@@ -22,15 +27,17 @@ parameters:
     value: true
   wandb-project:
     value: set-attention-stageA
+  tasks:
+    value: [lm, seq, textdiff]
 
   # ============================================
   # SWEEP AXES (Full Factorial)
   # ============================================
-  
+
   # Core comparison: baseline vs SKA
   model-type:
     values: [baseline, ska]
-  
+
   # Kernel ablation: all 5 score modes
   # NOTE: baseline runs ignore this (creates redundant runs, dedupe in analysis)
   ska-score-mode:
@@ -54,7 +61,7 @@ parameters:
   lm-precision:
     value: fp32
   lm-batch:
-    value: 8
+    value: 4
   # Sweep sequence length for richer quality data
   lm-seq-len:
     value: 256
@@ -80,7 +87,7 @@ parameters:
   seq-precision:
     value: fp32
   seq-batch:
-    value: 8
+    value: 4
   seq-max-len:
     value: 256
   seq-tokenizer-type:
@@ -105,7 +112,7 @@ parameters:
   textdiff-precision:
     value: fp32
   textdiff-batch:
-    value: 8
+    value: 4
   textdiff-seq-len:
     value: 256
   textdiff-stride:
@@ -126,7 +133,7 @@ parameters:
   vit-precision:
     value: fp32
   vit-batch:
-    value: 8
+    value: 4
   vit-subset-path:
     value: ""
   # SKA hyperparameters

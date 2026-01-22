@@ -677,7 +677,7 @@ def main():
     ap.add_argument("--num-classes", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--num-workers", type=int, default=2)
-    ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp32")
+    ap.add_argument("--precision", choices=["fp32", "fp16", "bf16"], default="fp16")
     ap.add_argument(
         "--dot-naive",
         action="store_true",
@@ -1220,7 +1220,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                         ),
                     }
                     _append_benchmark_row(args.metrics_csv, row)
-                    _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=ep, summarize=True)
+                    _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=global_step, summarize=True)
                 if wandb_run.enabled:
                     wandb_run.finish()
                 return
@@ -1326,7 +1326,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 payload["train/grad_norm_baseline_attn_epoch_mean"] = train_grad_norm_baseline
             if train_grad_norm_ffn is not None:
                 payload["train/grad_norm_ffn_epoch_mean"] = train_grad_norm_ffn
-            wandb_run.log(payload, step=ep)
+            wandb_run.log(payload, step=global_step)
             if ep == args.epochs:
                 _summarize_wandb_payload(wandb_run, payload)
         if args.metrics_csv:
@@ -1368,7 +1368,7 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
                 "status": "ok",
             }
             _append_benchmark_row(args.metrics_csv, row)
-            _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=ep, summarize=ep == args.epochs)
+            _log_csv_row_wandb(wandb_run, row, "csv/metrics", step=global_step, summarize=ep == args.epochs)
 
     wandb_run.finish()
 
