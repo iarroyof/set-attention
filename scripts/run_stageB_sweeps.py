@@ -7,6 +7,7 @@ import argparse
 import csv
 import itertools
 import os
+import signal
 import subprocess
 import tempfile
 import shlex
@@ -243,6 +244,8 @@ def _run(
     require_idle: bool,
     post_run_grace: float,
     post_run_wait: bool,
+    run_timeout_s: float,
+    kill_grace_s: float,
 ) -> int:
     print("[sweep]", " ".join(cmd))
     _require_benchmark_limits(cmd)
@@ -251,8 +254,30 @@ def _run(
     if not _wait_for_gpu(min_free_gb, wait_interval, wait_timeout, require_idle):
         return 1
     with tempfile.TemporaryFile(mode="w+") as stderr_file:
-        proc = subprocess.Popen(cmd, stderr=stderr_file)
-        rc = proc.wait()
+        proc = subprocess.Popen(cmd, stderr=stderr_file, start_new_session=True)
+        start = time.monotonic()
+        rc = None
+        while True:
+            rc = proc.poll()
+            if rc is not None:
+                break
+            if run_timeout_s > 0 and (time.monotonic() - start) >= run_timeout_s:
+                print(f"[sweep] warn: timeout after {run_timeout_s:.0f}s; terminating pid {proc.pid}")
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except Exception:
+                    proc.terminate()
+                try:
+                    proc.wait(timeout=kill_grace_s)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except Exception:
+                        proc.kill()
+                    proc.wait()
+                rc = proc.returncode if proc.returncode is not None else 124
+                break
+            time.sleep(1.0)
         if rc != 0:
             stderr_file.seek(0)
             tail = stderr_file.read().splitlines()[-20:]
@@ -380,6 +405,18 @@ def main():
     ap.add_argument("--no-require-idle-gpu", dest="require_idle_gpu", action="store_false", help="Disable GPU process-idle gating.")
     ap.add_argument("--post-run-grace", type=float, default=2.0, help="Seconds to wait after each job before checking GPU processes.")
     ap.add_argument("--post-run-wait", action="store_true", help="Wait for GPU idle after each job (in addition to warnings).")
+    ap.add_argument(
+        "--run-timeout-s",
+        type=float,
+        default=0.0,
+        help="Kill child run if it exceeds this many seconds (0=disable).",
+    )
+    ap.add_argument(
+        "--kill-grace-s",
+        type=float,
+        default=20.0,
+        help="Seconds to wait after terminate before SIGKILL.",
+    )
     ap.add_argument(
         "--cpu-threads",
         type=int,
@@ -543,6 +580,8 @@ def main():
     if args.stageb_mode == "train" and args.epochs is None:
         raise RuntimeError("Stage B training requires --epochs.")
     if args.production:
+        if args.run_timeout_s <= 0:
+            args.run_timeout_s = 6 * 60 * 60
         os.environ.setdefault("WANDB_RUN_GROUP", "stageB_scaling")
         if "--wandb" not in common_args:
             common_args.append("--wandb")
@@ -663,6 +702,8 @@ def main():
                     args.require_idle_gpu,
                     args.post_run_grace,
                     args.post_run_wait,
+                    args.run_timeout_s,
+                    args.kill_grace_s,
                 )
 
         if "seq2seq" in tasks and args.seq_lengths:
@@ -713,6 +754,8 @@ def main():
                     args.require_idle_gpu,
                     args.post_run_grace,
                     args.post_run_wait,
+                    args.run_timeout_s,
+                    args.kill_grace_s,
                 )
 
         if "textdiff" in tasks:
@@ -762,6 +805,8 @@ def main():
                     args.require_idle_gpu,
                     args.post_run_grace,
                     args.post_run_wait,
+                    args.run_timeout_s,
+                    args.kill_grace_s,
                 )
         print("[sweep] precache complete; exiting.")
         return
@@ -916,6 +961,8 @@ def main():
                         args.require_idle_gpu,
                         args.post_run_grace,
                         args.post_run_wait,
+                        args.run_timeout_s,
+                        args.kill_grace_s,
                     )
                     if rc != 0:
                         _append_status_row(
@@ -1071,6 +1118,8 @@ def main():
                         args.require_idle_gpu,
                         args.post_run_grace,
                         args.post_run_wait,
+                        args.run_timeout_s,
+                        args.kill_grace_s,
                     )
                     if rc != 0:
                         _append_status_row(
@@ -1228,6 +1277,8 @@ def main():
                         args.require_idle_gpu,
                         args.post_run_grace,
                         args.post_run_wait,
+                        args.run_timeout_s,
+                        args.kill_grace_s,
                     )
                     if rc != 0:
                         _append_status_row(
@@ -1344,6 +1395,8 @@ def main():
                     args.require_idle_gpu,
                     args.post_run_grace,
                     args.post_run_wait,
+                    args.run_timeout_s,
+                    args.kill_grace_s,
                 )
                 if rc != 0:
                     _append_status_row(
