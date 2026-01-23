@@ -102,6 +102,71 @@ def _strip_sweep_args(argv: list[str], flag: str) -> list[str]:
     return cleaned
 
 
+def _strip_flag(argv: list[str], flag: str) -> list[str]:
+    cleaned: list[str] = []
+    skip_next = False
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == flag:
+            skip_next = True
+            continue
+        if arg.startswith(flag + "="):
+            continue
+        cleaned.append(arg)
+    return cleaned
+
+
+def _freeze_value(value: object) -> object:
+    if isinstance(value, list):
+        return tuple(_freeze_value(v) for v in value)
+    if isinstance(value, dict):
+        return tuple(sorted((k, _freeze_value(v)) for k, v in value.items()))
+    return value
+
+
+def _dedupe_nonapplicable(combos: List[dict]) -> List[dict]:
+    baseline_ignore = {
+        "ska-backend",
+        "ska-score-mode",
+        "lm-window",
+        "lm-stride",
+        "lm-minhash-k",
+        "lm-router-topk",
+        "seq-window",
+        "seq-stride",
+        "seq-minhash-k",
+        "seq-router-topk",
+        "textdiff-window",
+        "textdiff-bank-stride",
+        "textdiff-minhash-k",
+        "textdiff-router-topk",
+        "vit-window",
+        "vit-stride",
+        "vit-minhash-k",
+        "vit-router-topk",
+    }
+    ska_ignore = {"baseline-impl"}
+    seen: set[tuple] = set()
+    filtered: List[dict] = []
+    for combo in combos:
+        model_type = combo.get("model-type")
+        items: list[tuple[str, object]] = []
+        for key, value in sorted(combo.items()):
+            if model_type == "baseline" and key in baseline_ignore:
+                continue
+            if model_type == "ska" and key in ska_ignore:
+                continue
+            items.append((key, _freeze_value(value)))
+        signature = tuple(items)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        filtered.append(combo)
+    return filtered
+
+
 def _visible_gpu_indices() -> List[int]:
     visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if not visible:
@@ -411,7 +476,7 @@ def main():
     ap.add_argument(
         "--run-timeout-s",
         type=float,
-        default=0.0,
+        default=6 * 60 * 60,
         help="Kill child run if it exceeds this many seconds (0=disable).",
     )
     ap.add_argument(
@@ -426,7 +491,7 @@ def main():
         default=0,
         help="If >0, set OMP/MKL/OPENBLAS/NUMEXPR threads for child runs.",
     )
-    ap.add_argument("--model-type", choices=["baseline", "ska"], required=True)
+    ap.add_argument("--model-type", choices=["baseline", "ska"], required=False, default=None)
     ap.add_argument("--baseline-impl", choices=BASELINE_IMPLS, default="pytorch")
     ap.add_argument("--ska-backend", choices=SKA_BACKENDS, default="python")
     ap.add_argument("--ska-score-mode", choices=SKA_SCORE_MODES, default="delta_plus_dot")
@@ -539,6 +604,18 @@ def main():
         sweep_path = Path(args.sweep_yaml)
         combos = _load_yaml_grid(sweep_path)
         base_args = _strip_sweep_args(sys.argv[1:], "--sweep-yaml")
+        has_model_type = any("model-type" in combo for combo in combos)
+        if has_model_type:
+            if any(arg == "--model-type" or arg.startswith("--model-type=") for arg in base_args):
+                print("[stageA] note: --model-type ignored when sweep YAML defines model-type.")
+            base_args = _strip_flag(base_args, "--model-type")
+        else:
+            if args.model_type is None:
+                raise RuntimeError("--model-type is required when sweep YAML has no model-type.")
+            for combo in combos:
+                combo["model-type"] = args.model_type
+            base_args = _strip_flag(base_args, "--model-type")
+        combos = _dedupe_nonapplicable(combos)
         failed = False
         for idx, combo in enumerate(combos, start=1):
             cmd = [sys.executable, sys.argv[0], *base_args]
@@ -549,6 +626,9 @@ def main():
             if rc != 0:
                 failed = True
         sys.exit(1 if failed else 0)
+
+    if args.model_type is None:
+        raise RuntimeError("--model-type is required when no sweep YAML is provided.")
 
     def _parse_extra(values: list[str]) -> list[str]:
         extra: list[str] = []
@@ -574,8 +654,6 @@ def main():
     if args.production and not args.wandb_project:
         raise RuntimeError("--production requires --wandb-project (paper-grade runs must be logged).")
     if args.production:
-        if args.run_timeout_s <= 0:
-            args.run_timeout_s = 6 * 60 * 60
         os.environ.setdefault("WANDB_RUN_GROUP", "stageA_quality")
         if "--wandb" not in common_args:
             common_args.append("--wandb")
