@@ -22,7 +22,7 @@ parameters:
   cache-mode:
     value: full
   epochs:
-    value: 15
+    value: 10
   production:
     value: true
   wandb-project:
