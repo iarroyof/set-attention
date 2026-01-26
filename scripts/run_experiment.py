@@ -26,6 +26,11 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Override config values, e.g. model.d_model=256",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate config and exit without loading data or running training",
+    )
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return parser.parse_args()
 
@@ -90,6 +95,10 @@ def build_dataloaders(data_cfg: dict) -> tuple[DataLoader, DataLoader, int]:
 def main() -> None:
     args = parse_args()
     cfg = load_config(args.config, overrides=args.override)
+    if args.dry_run:
+        print("Dry run: config validated. No data loaded or training run.")
+        print(cfg)
+        return
     device = torch.device(args.device)
 
     train_loader, val_loader, vocab_size = build_dataloaders(cfg["data"])
