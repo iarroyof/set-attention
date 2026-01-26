@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from set_attention.core import assert_set_only_scores
-from models.set_only import SetOnlyLM
+from src.models.set_only import SetOnlyLM
 
 
 def test_set_only_invariant_trips_on_token_attention():

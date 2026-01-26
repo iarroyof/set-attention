@@ -102,3 +102,11 @@ wandb-summary.json
 
 # Stage/sweep artifacts
 stage_*.sh
+
+# Exception: Allow source code in src/
+!src/models/
+!src/models/**
+!src/data/
+!src/data/**
+!src/train/
+!src/train/**

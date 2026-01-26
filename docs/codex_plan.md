@@ -588,6 +588,8 @@ Only:
 
 * `scripts/run_experiment.py --config configs/exp.yaml [overrides]`
 
+Runner location is `scripts/run_experiment.py` (not repo root).
+
 No multiple train scripts per task. Tasks become dataset modules.
 
 ## 8.2 Strict config schema (enforce separation)
