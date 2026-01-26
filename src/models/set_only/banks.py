@@ -26,11 +26,11 @@ class Bank:
 
 
 def num_sets_for_length(seq_len: int, window_size: int, stride: int) -> int:
+    """Calculate number of sets created by build_window_bank."""
     if seq_len <= 0:
         return 0
-    if seq_len <= window_size:
-        return 1
-    return math.ceil((seq_len - window_size) / stride) + 1
+    # Number of window starting positions: range(0, seq_len, stride)
+    return math.ceil(seq_len / stride)
 
 
 def build_window_bank(
