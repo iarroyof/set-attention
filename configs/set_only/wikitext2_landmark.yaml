@@ -1,0 +1,27 @@
+model:
+  family: set_only
+  vocab_size: 0
+  d_model: 256
+  num_layers: 4
+  num_heads: 8
+  window_size: 32
+  stride: 16
+  dropout: 0.1
+  max_seq_len: 256
+  router_type: uniform
+  router_topk: 0
+  backend: landmark
+  backend_params:
+    num_landmarks: 32
+  feature_mode: geometry_only
+  gamma: 1.0
+  beta: 0.0
+
+data:
+  dataset: wikitext2
+  batch_size: 16
+  seq_len: 256
+
+training:
+  epochs: 5
+  lr: 3e-4

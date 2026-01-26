@@ -130,6 +130,7 @@ def _dedupe_nonapplicable(combos: List[dict]) -> List[dict]:
     baseline_ignore = {
         "ska-backend",
         "ska-score-mode",
+        "ska-beta",
         "lm-window",
         "lm-stride",
         "lm-minhash-k",
@@ -492,6 +493,16 @@ def main():
     ap.add_argument("--baseline-impl", choices=BASELINE_IMPLS, default="pytorch")
     ap.add_argument("--ska-backend", choices=SKA_BACKENDS, default="python")
     ap.add_argument("--ska-score-mode", choices=SKA_SCORE_MODES, default="delta_plus_dot")
+    ap.add_argument(
+        "--ska-beta",
+        type=float,
+        default=None,
+        help="SKA content scale (default: 1/d per task).",
+    )
+    ap.add_argument("--model-dim", type=int, default=None, help="Model width (task-specific mapping).")
+    ap.add_argument("--model-heads", type=int, default=None, help="Attention heads (task-specific mapping).")
+    ap.add_argument("--model-layers", type=int, default=None, help="Transformer layers (task-specific mapping).")
+    ap.add_argument("--adapter-rank", type=int, default=None, help="Adapter rank (SKA only).")
 
     # LM length sweep defaults
     ap.add_argument("--lm-lengths", type=int, nargs="+", default=[256, 512])
@@ -769,6 +780,14 @@ def main():
                             "ska",
                         ]
                     )
+                    if args.model_dim is not None:
+                        lm_cmd.extend(["--d-model", str(args.model_dim)])
+                    if args.model_heads is not None:
+                        lm_cmd.extend(["--nhead", str(args.model_heads)])
+                    if args.model_layers is not None:
+                        lm_cmd.extend(["--layers", str(args.model_layers)])
+                    if args.adapter_rank is not None:
+                        lm_cmd.extend(["--adapter-rank", str(args.adapter_rank)])
                 if lm_cache_args:
                     lm_cmd.extend(lm_cache_args)
                 _run(
@@ -821,6 +840,14 @@ def main():
                             "ska",
                         ]
                     )
+                    if args.model_dim is not None:
+                        seq_cmd.extend(["--atom-dim", str(args.model_dim)])
+                    if args.model_heads is not None:
+                        seq_cmd.extend(["--heads", str(args.model_heads)])
+                    if args.model_layers is not None:
+                        seq_cmd.extend(["--layers", str(args.model_layers)])
+                    if args.adapter_rank is not None:
+                        seq_cmd.extend(["--adapter-rank", str(args.adapter_rank)])
                 if seq_cache_args:
                     seq_cmd.extend(seq_cache_args)
                 _run(
@@ -872,6 +899,14 @@ def main():
                             "ska",
                         ]
                     )
+                    if args.model_dim is not None:
+                        text_cmd.extend(["--d-model", str(args.model_dim)])
+                    if args.model_heads is not None:
+                        text_cmd.extend(["--nhead", str(args.model_heads)])
+                    if args.model_layers is not None:
+                        text_cmd.extend(["--layers", str(args.model_layers)])
+                    if args.adapter_rank is not None:
+                        text_cmd.extend(["--adapter-rank", str(args.adapter_rank)])
                 if textdiff_cache_args:
                     text_cmd.extend(textdiff_cache_args)
                 _run(
@@ -999,6 +1034,8 @@ def main():
                             args.ska_score_mode,
                         ]
                     )
+                    if args.model_type == "ska" and args.ska_beta is not None:
+                        cmd.extend(["--beta", str(args.ska_beta)])
                     if args.model_type == "baseline" and args.baseline_impl == "explicit":
                         cmd.append("--dot-naive")
                     if args.skip_oom:
@@ -1020,6 +1057,14 @@ def main():
                                 str(args.lm_router_topk),
                             ]
                         )
+                    if args.model_dim is not None:
+                        cmd.extend(["--d-model", str(args.model_dim)])
+                    if args.model_heads is not None:
+                        cmd.extend(["--nhead", str(args.model_heads)])
+                    if args.model_layers is not None:
+                        cmd.extend(["--layers", str(args.model_layers)])
+                    if args.adapter_rank is not None:
+                        cmd.extend(["--adapter-rank", str(args.adapter_rank)])
                     if args.artifact_cache_root:
                         cmd.extend(["--artifact-cache-root", args.artifact_cache_root])
                     if args.overwrite_cache:
@@ -1156,6 +1201,8 @@ def main():
                             args.ska_score_mode,
                         ]
                     )
+                    if args.model_type == "ska" and args.ska_beta is not None:
+                        cmd.extend(["--beta", str(args.ska_beta)])
                     if args.model_type == "baseline" and args.baseline_impl == "explicit":
                         cmd.append("--dot-naive")
                     if args.skip_oom:
@@ -1177,6 +1224,14 @@ def main():
                                 str(args.seq_router_topk),
                             ]
                         )
+                    if args.model_dim is not None:
+                        cmd.extend(["--atom-dim", str(args.model_dim)])
+                    if args.model_heads is not None:
+                        cmd.extend(["--heads", str(args.model_heads)])
+                    if args.model_layers is not None:
+                        cmd.extend(["--layers", str(args.model_layers)])
+                    if args.adapter_rank is not None:
+                        cmd.extend(["--adapter-rank", str(args.adapter_rank)])
                     if args.artifact_cache_root:
                         cmd.extend(["--artifact-cache-root", args.artifact_cache_root])
                     if args.overwrite_cache:
@@ -1317,6 +1372,8 @@ def main():
                             args.ska_score_mode,
                         ]
                     )
+                    if args.model_type == "ska" and args.ska_beta is not None:
+                        cmd.extend(["--beta", str(args.ska_beta)])
                     if args.model_type == "baseline" and args.baseline_impl == "explicit":
                         cmd.append("--dot-naive")
                     if args.skip_oom:
@@ -1336,6 +1393,14 @@ def main():
                                 str(args.textdiff_router_topk),
                             ]
                         )
+                    if args.model_dim is not None:
+                        cmd.extend(["--d-model", str(args.model_dim)])
+                    if args.model_heads is not None:
+                        cmd.extend(["--nhead", str(args.model_heads)])
+                    if args.model_layers is not None:
+                        cmd.extend(["--layers", str(args.model_layers)])
+                    if args.adapter_rank is not None:
+                        cmd.extend(["--adapter-rank", str(args.adapter_rank)])
                     if args.artifact_cache_root:
                         cmd.extend(["--artifact-cache-root", args.artifact_cache_root])
                     if args.overwrite_cache:
@@ -1437,6 +1502,8 @@ def main():
                         args.ska_score_mode,
                     ]
                 )
+                if args.model_type == "ska" and args.ska_beta is not None:
+                    cmd.extend(["--beta", str(args.ska_beta)])
                 if args.model_type == "baseline" and args.baseline_impl == "explicit":
                     cmd.append("--dot-naive")
                 if args.skip_oom:
@@ -1458,6 +1525,14 @@ def main():
                             str(args.vit_router_topk),
                         ]
                     )
+                if args.model_dim is not None:
+                    cmd.extend(["--d-model", str(args.model_dim)])
+                if args.model_heads is not None:
+                    cmd.extend(["--heads", str(args.model_heads)])
+                if args.model_layers is not None:
+                    cmd.extend(["--layers", str(args.model_layers)])
+                if args.adapter_rank is not None:
+                    cmd.extend(["--adapter-rank", str(args.adapter_rank)])
                 if common_args:
                     cmd.extend(common_args)
                 if vit_args:

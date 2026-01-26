@@ -1,3 +1,7 @@
+import pytest
+
+pytest.skip("Deprecated mixed SKA implementation (legacy).", allow_module_level=True)
+
 import torch
 
 from set_attention.sets.banked import BankedSetBatch
@@ -41,4 +45,3 @@ def test_banked_block_slicing_and_attention():
     token_states = torch.randn(2, 4, D)
     out_tok = router(token_states, Z_sets, Phi_q, q_ptrs_out)
     assert out_tok.shape == (2, 4, D)
-

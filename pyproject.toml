@@ -32,7 +32,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["set_attention*"]
+include = ["set_attention*", "models*", "config*", "data*", "train*"]
 
 [tool.black]
 line-length = 100

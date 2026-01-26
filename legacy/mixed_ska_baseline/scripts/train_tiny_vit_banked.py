@@ -652,7 +652,9 @@ def main():
     ap.add_argument("--batch", type=int, default=128)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--patch", type=int, default=4)
+    ap.add_argument("--d-model", type=int, default=128)
     ap.add_argument("--heads", type=int, default=4, help="Number of attention heads in the ViT backbone/router.")
+    ap.add_argument("--layers", type=int, default=4, help="Number of transformer layers in the ViT backbone.")
     ap.add_argument(
         "--limit",
         type=int,
@@ -671,6 +673,12 @@ def main():
     ap.add_argument("--minhash-k", type=int, default=64)
     ap.add_argument("--adapter-rank", type=int, default=0)
     ap.add_argument("--router-topk", type=int, default=0)
+    ap.add_argument(
+        "--beta",
+        type=float,
+        default=None,
+        help="SKA content scale (default: 1/d_model).",
+    )
     ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
     ap.add_argument("--data-mode", choices=["cifar10", "synthetic"], default="cifar10")
     ap.add_argument("--demo-samples", type=int, default=512, help="Used when --data-mode synthetic is selected.")
@@ -974,10 +982,10 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
         )
 
     attn_baseline = "explicit" if (is_baseline and model_cfg.baseline_impl == "explicit") else "pytorch"
-    vit_dim = 128
+    vit_dim = args.d_model
     backbone = TinyViTBackbone(
         dim=vit_dim,
-        depth=4,
+        depth=args.layers,
         heads=args.heads,
         patch=args.patch,
         attn_baseline=attn_baseline,
@@ -985,12 +993,13 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     set_attn = router = None
     if not is_baseline:
         ska_gamma = 0.0 if args.ska_score_mode == "dot" else 0.3
+        beta = args.beta if args.beta is not None else 1.0 / vit_dim
         set_attn = SetBankAttention(
             d_model=vit_dim,
             num_heads=args.heads,
             tau=1.0,
             gamma=ska_gamma,
-            beta=1.0 / vit_dim,
+            beta=beta,
             score_mode=args.ska_score_mode,
             eta=1.0,
             backend=args.ska_backend,

@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+
+class ConfigError(ValueError):
+    pass
+
+
+BASELINE_KEYS = {
+    "family",
+    "architecture",
+    "vocab_size",
+    "d_model",
+    "nhead",
+    "num_layers",
+    "dim_feedforward",
+    "dropout",
+    "max_seq_len",
+}
+
+SET_ONLY_KEYS = {
+    "family",
+    "vocab_size",
+    "d_model",
+    "num_layers",
+    "num_heads",
+    "window_size",
+    "stride",
+    "dropout",
+    "max_seq_len",
+    "router_type",
+    "router_topk",
+    "backend",
+    "backend_params",
+    "feature_mode",
+    "feature_params",
+    "gamma",
+    "beta",
+    "adapter_type",
+    "adapter_hidden_multiplier",
+    "adapter_budget_fraction",
+}
+
+
+def validate_config(cfg: dict) -> None:
+    if "model" not in cfg:
+        raise ConfigError("Missing 'model' section")
+    if "data" not in cfg:
+        raise ConfigError("Missing 'data' section")
+    if "training" not in cfg:
+        raise ConfigError("Missing 'training' section")
+
+    model_cfg = cfg["model"]
+    family = model_cfg.get("family")
+    if family not in {"baseline_token", "set_only"}:
+        raise ConfigError("model.family must be 'baseline_token' or 'set_only'")
+
+    if family == "baseline_token":
+        unexpected = set(model_cfg.keys()) - BASELINE_KEYS
+        if unexpected:
+            raise ConfigError(
+                f"Unexpected baseline_token keys: {sorted(unexpected)}"
+            )
+        if model_cfg.get("architecture") not in {"transformer_lm"}:
+            raise ConfigError("baseline_token architecture must be 'transformer_lm'")
+    else:
+        unexpected = set(model_cfg.keys()) - SET_ONLY_KEYS
+        if unexpected:
+            raise ConfigError(f"Unexpected set_only keys: {sorted(unexpected)}")
+        if model_cfg.get("backend") not in {
+            "dense_exact",
+            "local_band",
+            "nystrom",
+            "landmark",
+            "sparse_topk",
+        }:
+            raise ConfigError("set_only backend must be a supported backend")
+        if model_cfg.get("router_type") not in {"uniform", "learned"}:
+            raise ConfigError("router_type must be 'uniform' or 'learned'")
+        if model_cfg.get("feature_mode", "geometry_only") not in {
+            "geometry_only",
+            "hashed_counts",
+            "kernel",
+        }:
+            raise ConfigError("feature_mode must be geometry_only, hashed_counts, or kernel")
+
+        max_seq_len = model_cfg.get("max_seq_len", 0)
+        window_size = model_cfg.get("window_size", 1)
+        stride = model_cfg.get("stride", 1)
+        if stride <= 0 or window_size <= 0:
+            raise ConfigError("window_size and stride must be positive")
+        max_sets = 1 if max_seq_len <= window_size else (
+            (max_seq_len - window_size + stride - 1) // stride + 1
+        )
+        if model_cfg.get("feature_mode") == "kernel" and max_sets > 500:
+            raise ConfigError("Kernel features forbidden when max_sets > 500")
+
+        if model_cfg.get("feature_mode") == "kernel" and model_cfg.get("backend") == "local_band":
+            import warnings
+
+            warnings.warn(
+                "Kernel features with local_band backend may be redundant.",
+                RuntimeWarning,
+            )
+
+    if "family" in cfg.get("data", {}):
+        raise ConfigError("data.family is not allowed; use model.family only")

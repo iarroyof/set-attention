@@ -1,3 +1,7 @@
+import pytest
+
+pytest.skip("Deprecated mixed SKA implementation (legacy).", allow_module_level=True)
+
 import torch
 import torch.nn.functional as F
 

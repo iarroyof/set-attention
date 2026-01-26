@@ -178,6 +178,10 @@ class CacheJob:
             self.minhash_k,
             self.router_topk,
             self.tokenizer,
+            self.d_model,
+            self.nhead,
+            self.layers,
+            self.adapter_rank,
             self.subset_sig["sha256"] if self.subset_sig else None,
         )
 
@@ -502,6 +506,10 @@ def main() -> int:
         yaml_cache_mode = args.cache_mode or _param_value(params, "cache-mode") or "none"
         model_types = _as_list(_param_value(params, "model-type"))
         score_modes = _as_list(_param_value(params, "ska-score-mode"))
+        model_dim = _param_value(params, "model-dim")
+        model_heads = _param_value(params, "model-heads")
+        model_layers = _param_value(params, "model-layers")
+        adapter_rank = _param_value(params, "adapter-rank")
         if not score_modes:
             score_modes = [None]
         elif len(score_modes) > 1:
@@ -563,11 +571,12 @@ def main() -> int:
                             router_topk=int(router_topk),
                             sources=[yaml_path.name],
                             # Model defaults for LM
-                            d_model=128,
-                            nhead=4,
-                            layers=4,
+                            d_model=model_dim,
+                            nhead=model_heads,
+                            layers=model_layers,
                             dataset_lines=0,
                             hf_tokenizer_name="",
+                            adapter_rank=int(adapter_rank) if adapter_rank is not None else 0,
                         )
                         _add_job(job, jobs, seen_any, seen_full)
             elif task == "seq2seq":
@@ -600,6 +609,10 @@ def main() -> int:
                             router_topk=int(router_topk),
                             tokenizer=str(tokenizer),
                             sources=[yaml_path.name],
+                            d_model=model_dim,
+                            nhead=model_heads,
+                            layers=model_layers,
+                            adapter_rank=int(adapter_rank) if adapter_rank is not None else 0,
                         )
                         _add_job(job, jobs, seen_any, seen_full)
             elif task == "textdiff":
@@ -633,6 +646,10 @@ def main() -> int:
                             minhash_k=int(minhash_k),
                             router_topk=int(router_topk),
                             sources=[yaml_path.name],
+                            d_model=model_dim,
+                            nhead=model_heads,
+                            layers=model_layers,
+                            adapter_rank=int(adapter_rank) if adapter_rank is not None else 0,
                         )
                         _add_job(job, jobs, seen_any, seen_full)
 

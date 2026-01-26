@@ -836,7 +836,12 @@ def main():
     parser.add_argument("--stride", type=int, default=4)
     parser.add_argument("--router-topk", type=int, default=0)
     parser.add_argument("--tau", type=float, default=1.0)
-    parser.add_argument("--beta", type=float, default=1.0)
+    parser.add_argument(
+        "--beta",
+        type=float,
+        default=None,
+        help="SKA content scale (default: 1/atom_dim).",
+    )
     parser.add_argument("--eta", type=float, default=1.0)
     parser.add_argument(
         "--dot-naive",
@@ -1390,12 +1395,13 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     ).to(device)
     set_attn = router = None
     if not is_baseline:
+        beta = args.beta if args.beta is not None else 1.0 / args.atom_dim
         set_attn = SetBankAttention(
             d_model=args.atom_dim,
             num_heads=args.heads,
             tau=args.tau,
             gamma=0.3,
-            beta=1.0 / args.atom_dim,
+            beta=beta,
             score_mode=args.ska_score_mode,
             eta=args.eta,
             backend=args.ska_backend,

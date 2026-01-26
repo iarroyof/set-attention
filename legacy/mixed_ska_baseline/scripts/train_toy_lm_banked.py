@@ -1021,6 +1021,12 @@ def main():
     ap.add_argument("--minhash-k", type=int, default=64)
     ap.add_argument("--adapter-rank", type=int, default=0)
     ap.add_argument("--router-topk", type=int, default=0)
+    ap.add_argument(
+        "--beta",
+        type=float,
+        default=None,
+        help="SKA content scale (default: 1/d_model).",
+    )
     ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
     ap.add_argument(
         "--dot-naive",
@@ -1564,12 +1570,13 @@ def run_single(args, seed: int, rep: int, run_uid: str, multi_run: bool):
     if not is_baseline:
         ska_score_mode = model_cfg.ska_score_mode or "delta_plus_dot"
         ska_gamma = 0.0 if ska_score_mode == "dot" else 0.3
+        beta = args.beta if args.beta is not None else 1.0 / args.d_model
         set_attn = SetBankAttention(
             d_model=args.d_model,
             num_heads=args.nhead,
             tau=1.0,
             gamma=ska_gamma,
-            beta=1.0 / args.d_model,
+            beta=beta,
             score_mode=ska_score_mode,
             eta=1.0,
             backend=args.ska_backend,

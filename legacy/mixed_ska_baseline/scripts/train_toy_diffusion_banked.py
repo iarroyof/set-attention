@@ -570,6 +570,7 @@ class BankedDenoiser(nn.Module):
         use_ska: bool = True,
         attn_baseline: str = "pytorch",
         seq_len: int = 128,
+        beta: Optional[float] = None,
     ):
         super().__init__()
         self.proj_in = nn.Linear(in_dim, d_model)
@@ -589,12 +590,13 @@ class BankedDenoiser(nn.Module):
         if use_ska:
             ska_gamma = 0.0 if ska_score_mode == "dot" else 0.3
             self.router = TokenSetRouter(d_model=d_model, num_heads=nhead, topk=router_topk)
+            beta_value = beta if beta is not None else 1.0 / d_model
             self.set_attn = SetBankAttention(
                 d_model=d_model,
                 num_heads=nhead,
                 tau=1.0,
                 gamma=ska_gamma,
-                beta=1.0 / d_model,
+                beta=beta_value,
                 score_mode=ska_score_mode,
                 eta=1.0,
                 backend=ska_backend,
@@ -895,6 +897,12 @@ def main():
     ap.add_argument("--minhash-k", type=int, default=32)
     ap.add_argument("--adapter-rank", type=int, default=0)
     ap.add_argument("--router-topk", type=int, default=0)
+    ap.add_argument(
+        "--beta",
+        type=float,
+        default=None,
+        help="SKA content scale (default: 1/d_model).",
+    )
     ap.add_argument("--profile", "--prof", action="store_true", dest="profile")
     ap.add_argument("--config", type=str, default="configs/diffusion_toy.yaml")
     ap.add_argument(
@@ -1477,6 +1485,7 @@ def run_single(args, defaults, seed: int, rep: int, run_uid: str, multi_run: boo
         use_ska=not is_baseline,
         attn_baseline=attn_baseline,
         seq_len=data_cfg.seq_len,
+        beta=args.beta,
     ).to(device)
     ddpm = SimpleDDPM(T=args.steps, device=device)
     component_named_params = list(
