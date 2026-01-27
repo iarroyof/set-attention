@@ -9,12 +9,24 @@ from typing import List
 from set_attention.data.hf_cache import ensure_hf_cache
 
 
-def _load_wmt16_train(cache_dir: Path):
+def _load_seq2seq_train(dataset: str, cache_dir: Path):
     try:
         from datasets import load_dataset  # type: ignore
     except Exception as exc:
         raise ImportError("HuggingFace 'datasets' package is required for WMT16 subsets.") from exc
-    return load_dataset("wmt16", "ro-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir))["train"]
+    if dataset == "wmt16_en_ro":
+        return load_dataset(
+            "wmt16", "ro-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
+        )["train"]
+    if dataset == "wmt16_en_es":
+        return load_dataset(
+            "wmt16", "es-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
+        )["train"]
+    if dataset == "cnn_dailymail":
+        return load_dataset(
+            "cnn_dailymail", "3.0.0", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
+        )["train"]
+    raise ValueError(f"Unsupported dataset: {dataset}")
 
 
 def _sample_indices(total: int, pct: float, seed: int) -> List[int]:
@@ -26,8 +38,17 @@ def _sample_indices(total: int, pct: float, seed: int) -> List[int]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build deterministic percentage subsets for WMT16 En-Ro train split.")
+    parser = argparse.ArgumentParser(
+        description="Build deterministic percentage subsets for seq2seq train splits."
+    )
     parser.add_argument("--pct", nargs="+", type=float, required=True, help="Percentages to sample (e.g., 10 25 50).")
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="wmt16_en_ro",
+        choices=["wmt16_en_ro", "wmt16_en_es", "cnn_dailymail"],
+        help="Seq2seq dataset to subset.",
+    )
     parser.add_argument("--output-dir", type=str, default="subsets")
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument(
@@ -43,7 +64,7 @@ def main() -> None:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    ds_train = _load_wmt16_train(cache_dir)
+    ds_train = _load_seq2seq_train(args.dataset, cache_dir)
     total = len(ds_train)
     if total <= 0:
         raise RuntimeError("WMT16 train split is empty.")
@@ -54,12 +75,12 @@ def main() -> None:
             raise ValueError(f"--pct must be in (0,100); got {pct}")
         indices = _sample_indices(total, pct, args.seed)
         label = f"{int(round(pct))}pct"
-        out_path = out_dir / f"wmt16_en_ro_train_{label}.json"
+        out_path = out_dir / f"{args.dataset}_train_{label}.json"
         if out_path.exists() and not args.overwrite:
             print(f"[subset] exists; skipping {out_path}")
             continue
         payload = {
-            "dataset": "wmt16_en_ro",
+            "dataset": args.dataset,
             "split": "train",
             "pct": pct,
             "seed": args.seed,

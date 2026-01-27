@@ -53,8 +53,15 @@ def main():
     ap.add_argument(
         "--datasets",
         nargs="+",
-        default=["wikitext2", "wikitext103"],
-        choices=["wikitext2", "wikitext103"],
+        default=["wikitext2", "wikitext103", "wmt16_en_ro", "wmt16_en_es", "cnn_dailymail"],
+        choices=[
+            "wikitext2",
+            "wikitext103",
+            "wmt16_en_ro",
+            "wmt16_en_es",
+            "cnn_dailymail",
+            "wmt14_fr_en",
+        ],
         help="Datasets to prefetch.",
     )
     args = ap.parse_args()
@@ -65,11 +72,18 @@ def main():
     force_online()
     print("[prefetch] using cache:", cache_dir)
 
-    name_map = {"wikitext2": "wikitext-2-raw-v1", "wikitext103": "wikitext-103-raw-v1"}
+    name_map = {
+        "wikitext2": ("Salesforce/wikitext", "wikitext-2-raw-v1"),
+        "wikitext103": ("Salesforce/wikitext", "wikitext-103-raw-v1"),
+        "wmt16_en_ro": ("wmt16", "ro-en"),
+        "wmt16_en_es": ("wmt16", "es-en"),
+        "cnn_dailymail": ("abisee/cnn_dailymail", "3.0.0"),
+        "wmt14_fr_en": ("wmt/wmt14", "fr-en"),
+    }
     for ds in args.datasets:
-        cfg = name_map[ds]
-        print(f"[prefetch] downloading {ds} ({cfg})...")
-        load_dataset("wikitext", cfg, cache_dir=str(cache_dir), download_mode="reuse_dataset_if_exists")
+        name, cfg = name_map[ds]
+        print(f"[prefetch] downloading {ds} ({name}:{cfg})...")
+        load_dataset(name, cfg, cache_dir=str(cache_dir), download_mode="reuse_dataset_if_exists")
         print(f"[prefetch] done {ds}")
     print("[prefetch] completed.")
 

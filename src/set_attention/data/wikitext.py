@@ -6,8 +6,8 @@ from typing import Iterator, List, Optional, Tuple
 
 
 _WIKITEXT_CONFIGS = {
-    "wikitext2": ("wikitext", "wikitext-2-raw-v1"),
-    "wikitext103": ("wikitext", "wikitext-103-raw-v1"),
+    "wikitext2": ("Salesforce/wikitext", "wikitext-2-raw-v1"),
+    "wikitext103": ("Salesforce/wikitext", "wikitext-103-raw-v1"),
 }
 
 
