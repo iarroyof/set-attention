@@ -18,6 +18,7 @@ def print_env():
         "TRANSFORMERS_OFFLINE",
         "HF_HOME",
         "HF_DATASETS_CACHE",
+        "HF_HUB_CACHE",
     ]
     print("[env] current environment:")
     for k in keys:
@@ -47,9 +48,41 @@ def dns_check():
             print(f"[dns] {host} DNS FAIL: {exc}")
 
 
+def _set_offline_mode(enable: bool) -> None:
+    if enable:
+        os.environ["HF_DATASETS_OFFLINE"] = "1"
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    else:
+        for k in ("HF_DATASETS_OFFLINE", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"):
+            if k in os.environ:
+                os.environ.pop(k)
+
+
+def _try_cached_first(name: str, cfg: str, cache_dir: Path) -> bool:
+    _set_offline_mode(True)
+    try:
+        load_dataset(name, cfg, cache_dir=str(cache_dir), download_mode="reuse_dataset_if_exists")
+        return True
+    except Exception:
+        return False
+    finally:
+        _set_offline_mode(False)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Prefetch datasets into HF cache for offline reuse.")
     ap.add_argument("--cache-dir", type=str, default="", help="HF cache root; empty uses HF_HOME/HF_DATASETS_CACHE.")
+    ap.add_argument(
+        "--offline",
+        action="store_true",
+        help="Only use cached datasets; do not attempt network access.",
+    )
+    ap.add_argument(
+        "--force-online",
+        action="store_true",
+        help="Force network access even if cache exists.",
+    )
     ap.add_argument(
         "--datasets",
         nargs="+",
@@ -62,7 +95,11 @@ def main():
     cache_dir = ensure_hf_cache(args.cache_dir)
     print_env()
     dns_check()
-    force_online()
+    if args.force_online:
+        force_online()
+    elif args.offline:
+        _set_offline_mode(True)
+        print("[env] offline mode enabled for cached-only loads.")
     print("[prefetch] using cache:", cache_dir)
 
     name_map = {
@@ -74,7 +111,19 @@ def main():
     for ds in args.datasets:
         name, cfg = name_map[ds]
         print(f"[prefetch] downloading {ds} ({name}:{cfg})...")
-        load_dataset(name, cfg, cache_dir=str(cache_dir), download_mode="reuse_dataset_if_exists")
+        if not args.force_online and not args.offline:
+            if _try_cached_first(name, cfg, cache_dir):
+                print(f"[prefetch] cached {ds}")
+                continue
+        try:
+            load_dataset(name, cfg, cache_dir=str(cache_dir), download_mode="reuse_dataset_if_exists")
+        except Exception as exc:
+            if args.offline:
+                raise
+            print(f"[prefetch] cache load failed for {ds}: {exc}")
+            print("[prefetch] retrying with forced online mode...")
+            force_online()
+            load_dataset(name, cfg, cache_dir=str(cache_dir), download_mode="reuse_dataset_if_exists")
         print(f"[prefetch] done {ds}")
     print("[prefetch] completed.")
 
