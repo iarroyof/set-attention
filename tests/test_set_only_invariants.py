@@ -21,6 +21,9 @@ def test_set_only_forward_shapes():
         stride=2,
         max_seq_len=8,
     )
+    model.train()
     input_ids = torch.randint(0, 50, (2, 8))
     logits = model(input_ids)
     assert logits.shape == (2, 8, 50)
+    stats = model.get_diagnostics()
+    assert "ausa/active_set_ratio" in stats

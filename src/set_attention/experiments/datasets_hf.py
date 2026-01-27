@@ -28,6 +28,7 @@ def load_seq2seq_pairs(
     Supported:
       - 'wmt16_en_ro': English↔Romanian translation (uses 'wmt16', 'ro-en' config).
       - 'wmt16_en_es': English↔Spanish translation (uses 'wmt16', 'es-en' config).
+      - 'wmt16_en_fr': English↔French translation (uses 'wmt16', 'fr-en' config).
       - 'cnn_dailymail': summarization ('cnn_dailymail', '3.0.0').
 
     Returns lists (src_texts, tgt_texts) for the requested split. If datasets
@@ -84,6 +85,28 @@ def load_seq2seq_pairs(
             tr = rec.get("translation", {})
             src = tr.get("en", "")
             tgt = tr.get("es", "")
+            if src and tgt:
+                src_list.append(src)
+                tgt_list.append(tgt)
+            if limit is not None and len(src_list) >= limit:
+                break
+    elif dataset == "wmt16_en_fr":
+        try:
+            ds = load_dataset("wmt16", "fr-en", download_mode="reuse_dataset_if_exists", **kwargs)
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to load wmt16 fr-en. Dataset may be missing from cache and network download failed. "
+                "Prefetch into the shared cache or enable network access. "
+                f"cache_dir={cache_root or 'default'} | original error: {exc}"
+            ) from exc
+        ds_split = ds[split]
+        if indices is not None:
+            ds_split = ds_split.select(indices)
+        for rec in ds_split:
+            # translation dict has keys 'fr','en'
+            tr = rec.get("translation", {})
+            src = tr.get("en", "")
+            tgt = tr.get("fr", "")
             if src and tgt:
                 src_list.append(src)
                 tgt_list.append(tgt)

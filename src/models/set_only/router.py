@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
+
 import torch
 from torch import nn
 
 
+@dataclass
+class RouterOutput:
+    token_repr: torch.Tensor
+    bank_indices: torch.Tensor
+    num_sets: int
+    probs: torch.Tensor | None = None
+    topk_indices: torch.Tensor | None = None
+
+
 class UniformRouter(nn.Module):
-    def forward(self, set_states: torch.Tensor, token_to_sets: torch.Tensor) -> torch.Tensor:
+    def forward(self, set_states: torch.Tensor, token_to_sets: torch.Tensor) -> RouterOutput:
         if set_states.dim() != 3:
             raise ValueError("set_states must be [batch, m, d]")
         batch, _, d_model = set_states.shape
@@ -17,7 +28,13 @@ class UniformRouter(nn.Module):
         mask = (token_to_sets >= 0).unsqueeze(0).unsqueeze(-1)
         summed = (gathered * mask).sum(dim=2)
         counts = mask.sum(dim=2).clamp_min(1)
-        return summed / counts
+        token_repr = summed / counts
+        bank_indices = token_to_sets[:, 0].clamp_min(0).unsqueeze(0).expand(batch, -1)
+        return RouterOutput(
+            token_repr=token_repr,
+            bank_indices=bank_indices,
+            num_sets=set_states.shape[1],
+        )
 
 
 class LearnedRouter(nn.Module):
@@ -34,7 +51,7 @@ class LearnedRouter(nn.Module):
         set_states: torch.Tensor,
         desc_router: torch.Tensor,
         token_to_sets: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> RouterOutput:
         if token_states.dim() != 3:
             raise ValueError("token_states must be [batch, seq, d]")
         batch, seq_len, _ = token_states.shape
@@ -57,4 +74,15 @@ class LearnedRouter(nn.Module):
             scores = keep
 
         weights = torch.softmax(scores, dim=-1)
-        return torch.matmul(weights, set_states)
+        token_repr = torch.matmul(weights, set_states)
+        bank_indices = weights.argmax(dim=-1)
+        topk_indices = None
+        if self.topk and self.topk < num_sets:
+            topk_indices = torch.topk(scores, self.topk, dim=-1).indices
+        return RouterOutput(
+            token_repr=token_repr,
+            bank_indices=bank_indices,
+            num_sets=num_sets,
+            probs=None,
+            topk_indices=topk_indices,
+        )

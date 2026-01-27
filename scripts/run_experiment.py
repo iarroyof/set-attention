@@ -14,6 +14,7 @@ from config.load import load_config  # noqa: E402
 from data.wikitext2 import Wikitext2Dataset  # noqa: E402
 from models.baseline_token import TransformerLM  # noqa: E402
 from models.set_only import SetOnlyLM  # noqa: E402
+from train.experiment_logger import ExperimentLogger  # noqa: E402
 from train.loop import evaluate, train_one_epoch  # noqa: E402
 
 
@@ -31,6 +32,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Validate config and exit without loading data or running training",
     )
+    parser.add_argument("--wandb", action="store_true", help="Enable W&B logging")
+    parser.add_argument("--wandb-project", default=None, help="W&B project override")
+    parser.add_argument(
+        "--wandb-tags",
+        default="",
+        help="Comma-separated W&B tags override",
+    )
+    parser.add_argument("--csv-path", default=None, help="CSV metrics path override")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return parser.parse_args()
 
@@ -105,13 +114,31 @@ def main() -> None:
     if cfg["model"].get("vocab_size", 0) in (0, None):
         cfg["model"]["vocab_size"] = vocab_size
     model = build_model(cfg["model"]).to(device)
+    wandb_tags = [t for t in args.wandb_tags.split(",") if t]
+    logger = ExperimentLogger(
+        config=cfg,
+        csv_path=args.csv_path,
+        wandb_project=args.wandb_project,
+        wandb_tags=wandb_tags or None,
+        wandb_enable=True if args.wandb else None,
+    )
+    logger.log_model_complexity(model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["training"]["lr"])
 
     epochs = cfg["training"]["epochs"]
-    for epoch in range(1, epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, device)
-        val_loss = evaluate(model, val_loader, device)
-        print(f"epoch={epoch} train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
+    try:
+        for epoch in range(1, epochs + 1):
+            logger.start_epoch(num_train_samples=len(train_loader.dataset))
+            train_metrics = train_one_epoch(model, train_loader, optimizer, device)
+            val_metrics = evaluate(model, val_loader, device)
+            set_diagnostics = model.get_diagnostics() if hasattr(model, "get_diagnostics") else None
+            logger.log_epoch(epoch, train_metrics, val_metrics, set_diagnostics)
+            print(
+                f"epoch={epoch} train_loss={train_metrics['loss']:.4f} "
+                f"val_loss={val_metrics['loss']:.4f}"
+            )
+    finally:
+        logger.finish()
 
 
 if __name__ == "__main__":

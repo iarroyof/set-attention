@@ -4,7 +4,8 @@ import torch
 from torch import nn
 
 from .banks import build_window_bank, num_sets_for_length
-from .router import LearnedRouter, UniformRouter
+from .diagnostics import SetDiagnostics
+from .router import LearnedRouter, UniformRouter, RouterOutput
 from .ska_block import SetAttentionBlock
 from set_attention.adapter_factory import create_adapter, select_adapter_type
 from set_attention.backends.dense_exact import DenseExactBackend
@@ -130,6 +131,7 @@ class SetOnlyLM(nn.Module):
 
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         self.adapter = None
+        self.diagnostics = SetDiagnostics()
         if feature_mode != "geometry_only":
             phi_dim = d_model
             d_head = d_model // num_heads
@@ -208,9 +210,17 @@ class SetOnlyLM(nn.Module):
             set_states = block(set_states, geom_bias, content_bias, None, seq_len)
 
         if isinstance(self.router, UniformRouter):
-            token_out = self.router(set_states, bank.token_to_sets)
+            router_out: RouterOutput = self.router(set_states, bank.token_to_sets)
         else:
             desc_router = features.desc_router
-            token_out = self.router(token_states, set_states, desc_router, bank.token_to_sets)
+            router_out = self.router(token_states, set_states, desc_router, bank.token_to_sets)
 
-        return self.lm_head(token_out)
+        if self.training:
+            self.diagnostics.update(router_out.bank_indices, router_out.num_sets)
+
+        return self.lm_head(router_out.token_repr)
+
+    def get_diagnostics(self) -> dict[str, float]:
+        stats = self.diagnostics.get_epoch_stats()
+        self.diagnostics.reset()
+        return stats

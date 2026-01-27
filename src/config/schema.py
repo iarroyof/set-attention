@@ -40,6 +40,10 @@ SET_ONLY_KEYS = {
     "adapter_budget_fraction",
 }
 
+LOGGING_KEYS = {"wandb", "csv"}
+WANDB_KEYS = {"enable", "project", "tags", "run_name"}
+CSV_KEYS = {"path"}
+
 
 def validate_config(cfg: dict) -> None:
     if "model" not in cfg:
@@ -104,3 +108,24 @@ def validate_config(cfg: dict) -> None:
 
     if "family" in cfg.get("data", {}):
         raise ConfigError("data.family is not allowed; use model.family only")
+
+    if "logging" in cfg:
+        if not isinstance(cfg["logging"], dict):
+            raise ConfigError("logging must be a mapping")
+        unexpected = set(cfg["logging"].keys()) - LOGGING_KEYS
+        if unexpected:
+            raise ConfigError(f"Unexpected logging keys: {sorted(unexpected)}")
+        wandb_cfg = cfg["logging"].get("wandb", {})
+        if wandb_cfg and not isinstance(wandb_cfg, dict):
+            raise ConfigError("logging.wandb must be a mapping")
+        if isinstance(wandb_cfg, dict):
+            extra = set(wandb_cfg.keys()) - WANDB_KEYS
+            if extra:
+                raise ConfigError(f"Unexpected logging.wandb keys: {sorted(extra)}")
+        csv_cfg = cfg["logging"].get("csv", {})
+        if csv_cfg and not isinstance(csv_cfg, dict):
+            raise ConfigError("logging.csv must be a mapping")
+        if isinstance(csv_cfg, dict):
+            extra = set(csv_cfg.keys()) - CSV_KEYS
+            if extra:
+                raise ConfigError(f"Unexpected logging.csv keys: {sorted(extra)}")

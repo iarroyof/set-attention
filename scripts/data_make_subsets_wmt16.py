@@ -22,6 +22,10 @@ def _load_seq2seq_train(dataset: str, cache_dir: Path):
         return load_dataset(
             "wmt16", "es-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
         )["train"]
+    if dataset == "wmt16_en_fr":
+        return load_dataset(
+            "wmt16", "fr-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
+        )["train"]
     if dataset == "cnn_dailymail":
         return load_dataset(
             "cnn_dailymail", "3.0.0", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
@@ -46,7 +50,7 @@ def main() -> None:
         "--dataset",
         type=str,
         default="wmt16_en_ro",
-        choices=["wmt16_en_ro", "wmt16_en_es", "cnn_dailymail"],
+        choices=["wmt16_en_ro", "wmt16_en_es", "wmt16_en_fr", "cnn_dailymail"],
         help="Seq2seq dataset to subset.",
     )
     parser.add_argument("--output-dir", type=str, default="subsets")

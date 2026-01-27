@@ -53,12 +53,20 @@ def main():
     ap.add_argument(
         "--datasets",
         nargs="+",
-        default=["wikitext2", "wikitext103", "wmt16_en_ro", "wmt16_en_es", "cnn_dailymail"],
+        default=[
+            "wikitext2",
+            "wikitext103",
+            "wmt16_en_ro",
+            "wmt16_en_es",
+            "wmt16_en_fr",
+            "cnn_dailymail",
+        ],
         choices=[
             "wikitext2",
             "wikitext103",
             "wmt16_en_ro",
             "wmt16_en_es",
+            "wmt16_en_fr",
             "cnn_dailymail",
             "wmt14_fr_en",
         ],
@@ -77,6 +85,7 @@ def main():
         "wikitext103": ("Salesforce/wikitext", "wikitext-103-raw-v1"),
         "wmt16_en_ro": ("wmt16", "ro-en"),
         "wmt16_en_es": ("wmt16", "es-en"),
+        "wmt16_en_fr": ("wmt16", "fr-en"),
         "cnn_dailymail": ("abisee/cnn_dailymail", "3.0.0"),
         "wmt14_fr_en": ("wmt/wmt14", "fr-en"),
     }
