@@ -13,18 +13,10 @@ def _load_seq2seq_train(dataset: str, cache_dir: Path):
     try:
         from datasets import load_dataset  # type: ignore
     except Exception as exc:
-        raise ImportError("HuggingFace 'datasets' package is required for WMT16 subsets.") from exc
-    if dataset == "wmt16_en_ro":
+        raise ImportError("HuggingFace 'datasets' package is required for seq2seq subsets.") from exc
+    if dataset == "wmt14_fr_en":
         return load_dataset(
-            "wmt/wmt16", "ro-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
-        )["train"]
-    if dataset == "wmt16_en_es":
-        return load_dataset(
-            "wmt/wmt16", "es-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
-        )["train"]
-    if dataset == "wmt16_en_fr":
-        return load_dataset(
-            "wmt/wmt16", "fr-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
+            "wmt/wmt14", "fr-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
         )["train"]
     if dataset == "cnn_dailymail":
         return load_dataset(
@@ -49,8 +41,8 @@ def main() -> None:
     parser.add_argument(
         "--dataset",
         type=str,
-        default="wmt16_en_ro",
-        choices=["wmt16_en_ro", "wmt16_en_es", "wmt16_en_fr", "cnn_dailymail"],
+        default="wmt14_fr_en",
+        choices=["wmt14_fr_en", "cnn_dailymail"],
         help="Seq2seq dataset to subset.",
     )
     parser.add_argument("--output-dir", type=str, default="subsets")

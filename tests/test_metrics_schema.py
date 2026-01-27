@@ -29,5 +29,5 @@ def test_detect_task_dataset_fields(field, task):
 
 
 def test_detect_task_dataset_mapping():
-    cfg = {"data": {"dataset": "wmt16_en_fr"}}
+    cfg = {"data": {"dataset": "wmt14_fr_en"}}
     assert detect_task(cfg) == "seq2seq"
