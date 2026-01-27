@@ -70,6 +70,14 @@ def _try_cached_first(name: str, cfg: str, cache_dir: Path) -> bool:
         _set_offline_mode(False)
 
 
+def _has_cache_marker(name: str, cfg: str, cache_dir: Path) -> bool:
+    dataset_dir = cache_dir / name.replace("/", "___")
+    if dataset_dir.exists():
+        return True
+    pattern = f"*{name.replace('/', '___')}_{cfg}_*.lock"
+    return any(cache_dir.glob(pattern))
+
+
 def main():
     ap = argparse.ArgumentParser(description="Prefetch datasets into HF cache for offline reuse.")
     ap.add_argument("--cache-dir", type=str, default="", help="HF cache root; empty uses HF_HOME/HF_DATASETS_CACHE.")
@@ -111,6 +119,9 @@ def main():
     for ds in args.datasets:
         name, cfg = name_map[ds]
         print(f"[prefetch] downloading {ds} ({name}:{cfg})...")
+        if not args.force_online and _has_cache_marker(name, cfg, cache_dir):
+            print(f"[prefetch] cached {ds} (marker)")
+            continue
         if not args.force_online and not args.offline:
             if _try_cached_first(name, cfg, cache_dir):
                 print(f"[prefetch] cached {ds}")
