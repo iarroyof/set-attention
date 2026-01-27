@@ -27,7 +27,7 @@ class SetDiagnostics:
     def update(self, bank_indices: torch.Tensor, num_sets: int) -> None:
         if bank_indices.numel() == 0 or num_sets <= 0:
             return
-        flat = bank_indices.view(-1).clamp(min=0, max=num_sets - 1)
+        flat = bank_indices.reshape(-1).clamp(min=0, max=num_sets - 1)
         counts = torch.bincount(flat, minlength=num_sets).float()
         total = counts.sum().clamp_min(1.0)
         p = counts / total
