@@ -83,9 +83,9 @@ def main():
     name_map = {
         "wikitext2": ("Salesforce/wikitext", "wikitext-2-raw-v1"),
         "wikitext103": ("Salesforce/wikitext", "wikitext-103-raw-v1"),
-        "wmt16_en_ro": ("wmt16", "ro-en"),
-        "wmt16_en_es": ("wmt16", "es-en"),
-        "wmt16_en_fr": ("wmt16", "fr-en"),
+        "wmt16_en_ro": ("wmt/wmt16", "ro-en"),
+        "wmt16_en_es": ("wmt/wmt16", "es-en"),
+        "wmt16_en_fr": ("wmt/wmt16", "fr-en"),
         "cnn_dailymail": ("abisee/cnn_dailymail", "3.0.0"),
         "wmt14_fr_en": ("wmt/wmt14", "fr-en"),
     }

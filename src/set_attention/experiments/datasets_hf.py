@@ -48,7 +48,7 @@ def load_seq2seq_pairs(
 
     if dataset == "wmt16_en_ro":
         try:
-            ds = load_dataset("wmt16", "ro-en", download_mode="reuse_dataset_if_exists", **kwargs)
+            ds = load_dataset("wmt/wmt16", "ro-en", download_mode="reuse_dataset_if_exists", **kwargs)
         except Exception as exc:
             raise RuntimeError(
                 "Failed to load wmt16 ro-en. Dataset may be missing from cache and network download failed. "
@@ -70,7 +70,7 @@ def load_seq2seq_pairs(
                 break
     elif dataset == "wmt16_en_es":
         try:
-            ds = load_dataset("wmt16", "es-en", download_mode="reuse_dataset_if_exists", **kwargs)
+            ds = load_dataset("wmt/wmt16", "es-en", download_mode="reuse_dataset_if_exists", **kwargs)
         except Exception as exc:
             raise RuntimeError(
                 "Failed to load wmt16 es-en. Dataset may be missing from cache and network download failed. "
@@ -92,7 +92,7 @@ def load_seq2seq_pairs(
                 break
     elif dataset == "wmt16_en_fr":
         try:
-            ds = load_dataset("wmt16", "fr-en", download_mode="reuse_dataset_if_exists", **kwargs)
+            ds = load_dataset("wmt/wmt16", "fr-en", download_mode="reuse_dataset_if_exists", **kwargs)
         except Exception as exc:
             raise RuntimeError(
                 "Failed to load wmt16 fr-en. Dataset may be missing from cache and network download failed. "

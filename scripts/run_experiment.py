@@ -25,7 +25,8 @@ def parse_args() -> argparse.Namespace:
         "--override",
         action="append",
         default=[],
-        help="Override config values, e.g. model.d_model=256",
+        nargs="+",
+        help="Override config values, e.g. model.d_model=256 data.limit=10",
     )
     parser.add_argument(
         "--dry-run",
@@ -103,7 +104,13 @@ def build_dataloaders(data_cfg: dict) -> tuple[DataLoader, DataLoader, int]:
 
 def main() -> None:
     args = parse_args()
-    cfg = load_config(args.config, overrides=args.override)
+    overrides = []
+    for group in args.override:
+        if isinstance(group, list):
+            overrides.extend(group)
+        else:
+            overrides.append(group)
+    cfg = load_config(args.config, overrides=overrides)
     if args.dry_run:
         print("Dry run: config validated. No data loaded or training run.")
         print(cfg)

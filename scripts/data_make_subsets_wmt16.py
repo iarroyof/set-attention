@@ -16,15 +16,15 @@ def _load_seq2seq_train(dataset: str, cache_dir: Path):
         raise ImportError("HuggingFace 'datasets' package is required for WMT16 subsets.") from exc
     if dataset == "wmt16_en_ro":
         return load_dataset(
-            "wmt16", "ro-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
+            "wmt/wmt16", "ro-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
         )["train"]
     if dataset == "wmt16_en_es":
         return load_dataset(
-            "wmt16", "es-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
+            "wmt/wmt16", "es-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
         )["train"]
     if dataset == "wmt16_en_fr":
         return load_dataset(
-            "wmt16", "fr-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
+            "wmt/wmt16", "fr-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
         )["train"]
     if dataset == "cnn_dailymail":
         return load_dataset(
