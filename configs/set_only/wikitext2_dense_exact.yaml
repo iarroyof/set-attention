@@ -22,4 +22,4 @@ data:
 
 training:
   epochs: 5
-  lr: 3e-4
+  lr: 0.0003
