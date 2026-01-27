@@ -1,7 +1,7 @@
 model:
   family: baseline_token
   architecture: transformer_lm
-  vocab_size: 50257
+  vocab_size: 0
   d_model: 512
   nhead: 8
   num_layers: 6
