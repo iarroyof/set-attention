@@ -5,6 +5,7 @@ from typing import Any
 
 import yaml
 
+from config.compatibility import validate_compatibility
 from config.schema import validate_config
 
 
@@ -34,4 +35,4 @@ def load_config(path: str | Path, overrides: list[str] | None = None) -> dict:
         value = yaml.safe_load(value_str)
         _apply_override(cfg, key, value)
     validate_config(cfg)
-    return cfg
+    return validate_compatibility(cfg)
