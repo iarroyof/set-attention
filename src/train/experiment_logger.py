@@ -176,8 +176,8 @@ class ExperimentLogger:
             tags=tags,
             reinit=True,
         )
-        if self.wandb and self.wandb.run:
-            self.wandb.run.name = self.run_name
+        if self.wandb:
+            self.wandb.name = self.run_name
 
     def _columns(self) -> List[str]:
         cfg_fields = [
