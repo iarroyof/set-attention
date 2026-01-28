@@ -9,7 +9,7 @@ from typing import List
 from set_attention.data.hf_cache import ensure_hf_cache
 
 
-def _load_seq2seq_train(dataset: str, cache_dir: Path):
+def _load_seq2seq_train(dataset: str, cache_dir: Path, split: str):
     try:
         from datasets import load_dataset  # type: ignore
     except Exception as exc:
@@ -17,11 +17,11 @@ def _load_seq2seq_train(dataset: str, cache_dir: Path):
     if dataset == "wmt14_fr_en":
         return load_dataset(
             "wmt/wmt14", "fr-en", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
-        )["train"]
+        )[split]
     if dataset == "cnn_dailymail":
         return load_dataset(
-            "cnn_dailymail", "3.0.0", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
-        )["train"]
+            "abisee/cnn_dailymail", "3.0.0", download_mode="reuse_dataset_if_exists", cache_dir=str(cache_dir)
+        )[split]
     raise ValueError(f"Unsupported dataset: {dataset}")
 
 
@@ -35,9 +35,16 @@ def _sample_indices(total: int, pct: float, seed: int) -> List[int]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build deterministic percentage subsets for seq2seq train splits."
+        description="Build deterministic percentage subsets for seq2seq dataset splits."
     )
     parser.add_argument("--pct", nargs="+", type=float, required=True, help="Percentages to sample (e.g., 10 25 50).")
+    parser.add_argument(
+        "--split",
+        type=str,
+        default="train",
+        choices=["train", "validation", "test"],
+        help="Dataset split to subset.",
+    )
     parser.add_argument(
         "--dataset",
         type=str,
@@ -60,10 +67,10 @@ def main() -> None:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    ds_train = _load_seq2seq_train(args.dataset, cache_dir)
-    total = len(ds_train)
+    ds_split = _load_seq2seq_train(args.dataset, cache_dir, args.split)
+    total = len(ds_split)
     if total <= 0:
-        raise RuntimeError("WMT16 train split is empty.")
+        raise RuntimeError(f"{args.dataset} {args.split} split is empty.")
 
     for raw in args.pct:
         pct = float(raw)
@@ -71,13 +78,13 @@ def main() -> None:
             raise ValueError(f"--pct must be in (0,100); got {pct}")
         indices = _sample_indices(total, pct, args.seed)
         label = f"{int(round(pct))}pct"
-        out_path = out_dir / f"{args.dataset}_train_{label}.json"
+        out_path = out_dir / f"{args.dataset}_{args.split}_{label}.json"
         if out_path.exists() and not args.overwrite:
             print(f"[subset] exists; skipping {out_path}")
             continue
         payload = {
             "dataset": args.dataset,
-            "split": "train",
+            "split": args.split,
             "pct": pct,
             "seed": args.seed,
             "total": total,

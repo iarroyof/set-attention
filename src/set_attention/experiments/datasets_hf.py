@@ -27,7 +27,7 @@ def load_seq2seq_pairs(
 
     Supported:
       - 'wmt14_fr_en': French↔English translation (uses 'wmt/wmt14', 'fr-en' config).
-      - 'cnn_dailymail': summarization ('cnn_dailymail', '3.0.0').
+      - 'cnn_dailymail': summarization ('abisee/cnn_dailymail', '3.0.0').
 
     Returns lists (src_texts, tgt_texts) for the requested split. If datasets
     library is unavailable or download fails, raises ImportError/RuntimeError.
@@ -68,7 +68,9 @@ def load_seq2seq_pairs(
                 break
     elif dataset == "cnn_dailymail":
         try:
-            ds = load_dataset("cnn_dailymail", "3.0.0", download_mode="reuse_dataset_if_exists", **kwargs)
+            ds = load_dataset(
+                "abisee/cnn_dailymail", "3.0.0", download_mode="reuse_dataset_if_exists", **kwargs
+            )
         except Exception as exc:
             raise RuntimeError(
                 "Failed to load cnn_dailymail. Dataset may be missing from cache and network download failed. "
