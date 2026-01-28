@@ -62,7 +62,7 @@ class LearnedRouter(nn.Module):
 
         if self.restrict_to_sets:
             mask = torch.zeros((seq_len, num_sets), dtype=torch.bool, device=scores.device)
-            rows = torch.arange(seq_len, device=scores.device).unsqueeze(1)
+            rows = torch.arange(seq_len, device=scores.device).unsqueeze(1).expand_as(token_to_sets)
             valid = token_to_sets >= 0
             mask[rows[valid], token_to_sets[valid]] = True
             scores = scores.masked_fill(~mask.unsqueeze(0), float("-inf"))
