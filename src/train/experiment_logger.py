@@ -141,8 +141,28 @@ class ExperimentLogger:
         wandb_tags: Optional[List[str]],
         wandb_enable: Optional[bool],
     ) -> None:
-        wandb_cfg = self.cfg.get("logging", {}).get("wandb", {}) if isinstance(self.cfg.get("logging"), dict) else {}
-        enable = wandb_enable if wandb_enable is not None else bool(wandb_cfg.get("enable", False))
+        wandb_cfg = (
+            self.cfg.get("logging", {}).get("wandb", {})
+            if isinstance(self.cfg.get("logging"), dict)
+            else {}
+        )
+        sweep_env = any(
+            os.environ.get(key)
+            for key in ("WANDB_SWEEP_ID", "WANDB_RUN_ID", "WANDB_AGENT_ID")
+        )
+        explicit_enable = (
+            wandb_enable
+            if wandb_enable is not None
+            else wandb_cfg.get("enable")
+        )
+        if explicit_enable is None:
+            enable = bool(wandb_cfg) or sweep_env or bool(wandb_project) or bool(wandb_tags) or bool(os.environ.get("WANDB_PROJECT"))
+        else:
+            enable = bool(explicit_enable)
+        if enable and explicit_enable is None:
+            logging_cfg = self.cfg.setdefault("logging", {})
+            wandb_cfg = logging_cfg.setdefault("wandb", {})
+            wandb_cfg["enable"] = True
         if not enable:
             return
         try:
@@ -169,14 +189,30 @@ class ExperimentLogger:
         tags = list(dict.fromkeys([*auto_tags, *tags]))
         flat_cfg = _flatten_cfg(self.cfg)
         flat_cfg.update(self.attn_tags)
+        flat_cfg.setdefault("task", self.task)
+        flat_cfg.setdefault("dataset", self.dataset)
 
-        self.wandb = wandb.init(
-            project=project,
-            config=flat_cfg,
-            tags=tags,
-            reinit=True,
-        )
+        if sweep_env:
+            self.wandb = wandb.init(
+                project=project,
+                tags=tags,
+                reinit=True,
+            )
+            if self.wandb:
+                for key, value in flat_cfg.items():
+                    if key not in self.wandb.config:
+                        self.wandb.config[key] = value
+        else:
+            self.wandb = wandb.init(
+                project=project,
+                config=flat_cfg,
+                tags=tags,
+                reinit=True,
+            )
         if self.wandb:
+            wandb.define_metric("epoch")
+            for prefix in ("train/*", "val/*", "efficiency/*", "ausa/*", "model/*"):
+                wandb.define_metric(prefix, step_metric="epoch")
             self.wandb.name = self.run_name
 
     def _columns(self) -> List[str]:
@@ -306,8 +342,16 @@ class ExperimentLogger:
         self.csv_file.flush()
 
         if self.wandb:
-            wandb_row = {k: (None if v == "NA" else v) for k, v in csv_row.items()}
+            wandb_row = {"epoch": epoch}
+            wandb_row.update(self.model_metrics)
+            wandb_row.update(metrics)
+            wandb_row.update(efficiency)
+            if set_diagnostics:
+                wandb_row.update(set_diagnostics)
+            wandb_row = {k: v for k, v in wandb_row.items() if v is not None}
             self.wandb.log(wandb_row, step=epoch)
+            for key, value in wandb_row.items():
+                self.wandb.summary[key] = value
 
     def finish(self) -> None:
         if self.csv_file:
