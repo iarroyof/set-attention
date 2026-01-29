@@ -35,6 +35,17 @@ def train_one_epoch(
             logits.view(-1, logits.size(-1)), labels.view(-1)
         )
         loss.backward()
+        if hasattr(model, "diagnostics") and hasattr(model, "router"):
+            try:
+                router_params = dict(model.router.named_parameters())
+                model.diagnostics.update_router_params(router_params)
+            except Exception:
+                pass
+        if hasattr(model, "diagnostics") and hasattr(model, "attention_params"):
+            try:
+                model.diagnostics.update_params(model.attention_params())
+            except Exception:
+                pass
         grad_norm_sum += _grad_norm(model)
         grad_norm_steps += 1
         optimizer.step()

@@ -30,10 +30,17 @@ class UniformRouter(nn.Module):
         counts = mask.sum(dim=2).clamp_min(1)
         token_repr = summed / counts
         bank_indices = token_to_sets[:, 0].clamp_min(0).unsqueeze(0).expand(batch, -1)
+        weights = mask.squeeze(0)
+        weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1.0)
+        probs = torch.zeros((seq_len, set_states.shape[1]), device=weights.device)
+        valid = token_to_sets >= 0
+        if valid.any():
+            probs.scatter_(1, token_to_sets.clamp_min(0), weights)
         return RouterOutput(
             token_repr=token_repr,
             bank_indices=bank_indices,
             num_sets=set_states.shape[1],
+            probs=probs.unsqueeze(0).expand(batch, -1, -1),
         )
 
 
@@ -83,6 +90,6 @@ class LearnedRouter(nn.Module):
             token_repr=token_repr,
             bank_indices=bank_indices,
             num_sets=num_sets,
-            probs=None,
+            probs=weights,
             topk_indices=topk_indices,
         )

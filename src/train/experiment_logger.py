@@ -11,6 +11,7 @@ import torch
 from train.metrics_impl import perplexity
 from train.metrics_schema import (
     ATTENTION_TAGS,
+    BASELINE_DIAGNOSTICS,
     EFFICIENCY_METRICS,
     SET_DIAGNOSTICS,
     TASK_METRICS,
@@ -257,6 +258,7 @@ class ExperimentLogger:
         columns += UNIVERSAL_METRICS
         columns += EFFICIENCY_METRICS
         columns += SET_DIAGNOSTICS
+        columns += BASELINE_DIAGNOSTICS
         return columns
 
     def log_model_complexity(self, model: torch.nn.Module) -> None:

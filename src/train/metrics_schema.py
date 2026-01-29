@@ -34,12 +34,42 @@ SET_DIAGNOSTICS = [
     "ausa/routing_gini",
     "ausa/routing_top1_prob_mean",
     "ausa/set_reuse_jaccard",
+    "ausa/tokens_per_set_variance",
+    "ausa/router_confidence_mean",
+    "ausa/router_confidence_std",
+    "ausa/router_gradient_norm",
+    "ausa/router_param_norm",
+    "ausa/router_weight_change",
+    "ausa/top1_vs_random_kl",
+    "ausa/routing_consistency",
+    "ausa/set_embedding_variance",
+    "ausa/set_embedding_norm_mean",
+    "ausa/set_cosine_similarity_mean",
+    "ausa/set_rank_effective",
+    "ausa/set_attention_entropy_mean",
+    "ausa/set_attention_top1_mean",
+    "ausa/delta_routing_entropy",
+    "ausa/delta_set_variance",
+    "ausa/delta_router_confidence",
 ]
 
 ATTENTION_TAGS = [
     "attention/family",
     "attention/base_mechanism",
     "attention/set_enabled",
+]
+
+BASELINE_DIAGNOSTICS = [
+    "baseline/attention_entropy_mean",
+    "baseline/attention_entropy_norm",
+    "baseline/attention_top1_mean",
+    "baseline/attention_top1_std",
+    "baseline/attention_gradient_norm",
+    "baseline/attention_param_norm",
+    "baseline/attention_weight_change",
+    "baseline/attention_pattern_jaccard",
+    "baseline/delta_attention_entropy",
+    "baseline/delta_attention_confidence",
 ]
 
 DATASET_TO_TASK = {

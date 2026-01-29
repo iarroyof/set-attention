@@ -10,6 +10,7 @@ class KernelFeatureBuilder(nn.Module):
     def __init__(
         self,
         d_model: int,
+        d_phi: int,
         max_sets: int,
         gamma: float = 1.0,
         beta: float = 0.0,
@@ -18,7 +19,7 @@ class KernelFeatureBuilder(nn.Module):
         self.gamma = gamma
         self.beta = beta
         self.max_sets = max_sets
-        self.attn_proj = nn.Linear(max_sets, d_model)
+        self.attn_proj = nn.Linear(max_sets, d_phi)
         self.router_proj = nn.Linear(max_sets, d_model)
 
     def forward(self, sig: torch.Tensor, sizes: torch.Tensor) -> SetFeatures:

@@ -106,6 +106,22 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if family != "set_only":
         return cfg
 
+    pooling_cfg = model.get("pooling", "mean")
+    if isinstance(pooling_cfg, dict):
+        pooling_mode = pooling_cfg.get("mode", "mean")
+    else:
+        pooling_mode = pooling_cfg
+    require(
+        pooling_mode in {"mean", "soft_trimmed_boltzmann"},
+        "set_only: pooling.mode must be 'mean' or 'soft_trimmed_boltzmann'",
+    )
+    if model.get("multiscale"):
+        raise ConfigError("set_only: multiscale is not implemented in this runner")
+
+    d_phi = model.get("d_phi")
+    if d_phi is not None:
+        require(int(d_phi) > 0, "set_only: d_phi must be positive")
+
     require(window_size <= seq_len, "set_only: window_size must be <= max_seq_len")
     require(stride <= window_size, "set_only: stride must be <= window_size")
     require(max_sets >= 1, "set_only: max_sets must be >= 1")
@@ -150,6 +166,42 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
             _warn("router_topk is ignored for uniform router")
     if router_topk == max_sets:
         _warn("router_topk == max_sets is equivalent to full softmax")
+
+    sig_gating = model.get("sig_gating", {})
+    if sig_gating and sig_gating.get("enabled"):
+        method = sig_gating.get("method", "pos_topk")
+        require(
+            method in {"pos_topk", "pos_threshold", "minhash_topk", "minhash_threshold"},
+            "sig_gating.method must be pos_topk, pos_threshold, minhash_topk, or minhash_threshold",
+        )
+        if method.endswith("topk"):
+            k = int(sig_gating.get("k", 16))
+            require(k >= 1, "sig_gating.k must be >= 1")
+            require(k <= max_sets, "sig_gating.k must be <= max_sets")
+        else:
+            delta_threshold = float(sig_gating.get("delta_threshold", 0.25))
+            require(0 <= delta_threshold <= 1.0, "sig_gating.delta_threshold must be in [0,1]")
+        if method.startswith("minhash"):
+            sig_k = sig_gating.get("sig_k", None)
+            require(sig_k is not None, "sig_gating.sig_k is required for minhash gating")
+            require(int(sig_k) >= 1, "sig_gating.sig_k must be >= 1")
+
+    features_cfg = model.get("features", {})
+    if isinstance(features_cfg, dict):
+        hashed_cfg = features_cfg.get("hashed_counts", {})
+        if isinstance(hashed_cfg, dict) and "fusion" in hashed_cfg:
+            require(
+                hashed_cfg["fusion"] in {"mlp", "linear"},
+                "features.hashed_counts.fusion must be 'mlp' or 'linear'",
+            )
+        geometry_cfg = model.get("geometry", {})
+        if isinstance(geometry_cfg, dict):
+            for key in ("enabled", "apply_as_bias", "apply_in_phi_attn"):
+                if key in geometry_cfg:
+                    require(
+                        isinstance(geometry_cfg[key], bool),
+                        f"geometry.{key} must be a boolean",
+                    )
 
     feature_mode = model.get("feature_mode", "geometry_only")
     feature_params = model.get("feature_params") or {}

@@ -3,6 +3,50 @@ from __future__ import annotations
 import torch
 from torch import nn
 
+from .diagnostics import BaselineAttentionDiagnostics
+
+
+class BaselineEncoderLayer(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int,
+        dropout: float,
+    ) -> None:
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(
+            d_model, nhead, dropout=dropout, batch_first=True
+        )
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.activation = nn.GELU()
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        key_padding_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        attn_input = self.norm1(x)
+        attn_output, attn_weights = self.self_attn(
+            attn_input,
+            attn_input,
+            attn_input,
+            key_padding_mask=key_padding_mask,
+            need_weights=True,
+            average_attn_weights=True,
+        )
+        x = x + self.dropout1(attn_output)
+        ff_input = self.norm2(x)
+        ff_output = self.linear2(self.dropout(self.activation(self.linear1(ff_input))))
+        x = x + self.dropout2(ff_output)
+        return x, attn_weights
+
 
 class TransformerLM(nn.Module):
     """Clean baseline transformer for language modeling (token attention only)."""
@@ -21,17 +65,20 @@ class TransformerLM(nn.Module):
         self.token_emb = nn.Embedding(vocab_size, d_model)
         self.pos_emb = nn.Embedding(max_seq_len, d_model)
 
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            batch_first=True,
-            norm_first=True,
+        self.layers = nn.ModuleList(
+            [
+                BaselineEncoderLayer(
+                    d_model=d_model,
+                    nhead=nhead,
+                    dim_feedforward=dim_feedforward,
+                    dropout=dropout,
+                )
+                for _ in range(num_layers)
+            ]
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         self.max_seq_len = max_seq_len
+        self.diagnostics = BaselineAttentionDiagnostics()
 
     def forward(
         self,
@@ -57,5 +104,27 @@ class TransformerLM(nn.Module):
                 raise ValueError("attention_mask must be [batch, seq]")
             key_padding_mask = attention_mask == 0
 
-        x = self.transformer(x, src_key_padding_mask=key_padding_mask)
+        attn_sum = None
+        for layer in self.layers:
+            x, attn = layer(x, key_padding_mask=key_padding_mask)
+            attn_sum = attn if attn_sum is None else attn_sum + attn
+        if attn_sum is None:
+            attn_sum = torch.zeros(
+                (batch_size, seq_len, seq_len), device=x.device, dtype=x.dtype
+            )
+        attn_mean = attn_sum / max(len(self.layers), 1)
+        if self.training:
+            self.diagnostics.update(attn_mean.detach())
         return self.lm_head(x)
+
+    def get_diagnostics(self) -> dict[str, float]:
+        stats = self.diagnostics.get_epoch_stats()
+        self.diagnostics.reset()
+        return stats
+
+    def attention_params(self) -> dict[str, torch.Tensor]:
+        params: dict[str, torch.Tensor] = {}
+        for idx, layer in enumerate(self.layers):
+            for name, param in layer.self_attn.named_parameters():
+                params[f"layer{idx}.{name}"] = param
+        return params
