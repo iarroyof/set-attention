@@ -106,11 +106,11 @@ class SetDiagnostics:
                 self._add("ausa/set_cosine_similarity_mean", float(cos_sim[mask].mean().item()))
 
                 centered = samples - samples.mean(dim=0, keepdim=True)
-                s = torch.linalg.svdvals(centered)
-                if s.numel() > 0:
-                    p_s = s / s.sum().clamp_min(1e-8)
-                    eff_rank = torch.exp(-(p_s * torch.log(p_s + 1e-8)).sum())
-                    self._add("ausa/set_rank_effective", float(eff_rank.item()))
+                cov = (centered.transpose(0, 1) @ centered) / centered.shape[0]
+                trace = torch.trace(cov)
+                fro = torch.norm(cov, p="fro")
+                eff_rank = (trace ** 2) / (fro ** 2 + 1e-8)
+                self._add("ausa/set_rank_effective", float(eff_rank.item()))
 
         if set_attention_weights is not None:
             attn_entropy = -(set_attention_weights * torch.log(set_attention_weights + 1e-10)).sum(dim=-1)
