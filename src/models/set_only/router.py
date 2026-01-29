@@ -30,7 +30,7 @@ class UniformRouter(nn.Module):
         counts = mask.sum(dim=2).clamp_min(1)
         token_repr = summed / counts
         bank_indices = token_to_sets[:, 0].clamp_min(0).unsqueeze(0).expand(batch, -1)
-        weights = mask.squeeze(0)
+        weights = mask.squeeze(0).squeeze(-1).float()
         weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1.0)
         probs = torch.zeros((seq_len, set_states.shape[1]), device=weights.device)
         valid = token_to_sets >= 0
