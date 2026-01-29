@@ -113,6 +113,9 @@ class SetOnlyLM(nn.Module):
         if not geom_enabled:
             geom_apply_bias = False
             geom_apply_in_phi = False
+        self.geom_enabled = geom_enabled
+        self.geom_apply_bias = geom_apply_bias
+        self.geom_apply_in_phi = geom_apply_in_phi
 
         if feature_mode == "geometry_only":
             self.feature_builder = GeometryOnlyFeatureBuilder(
@@ -147,9 +150,9 @@ class SetOnlyLM(nn.Module):
                 "sig_gating": self.sig_gating,
                 "d_phi": self.d_phi,
                 "geometry": {
-                    "enabled": geom_enabled,
-                    "apply_as_bias": geom_apply_bias,
-                    "apply_in_phi_attn": geom_apply_in_phi,
+                    "enabled": self.geom_enabled,
+                    "apply_as_bias": self.geom_apply_bias,
+                    "apply_in_phi_attn": self.geom_apply_in_phi,
                 },
             }
         )
@@ -301,7 +304,7 @@ class SetOnlyLM(nn.Module):
                     max_id=self.token_emb.num_embeddings,
                 )
         geom_bias = features.geom_bias
-        if not geom_enabled or not geom_apply_bias:
+        if not self.geom_enabled or not self.geom_apply_bias:
             geom_bias = None
         content_bias = None
         if self.adapter is not None and features.phi_attn is not None:
