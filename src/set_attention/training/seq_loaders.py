@@ -6,8 +6,9 @@ from set_attention.experiments.data_nlp import (
     TextPairDataset,
     InMemoryTextPairDataset,
     InMemorySharedTextPairDataset,
+    StreamingSharedTextPairDataset,
 )
-from set_attention.experiments.datasets_hf import load_seq2seq_pairs
+from set_attention.experiments.datasets_hf import load_seq2seq_pairs, iter_seq2seq_pairs
 
 
 def get_seq2seq_datasets(
@@ -23,6 +24,9 @@ def get_seq2seq_datasets(
     max_len: int = 64,
     cache_dir: Optional[str] = None,
     shared_vocab: bool = True,
+    val_split: float = 0.2,
+    split_seed: int = 42,
+    streaming: bool = True,
 ):
     """Return (train_dataset, val_dataset) for seq2seq tasks.
 
@@ -35,12 +39,53 @@ def get_seq2seq_datasets(
         )
 
     if dataset:
+        if streaming:
+            def _train_iter():
+                return iter_seq2seq_pairs(
+                    dataset,
+                    split="train",
+                    limit=limit,
+                    cache_dir=cache_dir,
+                    val_split=val_split,
+                    split_seed=split_seed,
+                    streaming=streaming,
+                )
+
+            def _val_iter():
+                return iter_seq2seq_pairs(
+                    dataset,
+                    split="validation",
+                    limit=val_limit or limit,
+                    cache_dir=cache_dir,
+                    val_split=val_split,
+                    split_seed=split_seed,
+                    streaming=streaming,
+                )
+
+            # Build shared vocab from the train stream.
+            from collections import Counter
+
+            cnt = Counter()
+            for src, tgt in _train_iter():
+                cnt.update(src.split())
+                cnt.update(tgt.split())
+            itos = ["<pad>", "<s>", "</s>", "<unk>"]
+            for w, c in cnt.items():
+                if c >= 1:
+                    itos.append(w)
+            stoi = {w: i for i, w in enumerate(itos)}
+            train_ds = StreamingSharedTextPairDataset(_train_iter, stoi, {i: w for w, i in stoi.items()}, max_len=max_len)
+            val_ds = StreamingSharedTextPairDataset(_val_iter, stoi, {i: w for w, i in stoi.items()}, max_len=max_len)
+            return train_ds, val_ds
+
         src_tr, tgt_tr = load_seq2seq_pairs(
             dataset,
             split="train",
             limit=limit,
             cache_dir=cache_dir,
             indices=train_indices,
+            val_split=val_split,
+            split_seed=split_seed,
         )
         src_va, tgt_va = load_seq2seq_pairs(
             dataset,
@@ -48,6 +93,8 @@ def get_seq2seq_datasets(
             limit=val_limit or limit,
             cache_dir=cache_dir,
             indices=val_indices,
+            val_split=val_split,
+            split_seed=split_seed,
         )
         train_ds = InMemorySharedTextPairDataset(src_tr, tgt_tr, max_len=max_len)
         val_ds = InMemorySharedTextPairDataset(src_va, tgt_va, max_len=max_len)
@@ -63,6 +110,15 @@ def get_seq2seq_datasets(
             toks = [str(random.randint(1, 9)) for __ in range(L)]
             src_demo.append(" ".join(toks))
             tgt_demo.append(" ".join(reversed(toks)))
+        if streaming:
+            def _demo_iter():
+                for s, t in zip(src_demo, tgt_demo):
+                    yield s, t
+            stoi = {"<pad>": 0, "<s>": 1, "</s>": 2, "<unk>": 3}
+            itos = {i: w for w, i in stoi.items()}
+            train_ds = StreamingSharedTextPairDataset(_demo_iter, stoi, itos, max_len=max_len)
+            val_ds = StreamingSharedTextPairDataset(_demo_iter, stoi, itos, max_len=max_len)
+            return train_ds, val_ds
         train_ds = InMemorySharedTextPairDataset(src_demo, tgt_demo, max_len=max_len)
         val_ds = InMemorySharedTextPairDataset(src_demo, tgt_demo, max_len=max_len)
         return train_ds, val_ds

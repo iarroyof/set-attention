@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
 
 from config.load import load_config  # noqa: E402
-from data.wikitext2 import Wikitext2Dataset  # noqa: E402
+from data.wikitext2 import Wikitext2Dataset, Wikitext2IterableDataset  # noqa: E402
 from models.baseline_token import TransformerLM  # noqa: E402
 from models.seq2seq import Seq2SeqTransformer  # noqa: E402
 from models.set_only import SetOnlyLM  # noqa: E402
@@ -95,29 +95,51 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
     )
 
 
+def _make_loader(ds, batch_size: int, shuffle: bool):
+    from torch.utils.data import IterableDataset
+
+    if isinstance(ds, IterableDataset):
+        return DataLoader(ds, batch_size=batch_size, shuffle=False)
+    return DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
+
+
 def build_dataloaders(data_cfg: dict) -> tuple[DataLoader, DataLoader, int]:
     if data_cfg["dataset"] != "wikitext2":
         raise ValueError("Only wikitext2 is supported in the unified runner")
-    train_ds = Wikitext2Dataset(
-        split="train",
-        seq_len=data_cfg["seq_len"],
-        limit=data_cfg.get("limit"),
-        cache_root=data_cfg.get("cache_root"),
-    )
-    val_ds = Wikitext2Dataset(
-        split="validation",
-        seq_len=data_cfg["seq_len"],
-        limit=data_cfg.get("limit"),
-        cache_root=data_cfg.get("cache_root"),
-    )
-    train_loader = DataLoader(
-        train_ds, batch_size=data_cfg["batch_size"], shuffle=True
-    )
-    val_loader = DataLoader(val_ds, batch_size=data_cfg["batch_size"], shuffle=False)
+    streaming = bool(data_cfg.get("streaming", True))
+    if streaming:
+        train_ds = Wikitext2IterableDataset(
+            split="train",
+            seq_len=data_cfg["seq_len"],
+            limit=data_cfg.get("limit"),
+            cache_root=data_cfg.get("cache_root"),
+        )
+        val_ds = Wikitext2IterableDataset(
+            split="validation",
+            seq_len=data_cfg["seq_len"],
+            limit=data_cfg.get("limit"),
+            cache_root=data_cfg.get("cache_root"),
+        )
+    else:
+        train_ds = Wikitext2Dataset(
+            split="train",
+            seq_len=data_cfg["seq_len"],
+            limit=data_cfg.get("limit"),
+            cache_root=data_cfg.get("cache_root"),
+        )
+        val_ds = Wikitext2Dataset(
+            split="validation",
+            seq_len=data_cfg["seq_len"],
+            limit=data_cfg.get("limit"),
+            cache_root=data_cfg.get("cache_root"),
+        )
+    train_loader = _make_loader(train_ds, data_cfg["batch_size"], shuffle=True)
+    val_loader = _make_loader(val_ds, data_cfg["batch_size"], shuffle=False)
     return train_loader, val_loader, train_ds.vocab_size
 
 
 def build_seq2seq_dataloaders(data_cfg: dict, shared_vocab: bool) -> tuple[DataLoader, DataLoader, dict]:
+    streaming = bool(data_cfg.get("streaming", True))
     train_ds, val_ds = get_seq2seq_datasets(
         dataset=data_cfg.get("seq_dataset", ""),
         limit=data_cfg.get("limit"),
@@ -127,9 +149,12 @@ def build_seq2seq_dataloaders(data_cfg: dict, shared_vocab: bool) -> tuple[DataL
         max_len=int(data_cfg.get("max_len", 64)),
         cache_dir=data_cfg.get("cache_root"),
         shared_vocab=shared_vocab,
+        val_split=float(data_cfg.get("val_split", 0.2)),
+        split_seed=int(data_cfg.get("split_seed", 42)),
+        streaming=streaming,
     )
-    train_loader = DataLoader(train_ds, batch_size=data_cfg["batch_size"], shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=data_cfg["batch_size"], shuffle=False)
+    train_loader = _make_loader(train_ds, data_cfg["batch_size"], shuffle=True)
+    val_loader = _make_loader(val_ds, data_cfg["batch_size"], shuffle=False)
     vocab = {
         "vocab_size": train_ds.vocab_size,
         "pad_id": train_ds.pad_id,
@@ -205,7 +230,12 @@ def main() -> None:
     epochs = cfg["training"]["epochs"]
     try:
         for epoch in range(1, epochs + 1):
-            logger.start_epoch(num_train_samples=len(train_loader.dataset))
+            num_samples = None
+            try:
+                num_samples = len(train_loader.dataset)
+            except Exception:
+                num_samples = cfg.get("data", {}).get("limit")
+            logger.start_epoch(num_train_samples=num_samples or 0)
             if task == "seq2seq":
                 train_metrics = train_one_epoch_seq2seq(
                     model, train_loader, optimizer, device, pad_id=vocab["pad_id"]

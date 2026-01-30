@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import List, Tuple
 import os
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, IterableDataset
 
 
 def _read_lines(path: str) -> List[str]:
@@ -150,6 +150,45 @@ class InMemorySharedTextPairDataset(Dataset):
                 break
             toks.append(self.itos.get(int(idx), "<unk>"))
         return " ".join(toks)
+
+
+class StreamingSharedTextPairDataset(IterableDataset):
+    """Iterable seq2seq dataset with a shared vocabulary."""
+    def __init__(
+        self,
+        iter_factory,
+        stoi: dict,
+        itos: dict,
+        max_len: int = 64,
+    ) -> None:
+        super().__init__()
+        self.iter_factory = iter_factory
+        self.stoi = stoi
+        self.itos = itos
+        self.max_len = max_len
+        self.pad_id = self.stoi["<pad>"]
+        self.bos_id = self.stoi["<s>"]
+        self.eos_id = self.stoi["</s>"]
+
+    @property
+    def vocab_size(self) -> int:
+        return len(self.stoi)
+
+    def decode(self, ids: List[int]) -> str:
+        toks = []
+        for idx in ids:
+            if idx in (self.pad_id, self.bos_id):
+                continue
+            if idx == self.eos_id:
+                break
+            toks.append(self.itos.get(int(idx), "<unk>"))
+        return " ".join(toks)
+
+    def __iter__(self):
+        for src, tgt in self.iter_factory():
+            s_ids = _encode(_tokenize(src), self.stoi, self.max_len)
+            t_ids = _encode(_tokenize(tgt), self.stoi, self.max_len)
+            yield s_ids, t_ids
 
 
 def make_textpair_loader_from_lists(src_texts: List[str], tgt_texts: List[str], max_len: int = 64, batch_size: int = 32, min_freq: int = 1) -> DataLoader:

@@ -18,6 +18,8 @@ def load_wikitext_hf_dataset(
     streaming: bool = False,
 ):
     """Load the HuggingFace dataset for downstream streaming-friendly helpers."""
+    os.environ.setdefault("HF_DATASETS_DISABLE_SHARE_MEM", "1")
+    os.environ.setdefault("TORCH_DISABLE_SHARED_MEMORY", "1")
     if dataset not in _WIKITEXT_CONFIGS:
         raise ValueError(f"Unsupported Wikitext dataset '{dataset}'")
     try:
@@ -31,6 +33,11 @@ def load_wikitext_hf_dataset(
     cache_root = Path(env_cache) if env_cache else cache_dir
     try:
         return load_dataset(name, config, cache_dir=str(cache_root), streaming=streaming)
+    except RuntimeError as exc:
+        if streaming:
+            # Fall back to memory-mapped datasets if shared memory is unavailable.
+            return load_dataset(name, config, cache_dir=str(cache_root), streaming=False)
+        raise
     except Exception as exc:
         raise RuntimeError(
             f"Failed to load {name}:{config} from cache {cache_root}. "
