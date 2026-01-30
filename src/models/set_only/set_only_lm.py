@@ -95,6 +95,17 @@ class SetOnlyLM(nn.Module):
                 "multiscale disabled; using single-scale bank",
                 RuntimeWarning,
             )
+        if (
+            self.pooling_mode != "mean"
+            and router_type == "uniform"
+            and feature_mode == "geometry_only"
+        ):
+            warnings.warn(
+                "Pooling is configured but has no effect with "
+                "geometry_only + uniform router. "
+                "This run will not test pooling behavior.",
+                RuntimeWarning,
+            )
 
         max_sets = num_sets_for_length(max_seq_len, window_size, stride)
         if d_phi is None:

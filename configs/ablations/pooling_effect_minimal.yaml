@@ -1,0 +1,21 @@
+model:
+  family: set_only
+  feature_mode: hashed_counts
+  router_type: learned
+  pooling:
+    mode: mean
+  geometry:
+    enabled: true
+    apply_as_bias: false
+    apply_in_phi_attn: true
+  sig_gating:
+    enabled: false
+training:
+  epochs: 5
+  lr: 3e-4
+  seed: 0
+data:
+  dataset: wikitext2
+  limit: 50
+  batch_size: 16
+  seq_len: 256

@@ -72,11 +72,17 @@ def _default_run_name(cfg: Dict[str, Any], task: str, dataset: str, attn_tags: D
     model_type = cfg.get("model", {}).get("family", "model")
     backend = cfg.get("model", {}).get("backend", "baseline")
     score_mode = cfg.get("model", {}).get("ska_score_mode", "na")
+    feature_mode = cfg.get("model", {}).get("feature_mode", "na")
+    router_type = cfg.get("model", {}).get("router_type", "na")
+    pooling_mode = _get_cfg_value(cfg, "model.pooling.mode", _get_cfg_value(cfg, "model.pooling", "na"))
     seq_len = _get_cfg_value(cfg, "data.seq_len", "na")
     batch = _get_cfg_value(cfg, "data.batch_size", "na")
     seed = _get_cfg_value(cfg, "training.seed", "na")
     attn_family = attn_tags["attention/family"]
-    return f"{stage}-{task}-{dataset}-{model_type}-{attn_family}-{backend}-{score_mode}-L{seq_len}-B{batch}-S{seed}"
+    return (
+        f\"{stage}-{task}-{dataset}-{model_type}-{attn_family}-{backend}-{score_mode}-\"
+        f\"{feature_mode}-{router_type}-{pooling_mode}-L{seq_len}-B{batch}-S{seed}\"
+    )
 
 
 class ExperimentLogger:
@@ -128,7 +134,11 @@ class ExperimentLogger:
         if cfg_path:
             return Path(cfg_path)
         out_dir = _get_cfg_value(self.cfg, "training.output_dir", "out")
-        return Path(out_dir) / "metrics" / f"{self.run_name}.csv"
+        base = Path(out_dir) / "metrics" / f"{self.run_name}.csv"
+        if base.exists():
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            return Path(out_dir) / "metrics" / f"{self.run_name}_{ts}.csv"
+        return base
 
     def _init_csv(self) -> None:
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
