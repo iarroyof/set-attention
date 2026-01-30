@@ -94,8 +94,8 @@ def main():
     ap.add_argument(
         "--datasets",
         nargs="+",
-        default=["wikitext2", "wikitext103", "cnn_dailymail", "wmt14_fr_en"],
-        choices=["wikitext2", "wikitext103", "cnn_dailymail", "wmt14_fr_en"],
+        default=["wikitext2", "wikitext103", "cnn_dailymail", "wmt14_fr_en", "opus_books_en_fr"],
+        choices=["wikitext2", "wikitext103", "cnn_dailymail", "wmt14_fr_en", "opus_books_en_fr"],
         help="Datasets to prefetch.",
     )
     args = ap.parse_args()
@@ -115,6 +115,7 @@ def main():
         "wikitext103": ("Salesforce/wikitext", "wikitext-103-raw-v1"),
         "cnn_dailymail": ("abisee/cnn_dailymail", "3.0.0"),
         "wmt14_fr_en": ("wmt/wmt14", "fr-en"),
+        "opus_books_en_fr": ("opus_books", "en-fr"),
     }
     for ds in args.datasets:
         name, cfg = name_map[ds]

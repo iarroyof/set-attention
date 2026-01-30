@@ -11,10 +11,12 @@ BASELINE_KEYS = {
     "vocab_size",
     "d_model",
     "nhead",
+    "num_heads",
     "num_layers",
     "dim_feedforward",
     "dropout",
     "max_seq_len",
+    "seq2seq",
 }
 
 SET_ONLY_KEYS = {
@@ -44,6 +46,7 @@ SET_ONLY_KEYS = {
     "adapter_type",
     "adapter_hidden_multiplier",
     "adapter_budget_fraction",
+    "seq2seq",
 }
 
 LOGGING_KEYS = {"wandb", "csv"}
@@ -70,8 +73,8 @@ def validate_config(cfg: dict) -> None:
             raise ConfigError(
                 f"Unexpected baseline_token keys: {sorted(unexpected)}"
             )
-        if model_cfg.get("architecture") not in {"transformer_lm"}:
-            raise ConfigError("baseline_token architecture must be 'transformer_lm'")
+        if model_cfg.get("architecture") not in {"transformer_lm", "transformer_seq2seq"}:
+            raise ConfigError("baseline_token architecture must be 'transformer_lm' or 'transformer_seq2seq'")
     else:
         unexpected = set(model_cfg.keys()) - SET_ONLY_KEYS
         if unexpected:

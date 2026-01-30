@@ -84,6 +84,7 @@ DATASET_TO_TASK = {
     "ptb": "lm",
     "wmt14_fr_en": "seq2seq",
     "cnn_dailymail": "seq2seq",
+    "opus_books_en_fr": "seq2seq",
     "cifar10": "vit",
     "cifar100": "vit",
     "imagenet": "vit",

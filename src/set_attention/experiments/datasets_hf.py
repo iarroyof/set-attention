@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 from typing import List, Tuple, Optional
+import warnings
 
 
 def _resolve_cache_dir(cache_dir: Optional[str]) -> Optional[str]:
@@ -28,6 +29,7 @@ def load_seq2seq_pairs(
     Supported:
       - 'wmt14_fr_en': French↔English translation (uses 'wmt/wmt14', 'fr-en' config).
       - 'cnn_dailymail': summarization ('abisee/cnn_dailymail', '3.0.0').
+      - 'opus_books_en_fr': OPUS Books en-fr ('opus_books', 'en-fr').
 
     Returns lists (src_texts, tgt_texts) for the requested split. If datasets
     library is unavailable or download fails, raises ImportError/RuntimeError.
@@ -53,7 +55,14 @@ def load_seq2seq_pairs(
                 "Prefetch into the shared cache or enable network access. "
                 f"cache_dir={cache_root or 'default'} | original error: {exc}"
             ) from exc
-        ds_split = ds[split]
+        try:
+            ds_split = ds[split]
+        except KeyError:
+            warnings.warn(
+                f"Split '{split}' not found for {dataset}; falling back to 'train'.",
+                RuntimeWarning,
+            )
+            ds_split = ds["train"]
         if indices is not None:
             ds_split = ds_split.select(indices)
         for rec in ds_split:
@@ -77,12 +86,49 @@ def load_seq2seq_pairs(
                 "Prefetch into the shared cache or enable network access. "
                 f"cache_dir={cache_root or 'default'} | original error: {exc}"
             ) from exc
-        ds_split = ds[split]
+        try:
+            ds_split = ds[split]
+        except KeyError:
+            warnings.warn(
+                f"Split '{split}' not found for {dataset}; falling back to 'train'.",
+                RuntimeWarning,
+            )
+            ds_split = ds["train"]
         if indices is not None:
             ds_split = ds_split.select(indices)
         for rec in ds_split:
             src = rec.get("article", "")
             tgt = rec.get("highlights", "")
+            if src and tgt:
+                src_list.append(src)
+                tgt_list.append(tgt)
+            if limit is not None and len(src_list) >= limit:
+                break
+    elif dataset == "opus_books_en_fr":
+        try:
+            ds = load_dataset(
+                "opus_books", "en-fr", download_mode="reuse_dataset_if_exists", **kwargs
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to load opus_books en-fr. Dataset may be missing from cache and network download failed. "
+                "Prefetch into the shared cache or enable network access. "
+                f"cache_dir={cache_root or 'default'} | original error: {exc}"
+            ) from exc
+        try:
+            ds_split = ds[split]
+        except KeyError:
+            warnings.warn(
+                f"Split '{split}' not found for {dataset}; falling back to 'train'.",
+                RuntimeWarning,
+            )
+            ds_split = ds["train"]
+        if indices is not None:
+            ds_split = ds_split.select(indices)
+        for rec in ds_split:
+            tr = rec.get("translation", {})
+            src = tr.get("en", "")
+            tgt = tr.get("fr", "")
             if src and tgt:
                 src_list.append(src)
                 tgt_list.append(tgt)

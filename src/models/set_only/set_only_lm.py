@@ -51,9 +51,10 @@ class SetOnlyLM(nn.Module):
         adapter_budget_fraction: float = 0.15,
         gamma: float = 1.0,
         beta: float = 0.0,
+        token_embedding: nn.Embedding | None = None,
     ) -> None:
         super().__init__()
-        self.token_emb = nn.Embedding(vocab_size, d_model)
+        self.token_emb = token_embedding or nn.Embedding(vocab_size, d_model)
         self.pos_emb = nn.Embedding(max_seq_len, d_model)
         self.token_mlp = nn.Sequential(
             nn.Linear(d_model, d_model),
@@ -234,11 +235,11 @@ class SetOnlyLM(nn.Module):
                 hidden_multiplier=adapter_hidden_multiplier,
             )
 
-    def forward(
+    def _encode_tokens(
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, RouterOutput]:
         if input_ids.dim() != 2:
             raise ValueError("input_ids must be [batch, seq]")
         batch, seq_len = input_ids.shape
@@ -359,7 +360,19 @@ class SetOnlyLM(nn.Module):
                 set_attention_weights=None,
             )
 
-        return self.lm_head(router_out.token_repr)
+        return router_out.token_repr, router_out
+
+    def encode(self, input_ids: torch.Tensor) -> torch.Tensor:
+        token_repr, _ = self._encode_tokens(input_ids)
+        return token_repr
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        token_repr, _ = self._encode_tokens(input_ids, attention_mask=attention_mask)
+        return self.lm_head(token_repr)
 
     def get_diagnostics(self) -> dict[str, float]:
         stats = self.diagnostics.get_epoch_stats()

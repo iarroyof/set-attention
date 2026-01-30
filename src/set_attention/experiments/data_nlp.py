@@ -25,6 +25,22 @@ def _build_vocab(lines: List[List[str]], min_freq: int = 1) -> Tuple[dict, dict]
     return stoi, {i: w for w, i in stoi.items()}
 
 
+def _build_shared_vocab(src_lines: List[List[str]], tgt_lines: List[List[str]], min_freq: int = 1) -> Tuple[dict, dict]:
+    from collections import Counter
+
+    cnt = Counter()
+    for toks in src_lines:
+        cnt.update(toks)
+    for toks in tgt_lines:
+        cnt.update(toks)
+    itos = ["<pad>", "<s>", "</s>", "<unk>"]
+    for w, c in cnt.items():
+        if c >= min_freq:
+            itos.append(w)
+    stoi = {w: i for i, w in enumerate(itos)}
+    return stoi, {i: w for w, i in stoi.items()}
+
+
 def _tokenize(s: str) -> List[str]:
     return s.split()
 
@@ -96,6 +112,44 @@ class InMemoryTextPairDataset(Dataset):
         s_ids = _encode(_tokenize(s), self.src_stoi, self.max_len)
         t_ids = _encode(_tokenize(t), self.tgt_stoi, self.max_len)
         return s_ids, t_ids
+
+
+class InMemorySharedTextPairDataset(Dataset):
+    """In-memory seq2seq dataset with a shared vocabulary."""
+    def __init__(self, src_texts: List[str], tgt_texts: List[str], max_len: int = 64, min_freq: int = 1):
+        assert len(src_texts) == len(tgt_texts)
+        self.pairs = list(zip(src_texts, tgt_texts))
+        src_toks = [_tokenize(s) for s in src_texts]
+        tgt_toks = [_tokenize(t) for t in tgt_texts]
+        self.stoi, itos = _build_shared_vocab(src_toks, tgt_toks, min_freq)
+        self.itos = itos
+        self.max_len = max_len
+        self.pad_id = self.stoi["<pad>"]
+        self.bos_id = self.stoi["<s>"]
+        self.eos_id = self.stoi["</s>"]
+
+    @property
+    def vocab_size(self) -> int:
+        return len(self.stoi)
+
+    def __len__(self):
+        return len(self.pairs)
+
+    def __getitem__(self, i: int):
+        s, t = self.pairs[i]
+        s_ids = _encode(_tokenize(s), self.stoi, self.max_len)
+        t_ids = _encode(_tokenize(t), self.stoi, self.max_len)
+        return s_ids, t_ids
+
+    def decode(self, ids: List[int]) -> str:
+        toks = []
+        for idx in ids:
+            if idx in (self.pad_id, self.bos_id):
+                continue
+            if idx == self.eos_id:
+                break
+            toks.append(self.itos.get(int(idx), "<unk>"))
+        return " ".join(toks)
 
 
 def make_textpair_loader_from_lists(src_texts: List[str], tgt_texts: List[str], max_len: int = 64, batch_size: int = 32, min_freq: int = 1) -> DataLoader:

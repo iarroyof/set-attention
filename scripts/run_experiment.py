@@ -13,9 +13,18 @@ sys.path.append(str(ROOT / "src"))
 from config.load import load_config  # noqa: E402
 from data.wikitext2 import Wikitext2Dataset  # noqa: E402
 from models.baseline_token import TransformerLM  # noqa: E402
+from models.seq2seq import Seq2SeqTransformer  # noqa: E402
 from models.set_only import SetOnlyLM  # noqa: E402
+from set_attention.training.seq_loaders import get_seq2seq_datasets  # noqa: E402
 from train.experiment_logger import ExperimentLogger  # noqa: E402
-from train.loop import evaluate, train_one_epoch  # noqa: E402
+from train.loop import (
+    evaluate,
+    evaluate_seq2seq,
+    train_one_epoch,
+    train_one_epoch_seq2seq,
+)  # noqa: E402
+from train.metrics_impl import bleu_score, rouge_l_f1  # noqa: E402
+from train.metrics_schema import detect_task  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -108,6 +117,30 @@ def build_dataloaders(data_cfg: dict) -> tuple[DataLoader, DataLoader, int]:
     return train_loader, val_loader, train_ds.vocab_size
 
 
+def build_seq2seq_dataloaders(data_cfg: dict, shared_vocab: bool) -> tuple[DataLoader, DataLoader, dict]:
+    train_ds, val_ds = get_seq2seq_datasets(
+        dataset=data_cfg.get("seq_dataset", ""),
+        limit=data_cfg.get("limit"),
+        val_limit=data_cfg.get("val_limit"),
+        demo=bool(data_cfg.get("demo", False)),
+        demo_samples=int(data_cfg.get("demo_samples", 200)),
+        max_len=int(data_cfg.get("max_len", 64)),
+        cache_dir=data_cfg.get("cache_root"),
+        shared_vocab=shared_vocab,
+    )
+    train_loader = DataLoader(train_ds, batch_size=data_cfg["batch_size"], shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=data_cfg["batch_size"], shuffle=False)
+    vocab = {
+        "vocab_size": train_ds.vocab_size,
+        "pad_id": train_ds.pad_id,
+        "bos_id": train_ds.bos_id,
+        "eos_id": train_ds.eos_id,
+        "decode": train_ds.decode,
+        "max_len": data_cfg.get("max_len", 64),
+    }
+    return train_loader, val_loader, vocab
+
+
 def main() -> None:
     args = parse_args()
     overrides = []
@@ -123,10 +156,41 @@ def main() -> None:
         return
     device = torch.device(args.device)
 
-    train_loader, val_loader, vocab_size = build_dataloaders(cfg["data"])
-    if cfg["model"].get("vocab_size", 0) in (0, None):
-        cfg["model"]["vocab_size"] = vocab_size
-    model = build_model(cfg["model"]).to(device)
+    task = detect_task(cfg)
+    if task == "seq2seq":
+        shared_vocab = bool(cfg.get("model", {}).get("seq2seq", {}).get("shared_vocab", True))
+        train_loader, val_loader, vocab = build_seq2seq_dataloaders(cfg["data"], shared_vocab)
+        if cfg["model"].get("vocab_size", 0) in (0, None):
+            cfg["model"]["vocab_size"] = vocab["vocab_size"]
+        family = cfg["model"]["family"]
+        num_heads = cfg["model"].get("num_heads") or cfg["model"].get("nhead", 8)
+        num_layers = cfg["model"].get("num_layers", 4)
+        d_model = cfg["model"].get("d_model", 512)
+        dim_ff = cfg["model"].get("dim_feedforward", d_model * 4)
+        dropout = cfg["model"].get("dropout", 0.1)
+        max_len = cfg["data"].get("max_len", cfg["data"].get("seq_len", 64))
+        encoder_family = "set_only" if family == "set_only" else "baseline_token"
+        set_only_cfg = cfg["model"] if encoder_family == "set_only" else None
+        model = Seq2SeqTransformer(
+            vocab_size=cfg["model"]["vocab_size"],
+            d_model=d_model,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            dim_feedforward=dim_ff,
+            dropout=dropout,
+            max_len=max_len,
+            encoder_family=encoder_family,
+            set_only_cfg=set_only_cfg,
+            shared_embeddings=None,
+            pad_id=vocab["pad_id"],
+            bos_id=vocab["bos_id"],
+            eos_id=vocab["eos_id"],
+        ).to(device)
+    else:
+        train_loader, val_loader, vocab_size = build_dataloaders(cfg["data"])
+        if cfg["model"].get("vocab_size", 0) in (0, None):
+            cfg["model"]["vocab_size"] = vocab_size
+        model = build_model(cfg["model"]).to(device)
     wandb_tags = [t for t in args.wandb_tags.split(",") if t]
     logger = ExperimentLogger(
         config=cfg,
@@ -142,8 +206,27 @@ def main() -> None:
     try:
         for epoch in range(1, epochs + 1):
             logger.start_epoch(num_train_samples=len(train_loader.dataset))
-            train_metrics = train_one_epoch(model, train_loader, optimizer, device)
-            val_metrics = evaluate(model, val_loader, device)
+            if task == "seq2seq":
+                train_metrics = train_one_epoch_seq2seq(
+                    model, train_loader, optimizer, device, pad_id=vocab["pad_id"]
+                )
+                eval_bundle = evaluate_seq2seq(
+                    model,
+                    val_loader,
+                    device,
+                    pad_id=vocab["pad_id"],
+                    bos_id=vocab["bos_id"],
+                    eos_id=vocab["eos_id"],
+                    decode_fn=vocab["decode"],
+                    max_len=int(vocab["max_len"]),
+                )
+                val_metrics = {"loss": eval_bundle["loss"]}
+                if eval_bundle["preds"]:
+                    val_metrics["bleu"] = bleu_score(eval_bundle["preds"], eval_bundle["refs"])
+                    val_metrics["rougeL"] = rouge_l_f1(eval_bundle["preds"], eval_bundle["refs"])
+            else:
+                train_metrics = train_one_epoch(model, train_loader, optimizer, device)
+                val_metrics = evaluate(model, val_loader, device)
             set_diagnostics = model.get_diagnostics() if hasattr(model, "get_diagnostics") else None
             logger.log_epoch(epoch, train_metrics, val_metrics, set_diagnostics)
             print(

@@ -5,6 +5,7 @@ from set_attention.experiments.data_nlp import (
     TextPairConfig,
     TextPairDataset,
     InMemoryTextPairDataset,
+    InMemorySharedTextPairDataset,
 )
 from set_attention.experiments.datasets_hf import load_seq2seq_pairs
 
@@ -21,11 +22,18 @@ def get_seq2seq_datasets(
     demo_samples: int = 200,
     max_len: int = 64,
     cache_dir: Optional[str] = None,
+    shared_vocab: bool = True,
 ):
     """Return (train_dataset, val_dataset) for seq2seq tasks.
 
     Precedence: dataset -> demo -> local files.
     """
+    if not shared_vocab:
+        raise NotImplementedError(
+            "Separate src/tgt vocab is not implemented yet. "
+            "Set model.seq2seq.shared_vocab=true to use shared vocab."
+        )
+
     if dataset:
         src_tr, tgt_tr = load_seq2seq_pairs(
             dataset,
@@ -41,8 +49,8 @@ def get_seq2seq_datasets(
             cache_dir=cache_dir,
             indices=val_indices,
         )
-        train_ds = InMemoryTextPairDataset(src_tr, tgt_tr, max_len=max_len)
-        val_ds = InMemoryTextPairDataset(src_va, tgt_va, max_len=max_len)
+        train_ds = InMemorySharedTextPairDataset(src_tr, tgt_tr, max_len=max_len)
+        val_ds = InMemorySharedTextPairDataset(src_va, tgt_va, max_len=max_len)
         return train_ds, val_ds
 
     if demo:
@@ -55,8 +63,8 @@ def get_seq2seq_datasets(
             toks = [str(random.randint(1, 9)) for __ in range(L)]
             src_demo.append(" ".join(toks))
             tgt_demo.append(" ".join(reversed(toks)))
-        train_ds = InMemoryTextPairDataset(src_demo, tgt_demo, max_len=max_len)
-        val_ds = InMemoryTextPairDataset(src_demo, tgt_demo, max_len=max_len)
+        train_ds = InMemorySharedTextPairDataset(src_demo, tgt_demo, max_len=max_len)
+        val_ds = InMemorySharedTextPairDataset(src_demo, tgt_demo, max_len=max_len)
         return train_ds, val_ds
 
     # Local files
@@ -65,4 +73,7 @@ def get_seq2seq_datasets(
     cfg = TextPairConfig(src_path=src_path, tgt_path=tgt_path, max_len=max_len)
     train_ds = TextPairDataset(cfg)
     val_ds = TextPairDataset(cfg)
-    return train_ds, val_ds
+    raise NotImplementedError(
+        "Shared vocabulary is required for seq2seq right now. "
+        "Local file datasets must be converted to a shared vocab loader."
+    )

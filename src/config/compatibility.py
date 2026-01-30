@@ -98,7 +98,7 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     if family == "baseline_token":
         d_model = model.get("d_model", 0)
-        nhead = model.get("nhead", 1)
+        nhead = model.get("nhead", model.get("num_heads", 1))
         require(d_model % nhead == 0, "baseline_token: d_model must be divisible by nhead")
         require(d_model // nhead >= min_head_dim, "baseline_token: head dimension too small")
         return cfg
