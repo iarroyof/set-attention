@@ -140,6 +140,10 @@ class SetDiagnostics:
     def update(self, bank_indices: torch.Tensor, num_sets: int) -> None:
         self.update_with_router_state(bank_indices, num_sets)
 
+    def update_with_pooling_stats(self, stats: Dict[str, float]) -> None:
+        for key, value in stats.items():
+            self._add(key, float(value))
+
     def get_epoch_stats(self) -> Dict[str, float]:
         stats: Dict[str, float] = {}
         for key, total in self._sums.items():

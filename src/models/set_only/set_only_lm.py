@@ -265,6 +265,10 @@ class SetOnlyLM(nn.Module):
             params=self.pooling_params,
             pooling_module=self.pooling_module,
         )
+        if self.training and self.pooling_module is not None:
+            pooling_stats = self.pooling_module.get_last_stats()
+            if pooling_stats:
+                self.diagnostics.update_with_pooling_stats(pooling_stats)
 
         sig_for_gating = None
         if self.feature_mode == "geometry_only":

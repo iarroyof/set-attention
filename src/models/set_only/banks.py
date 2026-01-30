@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import warnings
 import math
 import torch
 from torch import nn
@@ -173,6 +174,7 @@ class InformativeBoltzmannPooling(nn.Module):
             self.alpha = nn.Parameter(torch.tensor(float(alpha)))
         else:
             self.register_buffer("alpha_buf", torch.tensor(float(alpha)))
+        self._last_stats: dict[str, float] = {}
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
         # x: [B, W, D], mask: [B, W]
@@ -229,4 +231,41 @@ class InformativeBoltzmannPooling(nn.Module):
         use_mean = tiny_set | isotropic
         if use_mean.any():
             pooled = torch.where(use_mean.unsqueeze(-1), mean_pooled, pooled)
+            if mask is not None:
+                denom = mask.sum(dim=1, keepdim=True).clamp_min(1)
+                weights_mean = mask.float() / denom
+            else:
+                weights_mean = torch.full_like(d2, 1.0 / d2.shape[1])
+            weights = torch.where(use_mean.unsqueeze(-1), weights_mean.unsqueeze(-1), weights)
+
+        weights_flat = weights.squeeze(-1)
+        ent = -(weights_flat * torch.log(weights_flat + 1e-12)).sum(dim=1)
+        top1 = weights_flat.max(dim=1).values
+        support = (weights_flat > 1e-3).sum(dim=1).float()
+        p_sorted, _ = torch.sort(weights_flat, dim=1)
+        n = p_sorted.shape[1]
+        idx = torch.arange(1, n + 1, device=p_sorted.device, dtype=p_sorted.dtype)
+        gini = 1.0 - 2.0 * torch.sum(p_sorted * (n - idx + 0.5), dim=1) / n
+
+        if support.min().item() <= 1:
+            warnings.warn(
+                "Pooling collapsed to single-set dominance; this run may behave like hard routing.",
+                RuntimeWarning,
+            )
+
+        if isinstance(getattr(self, "alpha", None), torch.Tensor):
+            alpha_value = float(self.alpha.detach().item())
+        else:
+            alpha_value = float(self.alpha_buf.detach().item())
+
+        self._last_stats = {
+            "ausa/pooling_weight_entropy": float(ent.mean().item()),
+            "ausa/pooling_top1_weight": float(top1.mean().item()),
+            "ausa/pooling_effective_support": float(support.mean().item()),
+            "ausa/pooling_weight_gini": float(gini.mean().item()),
+            "ausa/pooling_alpha_value": alpha_value,
+        }
         return pooled
+
+    def get_last_stats(self) -> dict[str, float]:
+        return dict(self._last_stats)

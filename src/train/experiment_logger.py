@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -30,6 +33,11 @@ def _flatten_cfg(cfg: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
         else:
             flat[path] = value
     return flat
+
+
+def _config_fingerprint(flat_cfg: Dict[str, Any]) -> str:
+    payload = json.dumps(flat_cfg, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha1(payload).hexdigest()
 
 
 def _get_cfg_value(cfg: Dict[str, Any], key: str, default: Any = "NA") -> Any:
@@ -109,13 +117,17 @@ class ExperimentLogger:
         self.dataset = canonical_dataset_name(str(dataset))
         self.attn_tags = _attention_tags(config)
         self.is_set_enabled = bool(self.attn_tags["attention/set_enabled"])
+        self.flat_cfg = _flatten_cfg(self.cfg)
+        self.flat_cfg.update(self.attn_tags)
+        self.flat_cfg.setdefault("task", self.task)
+        self.flat_cfg.setdefault("dataset", self.dataset)
+        self.config_fingerprint = _config_fingerprint(self.flat_cfg)
 
         run_name_cfg = _get_cfg_value(config, "logging.wandb.run_name", None)
         self.run_name = run_name_cfg or _default_run_name(
             config, self.task, self.dataset, self.attn_tags
         )
 
-        self.csv_path = self._resolve_csv_path(csv_path)
         self.csv_file = None
         self.csv_writer = None
 
@@ -124,8 +136,13 @@ class ExperimentLogger:
         self._epoch_samples = None
 
         self.wandb = None
+        self.run_id = None
         self._init_wandb(wandb_project, wandb_tags, wandb_enable)
+        if self.run_id is None:
+            self.run_id = uuid.uuid4().hex[:8]
+        self.csv_path = self._resolve_csv_path(csv_path)
         self._init_csv()
+        self._dump_config_json()
 
     def _resolve_csv_path(self, cli_path: Optional[str]) -> Path:
         if cli_path:
@@ -134,10 +151,18 @@ class ExperimentLogger:
         if cfg_path:
             return Path(cfg_path)
         out_dir = _get_cfg_value(self.cfg, "training.output_dir", "out")
-        base = Path(out_dir) / "metrics" / f"{self.run_name}.csv"
+        base = (
+            Path(out_dir)
+            / "metrics"
+            / f"{self.run_name}-id{self.run_id}-fp{self.config_fingerprint}.csv"
+        )
         if base.exists():
             ts = time.strftime("%Y%m%d_%H%M%S")
-            return Path(out_dir) / "metrics" / f"{self.run_name}_{ts}.csv"
+            return (
+                Path(out_dir)
+                / "metrics"
+                / f"{self.run_name}-id{self.run_id}-fp{self.config_fingerprint}_{ts}.csv"
+            )
         return base
 
     def _init_csv(self) -> None:
@@ -145,6 +170,15 @@ class ExperimentLogger:
         self.csv_file = self.csv_path.open("w", newline="", encoding="utf-8")
         self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=self._columns())
         self.csv_writer.writeheader()
+
+    def _dump_config_json(self) -> None:
+        cfg_path = self.csv_path.with_suffix(".json")
+        payload = dict(self.flat_cfg)
+        payload["run_name"] = self.run_name
+        payload["run_id"] = self.run_id
+        payload["config_fingerprint"] = self.config_fingerprint
+        payload["csv_path"] = str(self.csv_path)
+        cfg_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
     def _init_wandb(
         self,
@@ -198,10 +232,8 @@ class ExperimentLogger:
             f"stage:{self.cfg.get('stage', _get_cfg_value(self.cfg, 'training.stage', 'na'))}",
         ]
         tags = list(dict.fromkeys([*auto_tags, *tags]))
-        flat_cfg = _flatten_cfg(self.cfg)
-        flat_cfg.update(self.attn_tags)
-        flat_cfg.setdefault("task", self.task)
-        flat_cfg.setdefault("dataset", self.dataset)
+        flat_cfg = dict(self.flat_cfg)
+        flat_cfg["config_fingerprint"] = self.config_fingerprint
 
         if sweep_env:
             self.wandb = wandb.init(
@@ -225,6 +257,7 @@ class ExperimentLogger:
             for prefix in ("train/*", "val/*", "efficiency/*", "ausa/*", "model/*"):
                 wandb.define_metric(prefix, step_metric="epoch")
             self.wandb.name = self.run_name
+            self.run_id = self.wandb.id
 
     def _columns(self) -> List[str]:
         cfg_fields = [
