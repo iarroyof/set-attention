@@ -80,8 +80,8 @@ def _default_run_name(cfg: Dict[str, Any], task: str, dataset: str, attn_tags: D
     seed = _get_cfg_value(cfg, "training.seed", "na")
     attn_family = attn_tags["attention/family"]
     return (
-        f\"{stage}-{task}-{dataset}-{model_type}-{attn_family}-{backend}-{score_mode}-\"
-        f\"{feature_mode}-{router_type}-{pooling_mode}-L{seq_len}-B{batch}-S{seed}\"
+        f"{stage}-{task}-{dataset}-{model_type}-{attn_family}-{backend}-{score_mode}-"
+        f"{feature_mode}-{router_type}-{pooling_mode}-L{seq_len}-B{batch}-S{seed}"
     )
 
 
