@@ -26,6 +26,6 @@ training:
   seed: 0
 data:
   dataset: wikitext2
-  limit: 50
+  # limit: 50
   batch_size: 16
   seq_len: 256
