@@ -29,7 +29,6 @@ data:
   seq_dataset: opus_books_en_fr
   batch_size: 16
   seq_len: 256
-  limit: 200
 
 training:
   epochs: 5
