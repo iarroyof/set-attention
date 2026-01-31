@@ -64,8 +64,8 @@ def validate_config(cfg: dict) -> None:
 
     model_cfg = cfg["model"]
     family = model_cfg.get("family")
-    if family not in {"baseline_token", "set_only"}:
-        raise ConfigError("model.family must be 'baseline_token' or 'set_only'")
+    if family not in {"baseline_token", "set_only", "encoder_set_only"}:
+        raise ConfigError("model.family must be 'baseline_token', 'set_only', or 'encoder_set_only'")
 
     if family == "baseline_token":
         unexpected = set(model_cfg.keys()) - BASELINE_KEYS

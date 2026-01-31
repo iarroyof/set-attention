@@ -146,7 +146,7 @@ def build_seq2seq_dataloaders(data_cfg: dict, shared_vocab: bool) -> tuple[DataL
         val_limit=data_cfg.get("val_limit"),
         demo=bool(data_cfg.get("demo", False)),
         demo_samples=int(data_cfg.get("demo_samples", 200)),
-        max_len=int(data_cfg.get("max_len", 64)),
+        max_len=int(data_cfg.get("seq_len", data_cfg.get("max_len", 64))),
         cache_dir=data_cfg.get("cache_root"),
         shared_vocab=shared_vocab,
         val_split=float(data_cfg.get("val_split", 0.2)),
@@ -161,7 +161,7 @@ def build_seq2seq_dataloaders(data_cfg: dict, shared_vocab: bool) -> tuple[DataL
         "bos_id": train_ds.bos_id,
         "eos_id": train_ds.eos_id,
         "decode": train_ds.decode,
-        "max_len": data_cfg.get("max_len", 64),
+        "max_len": data_cfg.get("seq_len", data_cfg.get("max_len", 64)),
     }
     return train_loader, val_loader, vocab
 
@@ -193,8 +193,8 @@ def main() -> None:
         d_model = cfg["model"].get("d_model", 512)
         dim_ff = cfg["model"].get("dim_feedforward", d_model * 4)
         dropout = cfg["model"].get("dropout", 0.1)
-        max_len = cfg["data"].get("max_len", cfg["data"].get("seq_len", 64))
-        encoder_family = "set_only" if family == "set_only" else "baseline_token"
+        max_len = cfg["data"].get("seq_len", cfg["data"].get("max_len", 64))
+        encoder_family = "set_only" if family in {"set_only", "encoder_set_only"} else "baseline_token"
         set_only_cfg = cfg["model"] if encoder_family == "set_only" else None
         model = Seq2SeqTransformer(
             vocab_size=cfg["model"]["vocab_size"],

@@ -103,7 +103,7 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
         require(d_model // nhead >= min_head_dim, "baseline_token: head dimension too small")
         return cfg
 
-    if family != "set_only":
+    if family not in {"set_only", "encoder_set_only"}:
         return cfg
 
     pooling_cfg = model.get("pooling", "mean")
