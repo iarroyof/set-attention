@@ -23,23 +23,25 @@ class UniformRouter(nn.Module):
         batch, _, d_model = set_states.shape
         seq_len, _ = token_to_sets.shape
 
-        indices = token_to_sets.clamp_min(0)
+        num_sets = set_states.shape[1]
+        indices = token_to_sets.clamp_min(0).clamp_max(num_sets - 1)
         gathered = set_states[:, indices]  # [batch, seq, max_sets, d]
         mask = (token_to_sets >= 0).unsqueeze(0).unsqueeze(-1)
         summed = (gathered * mask).sum(dim=2)
         counts = mask.sum(dim=2).clamp_min(1)
         token_repr = summed / counts
         bank_indices = token_to_sets[:, 0].clamp_min(0).unsqueeze(0).expand(batch, -1)
-        weights = mask.squeeze(0).squeeze(-1).float()
+        # Keep max_sets dimension even when max_sets_per_token == 1.
+        weights = (token_to_sets >= 0).unsqueeze(0).squeeze(0).float()
         weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1.0)
-        probs = torch.zeros((seq_len, set_states.shape[1]), device=weights.device)
+        probs = torch.zeros((seq_len, num_sets), device=weights.device)
         valid = token_to_sets >= 0
         if valid.any():
-            probs.scatter_(1, token_to_sets.clamp_min(0), weights)
+            probs.scatter_(1, token_to_sets.clamp_min(0).clamp_max(num_sets - 1), weights)
         return RouterOutput(
             token_repr=token_repr,
             bank_indices=bank_indices,
-            num_sets=set_states.shape[1],
+            num_sets=num_sets,
             probs=probs.unsqueeze(0).expand(batch, -1, -1),
         )
 
@@ -73,7 +75,7 @@ class LearnedRouter(nn.Module):
             mask = torch.zeros((seq_len, num_sets), dtype=torch.bool, device=scores.device)
             rows = torch.arange(seq_len, device=scores.device).unsqueeze(1).expand_as(token_to_sets)
             valid = token_to_sets >= 0
-            mask[rows[valid], token_to_sets[valid]] = True
+            mask[rows[valid], token_to_sets[valid].clamp_max(num_sets - 1)] = True
             scores = scores.masked_fill(~mask.unsqueeze(0), float("-inf"))
 
         if self.topk and self.topk < num_sets:
