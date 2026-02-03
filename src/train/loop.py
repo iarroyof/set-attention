@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
+from models.set_only.losses import set_diversity_loss
 
 
 def _grad_norm(model: nn.Module) -> float:
@@ -34,6 +35,10 @@ def train_one_epoch(
         loss = torch.nn.functional.cross_entropy(
             logits.view(-1, logits.size(-1)), labels.view(-1)
         )
+        if hasattr(model, "get_last_set_embeddings"):
+            set_embs = model.get_last_set_embeddings()
+            if set_embs is not None:
+                loss = loss + 0.01 * set_diversity_loss(set_embs, target_similarity=0.3)
         loss.backward()
         if hasattr(model, "diagnostics") and hasattr(model, "router"):
             try:

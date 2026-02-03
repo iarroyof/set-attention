@@ -49,6 +49,8 @@ class LearnedRouter(nn.Module):
         super().__init__()
         self.query = nn.Linear(d_model, d_model)
         self.scale = 1.0 / math.sqrt(d_model)
+        self.temperature = nn.Parameter(torch.ones(1))
+        self.min_temp = 0.5
         self.topk = topk
         self.restrict_to_sets = restrict_to_sets
 
@@ -80,7 +82,8 @@ class LearnedRouter(nn.Module):
             keep.scatter_(-1, topk_idx, topk_scores)
             scores = keep
 
-        weights = torch.softmax(scores, dim=-1)
+        temp = self.temperature.clamp(min=self.min_temp)
+        weights = torch.softmax(scores / temp, dim=-1)
         token_repr = torch.matmul(weights, set_states)
         bank_indices = weights.argmax(dim=-1)
         topk_indices = None

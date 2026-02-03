@@ -211,13 +211,12 @@ class InformativeBoltzmannPooling(nn.Module):
             spread = var_d2 / (mean_d2 + 1e-8)
             isotropic = spread <= self.isotropy_eps
 
-        with torch.no_grad():
-            k = max(1, int(self.q * d2.shape[1]))
-            # Prefer topk for small/fixed windows; quantile can be used for larger windows.
-            thresh = torch.topk(d2, k, dim=1, largest=False).values[:, -1:]
+        k = max(1, int(self.q * d2.shape[1]))
+        # Prefer topk for small/fixed windows; quantile can be used for larger windows.
+        thresh = torch.topk(d2, k, dim=1, largest=False).values[:, -1:].detach()
 
         if isinstance(getattr(self, "alpha", None), torch.Tensor):
-            alpha = self.alpha
+            alpha = self.alpha.clamp(min=1.0, max=50.0)
         else:
             alpha = self.alpha_buf
         mask_soft = torch.sigmoid(alpha * (thresh - d2))

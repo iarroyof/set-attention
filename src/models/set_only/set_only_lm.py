@@ -61,6 +61,7 @@ class SetOnlyLM(nn.Module):
             nn.GELU(),
             nn.Linear(d_model, d_model),
         )
+        self._last_set_embeddings: torch.Tensor | None = None
         self.window_size = window_size
         self.stride = stride
         self.max_seq_len = max_seq_len
@@ -266,6 +267,8 @@ class SetOnlyLM(nn.Module):
             params=self.pooling_params,
             pooling_module=self.pooling_module,
         )
+        if self.training:
+            self._last_set_embeddings = set_states
         if self.training and self.pooling_module is not None:
             pooling_stats = self.pooling_module.get_last_stats()
             if pooling_stats:
@@ -378,3 +381,6 @@ class SetOnlyLM(nn.Module):
         stats = self.diagnostics.get_epoch_stats()
         self.diagnostics.reset()
         return stats
+
+    def get_last_set_embeddings(self) -> torch.Tensor | None:
+        return self._last_set_embeddings
