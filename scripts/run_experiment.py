@@ -119,6 +119,7 @@ def build_dataloaders(data_cfg: dict) -> tuple[DataLoader, DataLoader, int]:
             seq_len=data_cfg["seq_len"],
             limit=data_cfg.get("limit"),
             cache_root=data_cfg.get("cache_root"),
+            vocab=(train_ds.stoi, train_ds.itos),
         )
     else:
         train_ds = Wikitext2Dataset(
@@ -132,6 +133,7 @@ def build_dataloaders(data_cfg: dict) -> tuple[DataLoader, DataLoader, int]:
             seq_len=data_cfg["seq_len"],
             limit=data_cfg.get("limit"),
             cache_root=data_cfg.get("cache_root"),
+            vocab=(train_ds.stoi, train_ds.itos),
         )
     train_loader = _make_loader(train_ds, data_cfg["batch_size"], shuffle=True)
     val_loader = _make_loader(val_ds, data_cfg["batch_size"], shuffle=False)

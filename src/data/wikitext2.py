@@ -32,11 +32,15 @@ class Wikitext2Dataset(Dataset):
         seq_len: int,
         limit: int | None = None,
         cache_root: str | None = None,
+        vocab: tuple[dict, dict] | None = None,
     ) -> None:
         cache_dir = ensure_hf_cache(cache_root)
         lines = load_wikitext_lines("wikitext2", split, cache_dir, limit=limit)
         tokens = tokenize_lines(lines)
-        self.stoi, self.itos = build_vocab(tokens)
+        if vocab is None:
+            self.stoi, self.itos = build_vocab(tokens)
+        else:
+            self.stoi, self.itos = vocab
 
         ids = [self.stoi.get(tok, self.stoi["<unk>"]) for tok in tokens]
         self.samples = []
@@ -85,12 +89,18 @@ class Wikitext2IterableDataset(IterableDataset):
         seq_len: int,
         limit: int | None = None,
         cache_root: str | None = None,
+        vocab: tuple[dict, dict] | None = None,
     ) -> None:
         self.split = split
         self.seq_len = seq_len
         self.limit = limit
         self.cache_dir = ensure_hf_cache(cache_root)
-        self.stoi, self.itos = _build_vocab_stream("wikitext2", split, self.cache_dir, limit=limit)
+        if vocab is None:
+            self.stoi, self.itos = _build_vocab_stream(
+                "wikitext2", split, self.cache_dir, limit=limit
+            )
+        else:
+            self.stoi, self.itos = vocab
 
     def __iter__(self):
         ds = load_wikitext_hf_dataset("wikitext2", self.cache_dir, streaming=True)
