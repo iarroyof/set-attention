@@ -84,6 +84,22 @@ class LearnedRouter(nn.Module):
             keep.scatter_(-1, topk_idx, topk_scores)
             scores = keep
 
+        if (
+            scores.isnan().any()
+            or (scores == float("inf")).any()
+            or (scores == float("-inf")).sum() == scores.numel()
+        ):
+            print(
+                f"[DEBUG] Bad scores! shape={scores.shape}, has_nan={scores.isnan().any()}, "
+                f"all_-inf={(scores == float('-inf')).sum() == scores.numel()}"
+            )
+            print(
+                f"  desc_router stats: min={desc_router.min()}, "
+                f"max={desc_router.max()}, mean={desc_router.mean()}"
+            )
+            if hasattr(self, "temperature"):
+                print(f"  temperature: {self.temperature.item()}")
+
         temp = self.temperature.clamp(min=self.min_temp)
         weights = torch.softmax(scores / temp, dim=-1)
         token_repr = torch.matmul(weights, set_states)
