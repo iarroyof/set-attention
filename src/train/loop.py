@@ -37,8 +37,8 @@ def train_one_epoch(
         )
         if hasattr(model, "get_last_set_embeddings"):
             set_embs = model.get_last_set_embeddings()
-            if set_embs is not None:
-                loss = loss + 0.01 * set_diversity_loss(set_embs, target_similarity=0.3)
+#             if set_embs is not None:
+#                 loss = loss + 0.01 * set_diversity_loss(set_embs, target_similarity=0.3)
         loss.backward()
         if hasattr(model, "diagnostics") and hasattr(model, "router"):
             try:

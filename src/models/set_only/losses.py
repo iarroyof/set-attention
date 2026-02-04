@@ -16,8 +16,9 @@ def set_diversity_loss(
         raise NotImplementedError(f"mode={mode}")
 
     B, M, _ = set_embeddings.shape
-    if M <= 1:
-        return set_embeddings.new_tensor(0.0)
+    if M < 2:
+        # Can't compute diversity with <2 sets
+        return torch.tensor(0.0, device=set_embeddings.device)
 
     normed = F.normalize(set_embeddings, p=2, dim=-1)
     sim = torch.matmul(normed, normed.transpose(-2, -1))
