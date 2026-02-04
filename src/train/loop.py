@@ -40,6 +40,7 @@ def train_one_epoch(
 #             if set_embs is not None:
 #                 loss = loss + 0.01 * set_diversity_loss(set_embs, target_similarity=0.3)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         if hasattr(model, "diagnostics") and hasattr(model, "router"):
             try:
                 router_params = dict(model.router.named_parameters())
@@ -110,6 +111,7 @@ def train_one_epoch_seq2seq(
             ignore_index=pad_id,
         )
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         grad_norm_sum += _grad_norm(model)
         grad_norm_steps += 1
         optimizer.step()
