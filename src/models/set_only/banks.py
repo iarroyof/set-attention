@@ -182,6 +182,12 @@ class InformativeBoltzmannPooling(nn.Module):
             raise ValueError("x must be [batch, window, dim]")
         if mask is not None and mask.dim() != 2:
             raise ValueError("mask must be [batch, window]")
+        if mask is not None and mask.shape[1] != x.shape[1] and mask.shape[1] == x.shape[2]:
+            # If x arrives as [B, D, W], transpose to [B, W, D] to match mask.
+            x = x.transpose(1, 2)
+        elif mask is None and x.shape[1] > x.shape[2]:
+            # Heuristic fallback when no mask is provided.
+            x = x.transpose(1, 2)
 
         if mask is not None:
             x = x.masked_fill(~mask.unsqueeze(-1), 0.0)
@@ -235,7 +241,11 @@ class InformativeBoltzmannPooling(nn.Module):
                 weights_mean = mask.float() / denom
             else:
                 weights_mean = torch.full_like(d2, 1.0 / d2.shape[1])
-            weights = torch.where(use_mean.unsqueeze(-1), weights_mean.unsqueeze(-1), weights)
+            weights = torch.where(
+                use_mean.view(-1, 1, 1),
+                weights_mean.unsqueeze(-1),
+                weights,
+            )
 
         weights_flat = weights.squeeze(-1)
         ent = -(weights_flat * torch.log(weights_flat + 1e-12)).sum(dim=1)
