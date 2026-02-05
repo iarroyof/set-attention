@@ -87,6 +87,6 @@ class HashedCountFeatureBuilder(nn.Module):
         if set_states is None:
             desc_router = router_counts
         else:
-            desc_router = self.router_fuse(torch.cat([set_states, router_counts], dim=-1))
-
+            # Use set_states directly to preserve gradients
+            desc_router = set_states
         return SetFeatures(phi_attn=phi_attn, desc_router=desc_router, geom_bias=geom_bias)

@@ -227,7 +227,7 @@ def main() -> None:
         wandb_enable=True if args.wandb else None,
     )
     logger.log_model_complexity(model)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["training"]["lr"])
+    optimizer = torch.optim.AdamW(model.parameters(), lr=float(cfg["training"]["lr"]))
 
     epochs = cfg["training"]["epochs"]
     try:

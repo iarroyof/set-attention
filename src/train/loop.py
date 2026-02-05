@@ -5,6 +5,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 from models.set_only.losses import set_diversity_loss
 
+LOSS_MODE='position_contrastive'
+
 
 def _grad_norm(model: nn.Module) -> float:
     total = 0.0
@@ -37,8 +39,19 @@ def train_one_epoch(
         )
         if hasattr(model, "get_last_set_embeddings"):
             set_embs = model.get_last_set_embeddings()
-#             if set_embs is not None:
-#                 loss = loss + 0.01 * set_diversity_loss(set_embs, target_similarity=0.3)
+            if set_embs is not None:
+                if LOSS_MODE != 'position_contrastive':
+                    loss = loss + 0.5 * set_diversity_loss(set_embs, mode=LOSS_MODE, target_similarity=0.3)
+                else:
+                    num_sets = set_embs.shape[1]
+                    set_positions = torch.arange(num_sets, device=set_embs.device)
+                    loss = loss + 0.1 * set_diversity_loss(
+                        set_embs,
+                        mode=LOSS_MODE,
+                        set_positions=set_positions,
+                        margin=0.3
+                    )
+
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         if hasattr(model, "diagnostics") and hasattr(model, "router"):

@@ -51,7 +51,7 @@ class LearnedRouter(nn.Module):
         super().__init__()
         self.query = nn.Linear(d_model, d_model)
         self.scale = 1.0 / math.sqrt(d_model)
-        self.temperature = nn.Parameter(torch.ones(1))
+        self.register_buffer("temperature", torch.ones(1))
         self.min_temp = 0.5
         self.topk = topk
         self.restrict_to_sets = restrict_to_sets
@@ -84,29 +84,15 @@ class LearnedRouter(nn.Module):
             keep.scatter_(-1, topk_idx, topk_scores)
             scores = keep
 
-        if (
-            scores.isnan().any()
-            or (scores == float("inf")).any()
-            or (scores == float("-inf")).sum() == scores.numel()
-        ):
-            print(
-                f"[DEBUG] Bad scores! shape={scores.shape}, has_nan={scores.isnan().any()}, "
-                f"all_-inf={(scores == float('-inf')).sum() == scores.numel()}"
-            )
-            print(
-                f"  desc_router stats: min={desc_router.min()}, "
-                f"max={desc_router.max()}, mean={desc_router.mean()}"
-            )
-            if hasattr(self, "temperature"):
-                print(f"  temperature: {self.temperature.item()}")
-
         temp = self.temperature.clamp(min=self.min_temp)
         weights = torch.softmax(scores / temp, dim=-1)
         token_repr = torch.matmul(weights, set_states)
         bank_indices = weights.argmax(dim=-1)
         topk_indices = None
+
         if self.topk and self.topk < num_sets:
             topk_indices = torch.topk(scores, self.topk, dim=-1).indices
+
         return RouterOutput(
             token_repr=token_repr,
             bank_indices=bank_indices,

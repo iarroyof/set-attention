@@ -110,3 +110,4 @@ stage_*.sh
 !src/data/**
 !src/train/
 !src/train/**
+.local/
