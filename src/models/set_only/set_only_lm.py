@@ -204,6 +204,7 @@ class SetOnlyLM(nn.Module):
                     num_landmarks=backend_params.get("num_landmarks", 32),
                     dropout=dropout,
                     allow_token_token=self.allow_token_token,
+                    bias_scale=backend_params.get("bias_scale", 0.1),
                 )
             if backend == "landmark":
                 return LandmarkAttentionBackend(

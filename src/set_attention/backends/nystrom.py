@@ -18,6 +18,7 @@ class NystromBackend(SetAttentionBackend):
         eps: float = 1e-6,
         normalize: bool = True,
         allow_token_token: bool = False,
+        bias_scale: float = 0.1,
     ) -> None:
         super().__init__()
         if d_model % num_heads != 0:
@@ -28,6 +29,7 @@ class NystromBackend(SetAttentionBackend):
         self.num_landmarks = num_landmarks
         self.eps = eps
         self.normalize = normalize
+        self.bias_scale = bias_scale
         self.q_proj = nn.Linear(d_model, d_model)
         self.k_proj = nn.Linear(d_model, d_model)
         self.v_proj = nn.Linear(d_model, d_model)
@@ -97,6 +99,16 @@ class NystromBackend(SetAttentionBackend):
         else:
             content_mL = None
             content_LL = None
+
+        if self.bias_scale != 1.0:
+            if geom_mL is not None:
+                geom_mL = geom_mL * self.bias_scale
+            if geom_LL is not None:
+                geom_LL = geom_LL * self.bias_scale
+            if content_mL is not None:
+                content_mL = content_mL * self.bias_scale
+            if content_LL is not None:
+                content_LL = content_LL * self.bias_scale
 
         if sig_mask is not None:
             sig_mL = sig_mask[:, landmark_idx] if sig_mask.dim() == 2 else sig_mask[:, :, landmark_idx]
