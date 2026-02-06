@@ -71,25 +71,29 @@ class NystromBackend(SetAttentionBackend):
         )
 
         if geom_bias is not None:
-            geom_mL = geom_bias[:, landmark_idx] if geom_bias.dim() == 2 else geom_bias[
-                :, :, landmark_idx
-            ]
-            geom_LL = geom_bias[landmark_idx][:, landmark_idx]
+            if geom_bias.dim() == 2:
+                geom_mL = geom_bias[:, landmark_idx]
+                geom_LL = geom_bias[landmark_idx][:, landmark_idx]
+            elif geom_bias.dim() == 3:
+                geom_mL = geom_bias[:, :, landmark_idx]
+                geom_LL = geom_bias[:, landmark_idx][:, :, landmark_idx]
+            else:
+                geom_mL = geom_bias[:, :, :, landmark_idx]
+                geom_LL = geom_bias[:, :, landmark_idx][:, :, :, landmark_idx]
         else:
             geom_mL = None
             geom_LL = None
 
         if content_bias is not None:
-            content_mL = (
-                content_bias[:, landmark_idx]
-                if content_bias.dim() == 2
-                else content_bias[:, :, landmark_idx]
-            )
-            content_LL = (
-                content_bias[landmark_idx][:, landmark_idx]
-                if content_bias.dim() == 2
-                else content_bias[:, landmark_idx][:, :, landmark_idx]
-            )
+            if content_bias.dim() == 2:
+                content_mL = content_bias[:, landmark_idx]
+                content_LL = content_bias[landmark_idx][:, landmark_idx]
+            elif content_bias.dim() == 3:
+                content_mL = content_bias[:, :, landmark_idx]
+                content_LL = content_bias[:, landmark_idx][:, :, landmark_idx]
+            else:
+                content_mL = content_bias[:, :, :, landmark_idx]
+                content_LL = content_bias[:, :, landmark_idx][:, :, :, landmark_idx]
         else:
             content_mL = None
             content_LL = None
