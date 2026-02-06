@@ -112,6 +112,9 @@ class NystromBackend(SetAttentionBackend):
             scores_LL, geom_bias=geom_LL, content_bias=content_LL, sig_mask=sig_LL
         )
 
+        # Stabilize before exp to avoid overflow in kernel approximation
+        scores_mL = scores_mL - scores_mL.max(dim=-1, keepdim=True).values
+        scores_LL = scores_LL - scores_LL.max(dim=-1, keepdim=True).values
         k_mL = torch.exp(scores_mL)
         k_LL = torch.exp(scores_LL)
 
