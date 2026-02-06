@@ -113,8 +113,12 @@ class NystromBackend(SetAttentionBackend):
         )
 
         # Stabilize before exp to avoid overflow in kernel approximation
+        scores_mL = torch.nan_to_num(scores_mL, nan=-1e4, posinf=1e4, neginf=-1e4)
+        scores_LL = torch.nan_to_num(scores_LL, nan=-1e4, posinf=1e4, neginf=-1e4)
         scores_mL = scores_mL - scores_mL.max(dim=-1, keepdim=True).values
         scores_LL = scores_LL - scores_LL.max(dim=-1, keepdim=True).values
+        scores_mL = scores_mL.clamp(min=-20.0, max=20.0)
+        scores_LL = scores_LL.clamp(min=-20.0, max=20.0)
         k_mL = torch.exp(scores_mL)
         k_LL = torch.exp(scores_LL)
 
