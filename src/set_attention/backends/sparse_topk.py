@@ -15,6 +15,7 @@ class SparseTopKBackend(SetAttentionBackend):
         num_heads: int,
         k_s: int,
         dropout: float = 0.0,
+        allow_token_token: bool = False,
     ) -> None:
         super().__init__()
         if d_model % num_heads != 0:
@@ -28,6 +29,7 @@ class SparseTopKBackend(SetAttentionBackend):
         self.v_proj = nn.Linear(d_model, d_model)
         self.out_proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
+        self.allow_token_token = allow_token_token
 
     def forward(
         self,
@@ -43,7 +45,7 @@ class SparseTopKBackend(SetAttentionBackend):
         v = self.v_proj(z).view(batch, m, self.num_heads, self.d_head).transpose(1, 2)
 
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_head)
-        assert_set_only_scores(scores, seq_len=seq_len)
+        assert_set_only_scores(scores, seq_len=seq_len, allow_token_token=self.allow_token_token)
         scores = apply_score_biases(
             scores, geom_bias=geom_bias, content_bias=content_bias, sig_mask=sig_mask
         )

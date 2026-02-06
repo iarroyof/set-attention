@@ -92,6 +92,7 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
         adapter_budget_fraction=model_cfg.get("adapter_budget_fraction", 0.15),
         gamma=model_cfg.get("gamma", 1.0),
         beta=model_cfg.get("beta", 0.0),
+        allow_token_token=bool(model_cfg.get("allow_token_token", False)),
     )
 
 

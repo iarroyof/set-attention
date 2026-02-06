@@ -46,6 +46,7 @@ SET_ONLY_KEYS = {
     "adapter_type",
     "adapter_hidden_multiplier",
     "adapter_budget_fraction",
+    "allow_token_token",
     "seq2seq",
 }
 

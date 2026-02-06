@@ -52,6 +52,7 @@ class SetOnlyLM(nn.Module):
         gamma: float = 1.0,
         beta: float = 0.0,
         token_embedding: nn.Embedding | None = None,
+        allow_token_token: bool = False,
     ) -> None:
         super().__init__()
         self.token_emb = token_embedding or nn.Embedding(vocab_size, d_model)
@@ -65,6 +66,7 @@ class SetOnlyLM(nn.Module):
         self.window_size = window_size
         self.stride = stride
         self.max_seq_len = max_seq_len
+        self.allow_token_token = bool(allow_token_token)
         if isinstance(pooling, dict):
             self.pooling_mode = pooling.get("mode", "mean")
             self.pooling_params = {
@@ -106,6 +108,12 @@ class SetOnlyLM(nn.Module):
                 "Pooling is configured but has no effect with "
                 "geometry_only + uniform router. "
                 "This run will not test pooling behavior.",
+                RuntimeWarning,
+            )
+        if self.allow_token_token:
+            warnings.warn(
+                "Set-only guard disabled; token-token attention is allowed. "
+                "Use with care for singleton-set experiments.",
                 RuntimeWarning,
             )
 
@@ -174,7 +182,10 @@ class SetOnlyLM(nn.Module):
         def make_backend() -> nn.Module:
             if backend == "dense_exact":
                 return DenseExactBackend(
-                    d_model=d_model, num_heads=num_heads, dropout=dropout
+                    d_model=d_model,
+                    num_heads=num_heads,
+                    dropout=dropout,
+                    allow_token_token=self.allow_token_token,
                 )
             if backend == "local_band":
                 return LocalBandBackend(
@@ -182,6 +193,7 @@ class SetOnlyLM(nn.Module):
                     num_heads=num_heads,
                     radius=backend_params.get("radius", 4),
                     dropout=dropout,
+                    allow_token_token=self.allow_token_token,
                 )
             if backend == "nystrom":
                 return NystromBackend(
@@ -189,6 +201,7 @@ class SetOnlyLM(nn.Module):
                     num_heads=num_heads,
                     num_landmarks=backend_params.get("num_landmarks", 32),
                     dropout=dropout,
+                    allow_token_token=self.allow_token_token,
                 )
             if backend == "landmark":
                 return LandmarkAttentionBackend(
@@ -196,6 +209,7 @@ class SetOnlyLM(nn.Module):
                     num_heads=num_heads,
                     num_landmarks=backend_params.get("num_landmarks", 32),
                     dropout=dropout,
+                    allow_token_token=self.allow_token_token,
                 )
             if backend == "sparse_topk":
                 return SparseTopKBackend(
@@ -203,6 +217,7 @@ class SetOnlyLM(nn.Module):
                     num_heads=num_heads,
                     k_s=backend_params.get("k_s", 16),
                     dropout=dropout,
+                    allow_token_token=self.allow_token_token,
                 )
             raise ValueError(f"Unknown backend: {backend}")
 

@@ -17,6 +17,7 @@ class NystromBackend(SetAttentionBackend):
         dropout: float = 0.0,
         eps: float = 1e-6,
         normalize: bool = True,
+        allow_token_token: bool = False,
     ) -> None:
         super().__init__()
         if d_model % num_heads != 0:
@@ -32,6 +33,7 @@ class NystromBackend(SetAttentionBackend):
         self.v_proj = nn.Linear(d_model, d_model)
         self.out_proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
+        self.allow_token_token = allow_token_token
 
     def _select_landmarks(self, m: int, device: torch.device) -> torch.Tensor:
         if self.num_landmarks >= m:
@@ -61,8 +63,12 @@ class NystromBackend(SetAttentionBackend):
 
         scores_mL = torch.matmul(q, k_l.transpose(-2, -1)) / math.sqrt(self.d_head)
         scores_LL = torch.matmul(q_l, k_l.transpose(-2, -1)) / math.sqrt(self.d_head)
-        assert_set_only_scores(scores_mL, seq_len=seq_len)
-        assert_set_only_scores(scores_LL, seq_len=seq_len)
+        assert_set_only_scores(
+            scores_mL, seq_len=seq_len, allow_token_token=self.allow_token_token
+        )
+        assert_set_only_scores(
+            scores_LL, seq_len=seq_len, allow_token_token=self.allow_token_token
+        )
 
         if geom_bias is not None:
             geom_mL = geom_bias[:, landmark_idx] if geom_bias.dim() == 2 else geom_bias[

@@ -170,6 +170,7 @@ class Seq2SeqTransformer(nn.Module):
                 adapter_budget_fraction=set_only_cfg.get("adapter_budget_fraction", 0.15),
                 gamma=set_only_cfg.get("gamma", 1.0),
                 beta=set_only_cfg.get("beta", 0.0),
+                allow_token_token=bool(set_only_cfg.get("allow_token_token", False)),
                 token_embedding=self.token_emb,
             )
             self._encoder_is_set_only = True

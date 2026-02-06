@@ -3,7 +3,11 @@ from __future__ import annotations
 import torch
 
 
-def assert_set_only_scores(scores: torch.Tensor, seq_len: int) -> None:
+def assert_set_only_scores(
+    scores: torch.Tensor, seq_len: int, allow_token_token: bool = False
+) -> None:
+    if allow_token_token:
+        return
     if scores.shape[-2:] == (seq_len, seq_len):
         raise RuntimeError(
             "Set-only invariant violated: token-token attention detected."
