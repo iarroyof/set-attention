@@ -127,18 +127,20 @@ class NystromBackend(SetAttentionBackend):
         k_mL = torch.exp(scores_mL)
         k_LL = torch.exp(scores_LL)
 
-        eye = torch.eye(k_LL.shape[-1], device=z.device)
-        k_LL = k_LL + self.eps * eye
+        # Proper regularization with correct broadcasting
+        eye = torch.eye(k_LL.shape[-1], device=z.device).unsqueeze(0).unsqueeze(0)
+        k_LL = k_LL + 0.1 * eye
 
         k_Lm = k_mL.transpose(-2, -1)
         kv = torch.matmul(k_Lm, v)
-        x = torch.linalg.solve(k_LL, kv)
+        k_LL_reg = k_LL
+        x = torch.linalg.solve(k_LL_reg, kv)
         out = torch.matmul(k_mL, x)
 
         if self.normalize:
             ones = torch.ones((batch, self.num_heads, m, 1), device=z.device)
             k_Lm_ones = torch.matmul(k_Lm, ones)
-            tilde = torch.linalg.solve(k_LL, k_Lm_ones)
+            tilde = torch.linalg.solve(k_LL_reg, k_Lm_ones)
             denom = torch.matmul(k_mL, tilde).clamp_min(self.eps)
             out = out / denom
 
