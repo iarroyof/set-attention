@@ -17,6 +17,8 @@ BASELINE_KEYS = {
     "dropout",
     "max_seq_len",
     "seq2seq",
+    "decoder_family",
+    "decoder_set_only",
 }
 
 SET_ONLY_KEYS = {
@@ -48,6 +50,9 @@ SET_ONLY_KEYS = {
     "adapter_budget_fraction",
     "allow_token_token",
     "seq2seq",
+    "decoder_family",
+    "decoder_set_only",
+    "causal",
 }
 
 LOGGING_KEYS = {"wandb", "csv"}
@@ -67,6 +72,9 @@ def validate_config(cfg: dict) -> None:
     family = model_cfg.get("family")
     if family not in {"baseline_token", "set_only", "encoder_set_only"}:
         raise ConfigError("model.family must be 'baseline_token', 'set_only', or 'encoder_set_only'")
+    decoder_family = model_cfg.get("decoder_family")
+    if decoder_family is not None and decoder_family not in {"baseline_token", "set_only"}:
+        raise ConfigError("decoder_family must be 'baseline_token' or 'set_only'")
 
     if family == "baseline_token":
         unexpected = set(model_cfg.keys()) - BASELINE_KEYS

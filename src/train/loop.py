@@ -18,6 +18,46 @@ def _grad_norm(model: nn.Module) -> float:
     return total ** 0.5
 
 
+def _maybe_add_set_diversity_loss(model: nn.Module, loss: torch.Tensor) -> torch.Tensor:
+    if hasattr(model, "get_last_set_embeddings"):
+        set_embs = model.get_last_set_embeddings()
+        if set_embs is not None:
+            if LOSS_MODE != "position_contrastive":
+                loss = loss + 0.5 * set_diversity_loss(
+                    set_embs, mode=LOSS_MODE, target_similarity=0.3
+                )
+            else:
+                num_sets = set_embs.shape[1]
+                set_positions = torch.arange(num_sets, device=set_embs.device)
+                loss = loss + 0.1 * set_diversity_loss(
+                    set_embs,
+                    mode=LOSS_MODE,
+                    set_positions=set_positions,
+                    margin=0.3,
+                )
+    return loss
+
+
+def _update_diagnostics(model: nn.Module) -> None:
+    if hasattr(model, "diagnostics") and hasattr(model, "router"):
+        try:
+            router_params = dict(model.router.named_parameters())
+            model.diagnostics.update_router_params(router_params)
+        except Exception:
+            pass
+    if hasattr(model, "encoder") and hasattr(model.encoder, "diagnostics") and hasattr(model.encoder, "router"):
+        try:
+            router_params = dict(model.encoder.router.named_parameters())
+            model.encoder.diagnostics.update_router_params(router_params)
+        except Exception:
+            pass
+    if hasattr(model, "diagnostics") and hasattr(model, "attention_params"):
+        try:
+            model.diagnostics.update_params(model.attention_params())
+        except Exception:
+            pass
+
+
 def train_one_epoch(
     model: nn.Module,
     dataloader: DataLoader,
@@ -37,34 +77,11 @@ def train_one_epoch(
         loss = torch.nn.functional.cross_entropy(
             logits.view(-1, logits.size(-1)), labels.view(-1)
         )
-        if hasattr(model, "get_last_set_embeddings"):
-            set_embs = model.get_last_set_embeddings()
-            if set_embs is not None:
-                if LOSS_MODE != 'position_contrastive':
-                    loss = loss + 0.5 * set_diversity_loss(set_embs, mode=LOSS_MODE, target_similarity=0.3)
-                else:
-                    num_sets = set_embs.shape[1]
-                    set_positions = torch.arange(num_sets, device=set_embs.device)
-                    loss = loss + 0.1 * set_diversity_loss(
-                        set_embs,
-                        mode=LOSS_MODE,
-                        set_positions=set_positions,
-                        margin=0.3
-                    )
+        loss = _maybe_add_set_diversity_loss(model, loss)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        if hasattr(model, "diagnostics") and hasattr(model, "router"):
-            try:
-                router_params = dict(model.router.named_parameters())
-                model.diagnostics.update_router_params(router_params)
-            except Exception:
-                pass
-        if hasattr(model, "diagnostics") and hasattr(model, "attention_params"):
-            try:
-                model.diagnostics.update_params(model.attention_params())
-            except Exception:
-                pass
+        _update_diagnostics(model)
         grad_norm_sum += _grad_norm(model)
         grad_norm_steps += 1
         optimizer.step()
@@ -123,8 +140,10 @@ def train_one_epoch_seq2seq(
             labels.reshape(-1),
             ignore_index=pad_id,
         )
+        loss = _maybe_add_set_diversity_loss(model, loss)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        _update_diagnostics(model)
         grad_norm_sum += _grad_norm(model)
         grad_norm_steps += 1
         optimizer.step()

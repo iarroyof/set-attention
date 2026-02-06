@@ -90,11 +90,18 @@ class LandmarkAttentionBackend(SetAttentionBackend):
             content_mL = None
             content_Lm = None
 
+        if sig_mask is not None:
+            sig_mL = sig_mask[:, landmark_idx] if sig_mask.dim() == 2 else sig_mask[:, :, landmark_idx]
+            sig_Lm = sig_mask[landmark_idx] if sig_mask.dim() == 2 else sig_mask[:, landmark_idx]
+        else:
+            sig_mL = None
+            sig_Lm = None
+
         scores_mL = apply_score_biases(
-            scores_mL, geom_bias=geom_mL, content_bias=content_mL, sig_mask=None
+            scores_mL, geom_bias=geom_mL, content_bias=content_mL, sig_mask=sig_mL
         )
         scores_Lm = apply_score_biases(
-            scores_Lm, geom_bias=geom_Lm, content_bias=content_Lm, sig_mask=None
+            scores_Lm, geom_bias=geom_Lm, content_bias=content_Lm, sig_mask=sig_Lm
         )
 
         attn_mL = torch.softmax(scores_mL, dim=-1)

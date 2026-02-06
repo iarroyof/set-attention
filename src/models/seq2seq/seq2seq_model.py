@@ -112,6 +112,49 @@ class Seq2SeqDecoderLayer(nn.Module):
         return x, self_weights, cross_weights
 
 
+class Seq2SeqCrossOnlyLayer(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int,
+        dropout: float,
+    ) -> None:
+        super().__init__()
+        self.cross_attn = nn.MultiheadAttention(
+            d_model, nhead, dropout=dropout, batch_first=True
+        )
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.activation = nn.GELU()
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        memory: torch.Tensor,
+        memory_key_padding_mask: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        cross_input = self.norm1(x)
+        cross_out, cross_weights = self.cross_attn(
+            cross_input,
+            memory,
+            memory,
+            key_padding_mask=memory_key_padding_mask,
+            need_weights=True,
+            average_attn_weights=True,
+        )
+        x = x + self.dropout1(cross_out)
+        ff_input = self.norm2(x)
+        ff_output = self.linear2(self.dropout(self.activation(self.linear1(ff_input))))
+        x = x + self.dropout2(ff_output)
+        return x, cross_weights
+
+
 class Seq2SeqTransformer(nn.Module):
     def __init__(
         self,
@@ -123,7 +166,9 @@ class Seq2SeqTransformer(nn.Module):
         dropout: float = 0.1,
         max_len: int = 256,
         encoder_family: str = "baseline_token",
+        decoder_family: str | None = None,
         set_only_cfg: Optional[dict] = None,
+        decoder_set_only_cfg: Optional[dict] = None,
         shared_embeddings: Optional[nn.Embedding] = None,
         pad_id: int = 0,
         bos_id: int = 1,
@@ -141,6 +186,9 @@ class Seq2SeqTransformer(nn.Module):
 
         ff = dim_feedforward or d_model * 4
         self.encoder_family = encoder_family
+        self.decoder_family = "baseline_token"
+        if encoder_family not in {"baseline_token", "set_only"}:
+            raise ValueError("encoder_family must be baseline_token or set_only")
         if encoder_family == "set_only":
             if set_only_cfg is None:
                 raise ValueError("set_only encoder requires set_only_cfg")
@@ -187,18 +235,68 @@ class Seq2SeqTransformer(nn.Module):
                 ]
             )
             self._encoder_is_set_only = False
-
-        self.decoder_layers = nn.ModuleList(
-            [
-                Seq2SeqDecoderLayer(
-                    d_model=d_model,
-                    nhead=num_heads,
-                    dim_feedforward=ff,
-                    dropout=dropout,
-                )
-                for _ in range(num_layers)
-            ]
-        )
+        self.decoder = None
+        self._decoder_is_set_only = False
+        if decoder_family is not None:
+            self.decoder_family = decoder_family
+        if self.decoder_family == "set_only":
+            decoder_cfg = decoder_set_only_cfg or set_only_cfg
+            if decoder_cfg is None:
+                raise ValueError("set_only decoder requires decoder_set_only_cfg or set_only_cfg")
+            self.decoder = SetOnlyLM(
+                vocab_size=vocab_size,
+                d_model=d_model,
+                num_layers=decoder_cfg.get("num_layers", num_layers),
+                num_heads=decoder_cfg.get("num_heads", num_heads),
+                window_size=decoder_cfg.get("window_size", 32),
+                stride=decoder_cfg.get("stride", 16),
+                dropout=decoder_cfg.get("dropout", dropout),
+                max_seq_len=decoder_cfg.get("max_seq_len", max_len),
+                pooling=decoder_cfg.get("pooling", "mean"),
+                multiscale=decoder_cfg.get("multiscale", False),
+                sig_gating=decoder_cfg.get("sig_gating"),
+                d_phi=decoder_cfg.get("d_phi"),
+                geometry=decoder_cfg.get("geometry"),
+                features=decoder_cfg.get("features"),
+                router_type=decoder_cfg.get("router_type", "uniform"),
+                router_topk=decoder_cfg.get("router_topk", 0),
+                backend=decoder_cfg.get("backend", "dense_exact"),
+                backend_params=decoder_cfg.get("backend_params"),
+                feature_mode=decoder_cfg.get("feature_mode", "geometry_only"),
+                feature_params=decoder_cfg.get("feature_params"),
+                adapter_type=decoder_cfg.get("adapter_type", "auto"),
+                adapter_hidden_multiplier=decoder_cfg.get("adapter_hidden_multiplier", 2),
+                adapter_budget_fraction=decoder_cfg.get("adapter_budget_fraction", 0.15),
+                gamma=decoder_cfg.get("gamma", 1.0),
+                beta=decoder_cfg.get("beta", 0.0),
+                allow_token_token=bool(decoder_cfg.get("allow_token_token", False)),
+                token_embedding=self.token_emb,
+                causal=True,
+            )
+            self._decoder_is_set_only = True
+            self.decoder_cross_layers = nn.ModuleList(
+                [
+                    Seq2SeqCrossOnlyLayer(
+                        d_model=d_model,
+                        nhead=num_heads,
+                        dim_feedforward=ff,
+                        dropout=dropout,
+                    )
+                    for _ in range(num_layers)
+                ]
+            )
+        else:
+            self.decoder_layers = nn.ModuleList(
+                [
+                    Seq2SeqDecoderLayer(
+                        d_model=d_model,
+                        nhead=num_heads,
+                        dim_feedforward=ff,
+                        dropout=dropout,
+                    )
+                    for _ in range(num_layers)
+                ]
+            )
         self.lm_head = nn.Linear(d_model, vocab_size)
         self.diagnostics = BaselineSeq2SeqDiagnostics()
 
@@ -239,6 +337,21 @@ class Seq2SeqTransformer(nn.Module):
         tgt_pad_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         memory, src_pad_mask = self.encode(src_ids, src_pad_mask)
+        if self._decoder_is_set_only:
+            x = self.decoder.encode(tgt_ids)
+            cross_attn_sum = None
+            for layer in self.decoder_cross_layers:
+                x, cross_attn = layer(
+                    x,
+                    memory,
+                    memory_key_padding_mask=src_pad_mask,
+                )
+                cross_attn_sum = cross_attn if cross_attn_sum is None else cross_attn_sum + cross_attn
+            if self.training and cross_attn_sum is not None:
+                cross_attn_mean = cross_attn_sum / max(len(self.decoder_cross_layers), 1)
+                self.diagnostics.update(None, None, cross_attn_mean.detach())
+            return self.lm_head(x)
+
         tgt = self.dropout(self._positional(tgt_ids))
         tgt_mask = self._generate_subsequent_mask(tgt_ids.size(1), tgt_ids.device)
         self_attn_sum = None
@@ -261,7 +374,11 @@ class Seq2SeqTransformer(nn.Module):
                 self_attn_mean = self_attn_sum / max(len(self.decoder_layers), 1)
             if cross_attn_sum is not None:
                 cross_attn_mean = cross_attn_sum / max(len(self.decoder_layers), 1)
-            self.diagnostics.update(None, self_attn_mean.detach() if self_attn_mean is not None else None, cross_attn_mean.detach() if cross_attn_mean is not None else None)
+            self.diagnostics.update(
+                None,
+                self_attn_mean.detach() if self_attn_mean is not None else None,
+                cross_attn_mean.detach() if cross_attn_mean is not None else None,
+            )
         return self.lm_head(x)
 
     @torch.no_grad()
@@ -274,17 +391,26 @@ class Seq2SeqTransformer(nn.Module):
         memory, src_pad_mask = self.encode(src_ids, src_pad_mask)
         ys = torch.full((src_ids.size(0), 1), self.bos_id, device=src_ids.device, dtype=torch.long)
         for _ in range(max_len - 1):
-            tgt = self.dropout(self._positional(ys))
-            tgt_mask = self._generate_subsequent_mask(ys.size(1), ys.device)
-            x = tgt
-            for layer in self.decoder_layers:
-                x, _, _ = layer(
-                    x,
-                    memory,
-                    tgt_mask=tgt_mask,
-                    tgt_key_padding_mask=ys.eq(self.pad_id),
-                    memory_key_padding_mask=src_pad_mask,
-                )
+            if self._decoder_is_set_only:
+                x = self.decoder.encode(ys)
+                for layer in self.decoder_cross_layers:
+                    x, _ = layer(
+                        x,
+                        memory,
+                        memory_key_padding_mask=src_pad_mask,
+                    )
+            else:
+                tgt = self.dropout(self._positional(ys))
+                tgt_mask = self._generate_subsequent_mask(ys.size(1), ys.device)
+                x = tgt
+                for layer in self.decoder_layers:
+                    x, _, _ = layer(
+                        x,
+                        memory,
+                        tgt_mask=tgt_mask,
+                        tgt_key_padding_mask=ys.eq(self.pad_id),
+                        memory_key_padding_mask=src_pad_mask,
+                    )
             logits = self.lm_head(x[:, -1])
             next_id = torch.argmax(logits, dim=-1, keepdim=True)
             ys = torch.cat([ys, next_id], dim=1)
@@ -293,11 +419,21 @@ class Seq2SeqTransformer(nn.Module):
         return ys
 
     def get_diagnostics(self) -> Optional[dict]:
+        encoder_stats: dict[str, float] = {}
         if self._encoder_is_set_only:
-            return self.encoder.get_diagnostics()
+            encoder_stats = self.encoder.get_diagnostics() or {}
         stats = self.diagnostics.get_epoch_stats()
         self.diagnostics.reset()
+        if encoder_stats:
+            stats = {**stats, **encoder_stats}
         return stats
+
+    def get_last_set_embeddings(self) -> Optional[torch.Tensor]:
+        if self._encoder_is_set_only:
+            return self.encoder.get_last_set_embeddings()
+        if self._decoder_is_set_only and self.decoder is not None:
+            return self.decoder.get_last_set_embeddings()
+        return None
 
     def attention_params(self) -> dict[str, torch.Tensor]:
         params: dict[str, torch.Tensor] = {}
@@ -305,9 +441,14 @@ class Seq2SeqTransformer(nn.Module):
             for idx, layer in enumerate(self.encoder_layers):
                 for name, param in layer.self_attn.named_parameters():
                     params[f"encoder.layer{idx}.{name}"] = param
-        for idx, layer in enumerate(self.decoder_layers):
-            for name, param in layer.self_attn.named_parameters():
-                params[f"decoder_self.layer{idx}.{name}"] = param
-            for name, param in layer.cross_attn.named_parameters():
-                params[f"decoder_cross.layer{idx}.{name}"] = param
+        if self._decoder_is_set_only:
+            for idx, layer in enumerate(self.decoder_cross_layers):
+                for name, param in layer.cross_attn.named_parameters():
+                    params[f"decoder_cross.layer{idx}.{name}"] = param
+        else:
+            for idx, layer in enumerate(self.decoder_layers):
+                for name, param in layer.self_attn.named_parameters():
+                    params[f"decoder_self.layer{idx}.{name}"] = param
+                for name, param in layer.cross_attn.named_parameters():
+                    params[f"decoder_cross.layer{idx}.{name}"] = param
         return params

@@ -53,6 +53,7 @@ class SetOnlyLM(nn.Module):
         beta: float = 0.0,
         token_embedding: nn.Embedding | None = None,
         allow_token_token: bool = False,
+        causal: bool = False,
     ) -> None:
         super().__init__()
         self.token_emb = token_embedding or nn.Embedding(vocab_size, d_model)
@@ -67,6 +68,7 @@ class SetOnlyLM(nn.Module):
         self.stride = stride
         self.max_seq_len = max_seq_len
         self.allow_token_token = bool(allow_token_token)
+        self.causal = bool(causal)
         if isinstance(pooling, dict):
             self.pooling_mode = pooling.get("mode", "mean")
             self.pooling_params = {
@@ -359,9 +361,20 @@ class SetOnlyLM(nn.Module):
                 symmetric=symmetric,
                 sig=sig_for_gating,
             )
+        if self.causal:
+            causal_mask = bank.set_positions[:, None] >= bank.set_positions[None, :]
+            if sig_mask is None:
+                sig_mask = causal_mask
+            else:
+                sig_mask = sig_mask & causal_mask
 
+        guard_seq_len = (
+            seq_len
+            if (self.window_size == 1 and self.stride == 1 and not self.allow_token_token)
+            else -1
+        )
         for block in self.blocks:
-            set_states = block(set_states, geom_bias, content_bias, sig_mask, seq_len)
+            set_states = block(set_states, geom_bias, content_bias, sig_mask, guard_seq_len)
 
         if isinstance(self.router, UniformRouter):
             router_out: RouterOutput = self.router(set_states, bank.token_to_sets)

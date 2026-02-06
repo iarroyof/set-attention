@@ -94,11 +94,18 @@ class NystromBackend(SetAttentionBackend):
             content_mL = None
             content_LL = None
 
+        if sig_mask is not None:
+            sig_mL = sig_mask[:, landmark_idx] if sig_mask.dim() == 2 else sig_mask[:, :, landmark_idx]
+            sig_LL = sig_mask[landmark_idx][:, landmark_idx] if sig_mask.dim() == 2 else sig_mask[:, landmark_idx][:, :, landmark_idx]
+        else:
+            sig_mL = None
+            sig_LL = None
+
         scores_mL = apply_score_biases(
-            scores_mL, geom_bias=geom_mL, content_bias=content_mL, sig_mask=None
+            scores_mL, geom_bias=geom_mL, content_bias=content_mL, sig_mask=sig_mL
         )
         scores_LL = apply_score_biases(
-            scores_LL, geom_bias=geom_LL, content_bias=content_LL, sig_mask=None
+            scores_LL, geom_bias=geom_LL, content_bias=content_LL, sig_mask=sig_LL
         )
 
         k_mL = torch.exp(scores_mL)
