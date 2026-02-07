@@ -6,6 +6,7 @@ import torch
 from torch import nn
 
 from models.set_only import SetOnlyLM
+from .set_only_cross_attention import SetOnlyCrossAttention, SetOnlyCrossLayer
 from .diagnostics import BaselineSeq2SeqDiagnostics
 
 
@@ -167,8 +168,10 @@ class Seq2SeqTransformer(nn.Module):
         max_len: int = 256,
         encoder_family: str = "baseline_token",
         decoder_family: str | None = None,
+        cross_attention: str = "baseline",
         set_only_cfg: Optional[dict] = None,
         decoder_set_only_cfg: Optional[dict] = None,
+        cross_set_only_cfg: Optional[dict] = None,
         shared_embeddings: Optional[nn.Embedding] = None,
         pad_id: int = 0,
         bos_id: int = 1,
@@ -189,6 +192,8 @@ class Seq2SeqTransformer(nn.Module):
         self.decoder_family = "baseline_token"
         if encoder_family not in {"baseline_token", "set_only"}:
             raise ValueError("encoder_family must be baseline_token or set_only")
+        if cross_attention not in {"baseline", "set_only"}:
+            raise ValueError("cross_attention must be baseline or set_only")
         if encoder_family == "set_only":
             if set_only_cfg is None:
                 raise ValueError("set_only encoder requires set_only_cfg")
@@ -243,6 +248,49 @@ class Seq2SeqTransformer(nn.Module):
             decoder_cfg = decoder_set_only_cfg or set_only_cfg
             if decoder_cfg is None:
                 raise ValueError("set_only decoder requires decoder_set_only_cfg or set_only_cfg")
+            if cross_attention == "set_only":
+                cross_cfg = cross_set_only_cfg or decoder_cfg
+                cross_attn = SetOnlyCrossAttention(
+                    vocab_size=vocab_size,
+                    d_model=d_model,
+                    window_size=cross_cfg.get("window_size", 32),
+                    stride=cross_cfg.get("stride", 16),
+                    max_seq_len=cross_cfg.get("max_seq_len", max_len),
+                    pooling=cross_cfg.get("pooling", "mean"),
+                    feature_mode=cross_cfg.get("feature_mode", "geometry_only"),
+                    feature_params=cross_cfg.get("feature_params"),
+                    router_type=cross_cfg.get("router_type", "uniform"),
+                    router_topk=cross_cfg.get("router_topk", 0),
+                    sig_gating=cross_cfg.get("sig_gating"),
+                    d_phi=cross_cfg.get("d_phi"),
+                    gamma=cross_cfg.get("gamma", 1.0),
+                    beta=cross_cfg.get("beta", 0.0),
+                )
+                self.decoder_cross_layers = nn.ModuleList(
+                    [
+                        SetOnlyCrossLayer(
+                            d_model=d_model,
+                            dim_feedforward=ff,
+                            dropout=dropout,
+                            cross_attn=cross_attn,
+                        )
+                        for _ in range(num_layers)
+                    ]
+                )
+                self._decoder_cross_is_set_only = True
+            else:
+                self.decoder_cross_layers = nn.ModuleList(
+                    [
+                        Seq2SeqCrossOnlyLayer(
+                            d_model=d_model,
+                            nhead=num_heads,
+                            dim_feedforward=ff,
+                            dropout=dropout,
+                        )
+                        for _ in range(num_layers)
+                    ]
+                )
+                self._decoder_cross_is_set_only = False
             self.decoder = SetOnlyLM(
                 vocab_size=vocab_size,
                 d_model=d_model,
@@ -274,18 +322,9 @@ class Seq2SeqTransformer(nn.Module):
                 causal=True,
             )
             self._decoder_is_set_only = True
-            self.decoder_cross_layers = nn.ModuleList(
-                [
-                    Seq2SeqCrossOnlyLayer(
-                        d_model=d_model,
-                        nhead=num_heads,
-                        dim_feedforward=ff,
-                        dropout=dropout,
-                    )
-                    for _ in range(num_layers)
-                ]
-            )
         else:
+            if cross_attention == "set_only":
+                raise ValueError("cross_attention='set_only' requires decoder_family='set_only'")
             self.decoder_layers = nn.ModuleList(
                 [
                     Seq2SeqDecoderLayer(
@@ -341,11 +380,14 @@ class Seq2SeqTransformer(nn.Module):
             x = self.decoder.encode(tgt_ids)
             cross_attn_sum = None
             for layer in self.decoder_cross_layers:
-                x, cross_attn = layer(
-                    x,
-                    memory,
-                    memory_key_padding_mask=src_pad_mask,
-                )
+                if self._decoder_cross_is_set_only:
+                    x, cross_attn = layer(x, memory, src_ids)
+                else:
+                    x, cross_attn = layer(
+                        x,
+                        memory,
+                        memory_key_padding_mask=src_pad_mask,
+                    )
                 cross_attn_sum = cross_attn if cross_attn_sum is None else cross_attn_sum + cross_attn
             if self.training and cross_attn_sum is not None:
                 cross_attn_mean = cross_attn_sum / max(len(self.decoder_cross_layers), 1)
@@ -394,11 +436,14 @@ class Seq2SeqTransformer(nn.Module):
             if self._decoder_is_set_only:
                 x = self.decoder.encode(ys)
                 for layer in self.decoder_cross_layers:
-                    x, _ = layer(
-                        x,
-                        memory,
-                        memory_key_padding_mask=src_pad_mask,
-                    )
+                    if self._decoder_cross_is_set_only:
+                        x, _ = layer(x, memory, src_ids)
+                    else:
+                        x, _ = layer(
+                            x,
+                            memory,
+                            memory_key_padding_mask=src_pad_mask,
+                        )
             else:
                 tgt = self.dropout(self._positional(ys))
                 tgt_mask = self._generate_subsequent_mask(ys.size(1), ys.device)

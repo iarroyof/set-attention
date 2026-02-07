@@ -19,6 +19,8 @@ BASELINE_KEYS = {
     "seq2seq",
     "decoder_family",
     "decoder_set_only",
+    "cross_attention",
+    "cross_set_only",
 }
 
 SET_ONLY_KEYS = {
@@ -52,6 +54,8 @@ SET_ONLY_KEYS = {
     "seq2seq",
     "decoder_family",
     "decoder_set_only",
+    "cross_attention",
+    "cross_set_only",
     "causal",
 }
 
@@ -75,6 +79,9 @@ def validate_config(cfg: dict) -> None:
     decoder_family = model_cfg.get("decoder_family")
     if decoder_family is not None and decoder_family not in {"baseline_token", "set_only"}:
         raise ConfigError("decoder_family must be 'baseline_token' or 'set_only'")
+    cross_attention = model_cfg.get("cross_attention")
+    if cross_attention is not None and cross_attention not in {"baseline", "set_only"}:
+        raise ConfigError("cross_attention must be 'baseline' or 'set_only'")
 
     if family == "baseline_token":
         unexpected = set(model_cfg.keys()) - BASELINE_KEYS
