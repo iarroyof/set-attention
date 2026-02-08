@@ -6,6 +6,7 @@ import torch
 from torch import nn
 
 from models.set_only import SetOnlyLM
+from models.baseline_token.attention import BaselineAttention
 from .set_only_cross_attention import SetOnlyCrossAttention, SetOnlyCrossLayer
 from .diagnostics import BaselineSeq2SeqDiagnostics
 
@@ -17,10 +18,22 @@ class Seq2SeqEncoderLayer(nn.Module):
         nhead: int,
         dim_feedforward: int,
         dropout: float,
+        attention_family: str,
+        backend: str,
+        backend_params: Optional[dict],
+        max_seq_len: int,
     ) -> None:
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(
-            d_model, nhead, dropout=dropout, batch_first=True
+        self.self_attn = BaselineAttention(
+            d_model=d_model,
+            num_heads=nhead,
+            dropout=dropout,
+            attention_family=attention_family,
+            backend=backend,
+            backend_params=backend_params,
+            max_seq_len=max_seq_len,
+            causal=False,
+            is_cross=False,
         )
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -39,11 +52,8 @@ class Seq2SeqEncoderLayer(nn.Module):
         attn_input = self.norm1(x)
         attn_output, attn_weights = self.self_attn(
             attn_input,
-            attn_input,
-            attn_input,
+            memory=None,
             key_padding_mask=key_padding_mask,
-            need_weights=True,
-            average_attn_weights=True,
         )
         x = x + self.dropout1(attn_output)
         ff_input = self.norm2(x)
@@ -59,13 +69,36 @@ class Seq2SeqDecoderLayer(nn.Module):
         nhead: int,
         dim_feedforward: int,
         dropout: float,
+        self_attention_family: str,
+        self_backend: str,
+        self_backend_params: Optional[dict],
+        cross_attention_family: str,
+        cross_backend: str,
+        cross_backend_params: Optional[dict],
+        max_seq_len: int,
     ) -> None:
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(
-            d_model, nhead, dropout=dropout, batch_first=True
+        self.self_attn = BaselineAttention(
+            d_model=d_model,
+            num_heads=nhead,
+            dropout=dropout,
+            attention_family=self_attention_family,
+            backend=self_backend,
+            backend_params=self_backend_params,
+            max_seq_len=max_seq_len,
+            causal=True,
+            is_cross=False,
         )
-        self.cross_attn = nn.MultiheadAttention(
-            d_model, nhead, dropout=dropout, batch_first=True
+        self.cross_attn = BaselineAttention(
+            d_model=d_model,
+            num_heads=nhead,
+            dropout=dropout,
+            attention_family=cross_attention_family,
+            backend=cross_backend,
+            backend_params=cross_backend_params,
+            max_seq_len=max_seq_len,
+            causal=False,
+            is_cross=True,
         )
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -89,23 +122,76 @@ class Seq2SeqDecoderLayer(nn.Module):
         attn_input = self.norm1(x)
         self_out, self_weights = self.self_attn(
             attn_input,
-            attn_input,
-            attn_input,
-            attn_mask=tgt_mask,
+            memory=None,
             key_padding_mask=tgt_key_padding_mask,
-            need_weights=True,
-            average_attn_weights=True,
         )
         x = x + self.dropout1(self_out)
         cross_input = self.norm2(x)
         cross_out, cross_weights = self.cross_attn(
             cross_input,
-            memory,
-            memory,
+            memory=memory,
             key_padding_mask=memory_key_padding_mask,
-            need_weights=True,
-            average_attn_weights=True,
         )
+        x = x + self.dropout2(cross_out)
+        ff_input = self.norm3(x)
+        ff_output = self.linear2(self.dropout(self.activation(self.linear1(ff_input))))
+        x = x + self.dropout3(ff_output)
+        return x, self_weights, cross_weights
+
+
+class Seq2SeqDecoderLayerSetOnlyCross(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int,
+        dropout: float,
+        self_attention_family: str,
+        self_backend: str,
+        self_backend_params: Optional[dict],
+        cross_attn: SetOnlyCrossAttention,
+        max_seq_len: int,
+    ) -> None:
+        super().__init__()
+        self.self_attn = BaselineAttention(
+            d_model=d_model,
+            num_heads=nhead,
+            dropout=dropout,
+            attention_family=self_attention_family,
+            backend=self_backend,
+            backend_params=self_backend_params,
+            max_seq_len=max_seq_len,
+            causal=True,
+            is_cross=False,
+        )
+        self.cross_attn = cross_attn
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.dropout3 = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
+        self.activation = nn.GELU()
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        memory: torch.Tensor,
+        tgt_key_padding_mask: torch.Tensor | None,
+        src_ids: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        attn_input = self.norm1(x)
+        self_out, self_weights = self.self_attn(
+            attn_input,
+            memory=None,
+            key_padding_mask=tgt_key_padding_mask,
+        )
+        x = x + self.dropout1(self_out)
+        cross_input = self.norm2(x)
+        cross_out, cross_weights = self.cross_attn(cross_input, memory, src_ids)
         x = x + self.dropout2(cross_out)
         ff_input = self.norm3(x)
         ff_output = self.linear2(self.dropout(self.activation(self.linear1(ff_input))))
@@ -170,12 +256,19 @@ class Seq2SeqTransformer(nn.Module):
         decoder_family: str | None = None,
         cross_attention: str = "baseline",
         set_only_cfg: Optional[dict] = None,
-        decoder_set_only_cfg: Optional[dict] = None,
-        cross_set_only_cfg: Optional[dict] = None,
         shared_embeddings: Optional[nn.Embedding] = None,
         pad_id: int = 0,
         bos_id: int = 1,
         eos_id: int = 2,
+        encoder_attention_family: str = "dense",
+        encoder_backend: str = "exact",
+        decoder_attention_family: str = "dense",
+        decoder_backend: str = "exact",
+        cross_attention_family: str = "dense",
+        cross_backend: str = "exact",
+        encoder_backend_params: Optional[dict] = None,
+        decoder_backend_params: Optional[dict] = None,
+        cross_backend_params: Optional[dict] = None,
     ) -> None:
         super().__init__()
         self.pad_id = pad_id
@@ -214,7 +307,7 @@ class Seq2SeqTransformer(nn.Module):
                 features=set_only_cfg.get("features"),
                 router_type=set_only_cfg.get("router_type", "uniform"),
                 router_topk=set_only_cfg.get("router_topk", 0),
-                backend=set_only_cfg.get("backend", "dense_exact"),
+                backend=set_only_cfg.get("backend", "exact"),
                 backend_params=set_only_cfg.get("backend_params"),
                 feature_mode=set_only_cfg.get("feature_mode", "geometry_only"),
                 feature_params=set_only_cfg.get("feature_params"),
@@ -235,6 +328,10 @@ class Seq2SeqTransformer(nn.Module):
                         nhead=num_heads,
                         dim_feedforward=ff,
                         dropout=dropout,
+                        attention_family=encoder_attention_family,
+                        backend=encoder_backend,
+                        backend_params=encoder_backend_params,
+                        max_seq_len=max_len,
                     )
                     for _ in range(num_layers)
                 ]
@@ -242,14 +339,15 @@ class Seq2SeqTransformer(nn.Module):
             self._encoder_is_set_only = False
         self.decoder = None
         self._decoder_is_set_only = False
+        self._decoder_cross_is_set_only = False
         if decoder_family is not None:
             self.decoder_family = decoder_family
         if self.decoder_family == "set_only":
-            decoder_cfg = decoder_set_only_cfg or set_only_cfg
+            decoder_cfg = set_only_cfg
             if decoder_cfg is None:
-                raise ValueError("set_only decoder requires decoder_set_only_cfg or set_only_cfg")
+                raise ValueError("set_only decoder requires set_only_cfg")
             if cross_attention == "set_only":
-                cross_cfg = cross_set_only_cfg or decoder_cfg
+                cross_cfg = decoder_cfg
                 cross_attn = SetOnlyCrossAttention(
                     vocab_size=vocab_size,
                     d_model=d_model,
@@ -308,7 +406,7 @@ class Seq2SeqTransformer(nn.Module):
                 features=decoder_cfg.get("features"),
                 router_type=decoder_cfg.get("router_type", "uniform"),
                 router_topk=decoder_cfg.get("router_topk", 0),
-                backend=decoder_cfg.get("backend", "dense_exact"),
+                backend=decoder_cfg.get("backend", "exact"),
                 backend_params=decoder_cfg.get("backend_params"),
                 feature_mode=decoder_cfg.get("feature_mode", "geometry_only"),
                 feature_params=decoder_cfg.get("feature_params"),
@@ -324,18 +422,61 @@ class Seq2SeqTransformer(nn.Module):
             self._decoder_is_set_only = True
         else:
             if cross_attention == "set_only":
-                raise ValueError("cross_attention='set_only' requires decoder_family='set_only'")
-            self.decoder_layers = nn.ModuleList(
-                [
+                if set_only_cfg is None:
+                    raise ValueError("set_only cross-attention requires set_only_cfg")
+                cross_cfg = set_only_cfg
+                cross_attn = SetOnlyCrossAttention(
+                    vocab_size=vocab_size,
+                    d_model=d_model,
+                    window_size=cross_cfg.get("window_size", 32),
+                    stride=cross_cfg.get("stride", 16),
+                    max_seq_len=cross_cfg.get("max_seq_len", max_len),
+                    pooling=cross_cfg.get("pooling", "mean"),
+                    feature_mode=cross_cfg.get("feature_mode", "geometry_only"),
+                    feature_params=cross_cfg.get("feature_params"),
+                    router_type=cross_cfg.get("router_type", "uniform"),
+                    router_topk=cross_cfg.get("router_topk", 0),
+                    sig_gating=cross_cfg.get("sig_gating"),
+                    d_phi=cross_cfg.get("d_phi"),
+                    gamma=cross_cfg.get("gamma", 1.0),
+                    beta=cross_cfg.get("beta", 0.0),
+                )
+                self.decoder_layers = nn.ModuleList(
+                    [
+                        Seq2SeqDecoderLayerSetOnlyCross(
+                            d_model=d_model,
+                            nhead=num_heads,
+                            dim_feedforward=ff,
+                            dropout=dropout,
+                            self_attention_family=decoder_attention_family,
+                            self_backend=decoder_backend,
+                            self_backend_params=decoder_backend_params,
+                            cross_attn=cross_attn,
+                            max_seq_len=max_len,
+                        )
+                        for _ in range(num_layers)
+                    ]
+                )
+                self._decoder_cross_is_set_only = True
+            else:
+                self.decoder_layers = nn.ModuleList(
+                    [
                     Seq2SeqDecoderLayer(
                         d_model=d_model,
                         nhead=num_heads,
                         dim_feedforward=ff,
                         dropout=dropout,
+                        self_attention_family=decoder_attention_family,
+                        self_backend=decoder_backend,
+                        self_backend_params=decoder_backend_params,
+                        cross_attention_family=cross_attention_family,
+                        cross_backend=cross_backend,
+                        cross_backend_params=cross_backend_params,
+                        max_seq_len=max_len,
                     )
-                    for _ in range(num_layers)
-                ]
-            )
+                        for _ in range(num_layers)
+                    ]
+                )
         self.lm_head = nn.Linear(d_model, vocab_size)
         self.diagnostics = BaselineSeq2SeqDiagnostics()
 
@@ -400,13 +541,21 @@ class Seq2SeqTransformer(nn.Module):
         cross_attn_sum = None
         x = tgt
         for layer in self.decoder_layers:
-            x, self_attn, cross_attn = layer(
-                x,
-                memory,
-                tgt_mask=tgt_mask,
-                tgt_key_padding_mask=tgt_pad_mask,
-                memory_key_padding_mask=src_pad_mask,
-            )
+            if self._decoder_cross_is_set_only:
+                x, self_attn, cross_attn = layer(
+                    x,
+                    memory,
+                    tgt_key_padding_mask=tgt_pad_mask,
+                    src_ids=src_ids,
+                )
+            else:
+                x, self_attn, cross_attn = layer(
+                    x,
+                    memory,
+                    tgt_mask=tgt_mask,
+                    tgt_key_padding_mask=tgt_pad_mask,
+                    memory_key_padding_mask=src_pad_mask,
+                )
             self_attn_sum = self_attn if self_attn_sum is None else self_attn_sum + self_attn
             cross_attn_sum = cross_attn if cross_attn_sum is None else cross_attn_sum + cross_attn
         if self.training:
@@ -449,13 +598,21 @@ class Seq2SeqTransformer(nn.Module):
                 tgt_mask = self._generate_subsequent_mask(ys.size(1), ys.device)
                 x = tgt
                 for layer in self.decoder_layers:
-                    x, _, _ = layer(
-                        x,
-                        memory,
-                        tgt_mask=tgt_mask,
-                        tgt_key_padding_mask=ys.eq(self.pad_id),
-                        memory_key_padding_mask=src_pad_mask,
-                    )
+                    if self._decoder_cross_is_set_only:
+                        x, _, _ = layer(
+                            x,
+                            memory,
+                            tgt_key_padding_mask=ys.eq(self.pad_id),
+                            src_ids=src_ids,
+                        )
+                    else:
+                        x, _, _ = layer(
+                            x,
+                            memory,
+                            tgt_mask=tgt_mask,
+                            tgt_key_padding_mask=ys.eq(self.pad_id),
+                            memory_key_padding_mask=src_pad_mask,
+                        )
             logits = self.lm_head(x[:, -1])
             next_id = torch.argmax(logits, dim=-1, keepdim=True)
             ys = torch.cat([ys, next_id], dim=1)

@@ -16,6 +16,7 @@ class LocalBandBackend(SetAttentionBackend):
         radius: int,
         dropout: float = 0.0,
         allow_token_token: bool = False,
+        global_set_indices: list[int] | None = None,
     ) -> None:
         super().__init__()
         if d_model % num_heads != 0:
@@ -32,6 +33,7 @@ class LocalBandBackend(SetAttentionBackend):
         self.out_proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
         self.allow_token_token = allow_token_token
+        self.global_set_indices = global_set_indices or []
 
     def forward(
         self,
@@ -51,6 +53,15 @@ class LocalBandBackend(SetAttentionBackend):
 
         idx = torch.arange(m, device=z.device)
         band_mask = (idx[:, None] - idx[None, :]).abs() <= self.radius
+        if self.global_set_indices:
+            global_mask = torch.zeros_like(band_mask)
+            for g_idx in self.global_set_indices:
+                if g_idx < 0:
+                    g_idx = m + g_idx
+                if 0 <= g_idx < m:
+                    global_mask[g_idx, :] = True
+                    global_mask[:, g_idx] = True
+            band_mask = band_mask | global_mask
         if sig_mask is not None:
             band_mask = band_mask & sig_mask
 

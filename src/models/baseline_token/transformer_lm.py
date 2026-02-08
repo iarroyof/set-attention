@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
+from .attention import BaselineAttention
 from .diagnostics import BaselineAttentionDiagnostics
 
 
@@ -13,10 +14,22 @@ class BaselineEncoderLayer(nn.Module):
         nhead: int,
         dim_feedforward: int,
         dropout: float,
+        attention_family: str,
+        backend: str,
+        backend_params: dict | None,
+        max_seq_len: int,
     ) -> None:
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(
-            d_model, nhead, dropout=dropout, batch_first=True
+        self.self_attn = BaselineAttention(
+            d_model=d_model,
+            num_heads=nhead,
+            dropout=dropout,
+            attention_family=attention_family,
+            backend=backend,
+            backend_params=backend_params,
+            max_seq_len=max_seq_len,
+            causal=False,
+            is_cross=False,
         )
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -35,11 +48,8 @@ class BaselineEncoderLayer(nn.Module):
         attn_input = self.norm1(x)
         attn_output, attn_weights = self.self_attn(
             attn_input,
-            attn_input,
-            attn_input,
+            memory=None,
             key_padding_mask=key_padding_mask,
-            need_weights=True,
-            average_attn_weights=True,
         )
         x = x + self.dropout1(attn_output)
         ff_input = self.norm2(x)
@@ -60,6 +70,9 @@ class TransformerLM(nn.Module):
         dim_feedforward: int = 2048,
         dropout: float = 0.1,
         max_seq_len: int = 512,
+        attention_family: str = "dense",
+        backend: str = "exact",
+        backend_params: dict | None = None,
     ) -> None:
         super().__init__()
         self.token_emb = nn.Embedding(vocab_size, d_model)
@@ -72,6 +85,10 @@ class TransformerLM(nn.Module):
                     nhead=nhead,
                     dim_feedforward=dim_feedforward,
                     dropout=dropout,
+                    attention_family=attention_family,
+                    backend=backend,
+                    backend_params=backend_params,
+                    max_seq_len=max_seq_len,
                 )
                 for _ in range(num_layers)
             ]

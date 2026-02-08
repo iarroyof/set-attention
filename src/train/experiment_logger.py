@@ -52,21 +52,16 @@ def _get_cfg_value(cfg: Dict[str, Any], key: str, default: Any = "NA") -> Any:
 
 def _attention_tags(cfg: Dict[str, Any]) -> Dict[str, Any]:
     model = cfg.get("model", {})
-    family = model.get("family")
-    set_enabled = family == "set_only" or bool(model.get("set_enabled"))
-    backend = model.get("backend", "baseline")
+    impl = model.get("implementation", "baseline_token")
+    set_enabled = impl != "baseline_token" or bool(model.get("set_enabled"))
+    backend = model.get("backend", "exact")
+    family = model.get("attention_family", "dense")
 
-    if family == "baseline_token":
-        attn_family = "dense"
-        base = "dot_product"
+    if impl == "baseline_token":
+        attn_family = family
     else:
-        if backend in {"dense_exact"}:
-            attn_family = "set_dense"
-        elif backend in {"local_band", "sparse_topk"}:
-            attn_family = "set_sparse"
-        else:
-            attn_family = "set_linear"
-        base = backend
+        attn_family = f"set_{family}"
+    base = backend
 
     return {
         "attention/family": attn_family,
@@ -77,8 +72,8 @@ def _attention_tags(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 def _default_run_name(cfg: Dict[str, Any], task: str, dataset: str, attn_tags: Dict[str, Any]) -> str:
     stage = cfg.get("stage", _get_cfg_value(cfg, "training.stage", "stage"))
-    model_type = cfg.get("model", {}).get("family", "model")
-    backend = cfg.get("model", {}).get("backend", "baseline")
+    model_type = cfg.get("model", {}).get("implementation", "model")
+    backend = cfg.get("model", {}).get("backend", "exact")
     score_mode = cfg.get("model", {}).get("ska_score_mode", "na")
     feature_mode = cfg.get("model", {}).get("feature_mode", "na")
     router_type = cfg.get("model", {}).get("router_type", "na")
@@ -276,8 +271,16 @@ class ExperimentLogger:
             "data.vit_dataset",
             "data.batch_size",
             "data.seq_len",
-            "model.family",
+            "model.implementation",
+            "model.attention_family",
             "model.backend",
+            "model.encoder_attention_family",
+            "model.encoder_backend",
+            "model.decoder_attention_family",
+            "model.decoder_backend",
+            "model.cross_attention_family",
+            "model.cross_backend",
+            "model.cross_attention",
             "model.feature_mode",
             "model.router_type",
             "model.router_topk",

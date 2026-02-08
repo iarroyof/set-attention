@@ -10,6 +10,7 @@ from .router import LearnedRouter, UniformRouter, RouterOutput
 from .ska_block import SetAttentionBlock
 from set_attention.adapter_factory import create_adapter, select_adapter_type
 from set_attention.backends.dense_exact import DenseExactBackend
+from set_attention.backends.linformer import LinformerBackend
 from set_attention.backends.landmark import LandmarkAttentionBackend
 from set_attention.backends.local_band import LocalBandBackend
 from set_attention.backends.nystrom import NystromBackend
@@ -42,7 +43,7 @@ class SetOnlyLM(nn.Module):
         features: dict | None = None,
         router_type: str = "uniform",
         router_topk: int = 0,
-        backend: str = "dense_exact",
+        backend: str = "exact",
         backend_params: dict | None = None,
         feature_mode: str = "geometry_only",
         feature_params: dict | None = None,
@@ -182,7 +183,7 @@ class SetOnlyLM(nn.Module):
 
         backend_params = backend_params or {}
         def make_backend() -> nn.Module:
-            if backend == "dense_exact":
+            if backend in {"exact", "dense_exact"}:
                 return DenseExactBackend(
                     d_model=d_model,
                     num_heads=num_heads,
@@ -196,6 +197,7 @@ class SetOnlyLM(nn.Module):
                     radius=backend_params.get("radius", 4),
                     dropout=dropout,
                     allow_token_token=self.allow_token_token,
+                    global_set_indices=backend_params.get("global_set_indices"),
                 )
             if backend == "nystrom":
                 return NystromBackend(
@@ -219,6 +221,15 @@ class SetOnlyLM(nn.Module):
                     d_model=d_model,
                     num_heads=num_heads,
                     k_s=backend_params.get("k_s", 16),
+                    dropout=dropout,
+                    allow_token_token=self.allow_token_token,
+                )
+            if backend == "linformer":
+                return LinformerBackend(
+                    d_model=d_model,
+                    num_heads=num_heads,
+                    max_sets=max_sets,
+                    k=backend_params.get("k", 32),
                     dropout=dropout,
                     allow_token_token=self.allow_token_token,
                 )

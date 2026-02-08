@@ -8,7 +8,9 @@ from src.train.experiment_logger import ExperimentLogger
 def test_experiment_logger_writes_csv(tmp_path: Path):
     cfg = {
         "model": {
-            "family": "baseline_token",
+            "implementation": "baseline_token",
+            "attention_family": "dense",
+            "backend": "exact",
             "architecture": "transformer_lm",
             "vocab_size": 100,
             "d_model": 32,

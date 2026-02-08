@@ -1,5 +1,7 @@
 model:
-  family: set_only
+  implementation: set_only
+  attention_family: linear
+  backend: landmark
   vocab_size: 0
   d_model: 256
   num_layers: 4
@@ -10,7 +12,6 @@ model:
   max_seq_len: 256
   router_type: uniform
   router_topk: 0
-  backend: landmark
   backend_params:
     num_landmarks: 32
   feature_mode: geometry_only

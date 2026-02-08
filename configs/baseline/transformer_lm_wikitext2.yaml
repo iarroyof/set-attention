@@ -1,5 +1,7 @@
 model:
-  family: baseline_token
+  implementation: baseline_token
+  attention_family: dense
+  backend: exact
   architecture: transformer_lm
   vocab_size: 0
   d_model: 512

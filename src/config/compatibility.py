@@ -82,11 +82,18 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
         warn(message)
 
     model = cfg.get("model", {})
-    family = model.get("family")
+    impl = model.get("implementation")
+    task = cfg.get("task") or cfg.get("data", {}).get("task")
+    if task is None:
+        data_cfg = cfg.get("data", {})
+        if data_cfg.get("seq_dataset"):
+            task = "seq2seq"
+        elif data_cfg.get("dataset"):
+            task = "lm"
 
     seq_len = cfg.get("data", {}).get("seq_len") or model.get("max_seq_len") or 0
-    window_size = model.get("window_size", 0) or 0
-    stride = model.get("stride", 0) or 0
+    window_size = model.get("window_size", 32) or 32
+    stride = model.get("stride", 16) or 16
     max_sets = _max_sets(int(seq_len), int(stride))
 
     min_head_dim = _env_int("SET_ATTENTION_MIN_HEAD_DIM", 8)
@@ -96,14 +103,65 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     warn_landmark_min = _env_int("SET_ATTENTION_WARN_MIN_LANDMARKS", 10)
     warn_landmark_ratio = _env_float("SET_ATTENTION_WARN_LANDMARK_RATIO", 0.5)
 
-    if family == "baseline_token":
-        d_model = model.get("d_model", 0)
-        nhead = model.get("nhead", model.get("num_heads", 1))
-        require(d_model % nhead == 0, "baseline_token: d_model must be divisible by nhead")
-        require(d_model // nhead >= min_head_dim, "baseline_token: head dimension too small")
-        return cfg
+    if task == "lm" and impl not in {"baseline_token", "set_only"}:
+        raise ConfigError("LM only supports implementation=baseline_token or set_only")
 
-    if family not in {"set_only", "encoder_set_only"}:
+    if task == "seq2seq" and impl not in {
+        "baseline_token",
+        "set_only",
+        "encoder_set_only",
+        "decoder_set_only",
+        "cross_attention_set_only",
+        "encoder_set_decoder_baseline",
+        "encoder_baseline_decoder_set",
+    }:
+        raise ConfigError("Seq2Seq implementation is not supported")
+
+    d_model = model.get("d_model", 0)
+    nhead = model.get("nhead", model.get("num_heads", 1))
+    require(d_model % nhead == 0, "baseline_token: d_model must be divisible by nhead")
+    require(d_model // nhead >= min_head_dim, "baseline_token: head dimension too small")
+
+    def _resolve_impls() -> tuple[str, str, str]:
+        encoder = "baseline"
+        decoder = "baseline"
+        cross = "baseline"
+        if impl == "set_only":
+            encoder = decoder = cross = "set_only"
+        elif impl in {"encoder_set_only", "encoder_set_decoder_baseline"}:
+            encoder = "set_only"
+        elif impl in {"decoder_set_only", "encoder_baseline_decoder_set"}:
+            decoder = "set_only"
+        elif impl == "cross_attention_set_only":
+            cross = "set_only"
+        elif impl == "baseline_token":
+            pass
+        if model.get("cross_attention") == "set_only":
+            cross = "set_only"
+        if model.get("cross_attention") == "baseline":
+            cross = "baseline"
+        return encoder, decoder, cross
+
+    encoder_impl, decoder_impl, cross_impl = _resolve_impls()
+
+    def _validate_family_backend(family: str | None, backend: str | None, scope: str) -> None:
+        if family is None or backend is None:
+            return
+        if family == "dense":
+            require(backend == "exact", f"{scope}: dense requires backend=exact")
+        elif family == "sparse":
+            require(backend in {"local_band", "sparse_topk"}, f"{scope}: sparse backend mismatch")
+        elif family == "linear":
+            require(backend in {"landmark", "nystrom", "linformer"}, f"{scope}: linear backend mismatch")
+        else:
+            raise ConfigError(f"{scope}: attention_family must be dense, sparse, or linear")
+
+    _validate_family_backend(model.get("encoder_attention_family"), model.get("encoder_backend"), "encoder")
+    _validate_family_backend(model.get("decoder_attention_family"), model.get("decoder_backend"), "decoder")
+    _validate_family_backend(model.get("cross_attention_family"), model.get("cross_backend"), "cross")
+
+    uses_set_only = encoder_impl == "set_only" or decoder_impl == "set_only" or cross_impl == "set_only"
+    if not uses_set_only:
         return cfg
 
     pooling_cfg = model.get("pooling", "mean")
@@ -137,6 +195,14 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if backend == "local_band":
         require("radius" in backend_params, "local_band backend requires backend_params.radius")
         require(backend_params["radius"] >= 1, "local_band radius must be >= 1")
+        global_indices = backend_params.get("global_indices", [])
+        global_set_indices = backend_params.get("global_set_indices", [])
+        if global_indices and not isinstance(global_indices, list):
+            raise ConfigError("local_band backend_params.global_indices must be a list")
+        if global_set_indices and not isinstance(global_set_indices, list):
+            raise ConfigError("local_band backend_params.global_set_indices must be a list")
+    elif backend == "sparse_topk":
+        _warn("backend sparse_topk is deprecated; use local_band (Longformer-style) instead.")
     elif backend == "nystrom":
         require("num_landmarks" in backend_params, "nystrom backend requires backend_params.num_landmarks")
         require(backend_params["num_landmarks"] >= min_landmarks, "nystrom num_landmarks too small")
@@ -145,8 +211,12 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
         require("num_landmarks" in backend_params, "landmark backend requires backend_params.num_landmarks")
         require(backend_params["num_landmarks"] >= min_landmarks, "landmark num_landmarks too small")
         require(backend_params["num_landmarks"] < max_sets, "landmark num_landmarks must be < max_sets")
-    elif backend == "dense_exact":
-        forbid(bool(backend_params), "dense_exact backend forbids backend_params")
+    elif backend == "linformer":
+        require("k" in backend_params, "linformer backend requires backend_params.k")
+        require(backend_params["k"] >= min_landmarks, "linformer k too small")
+        require(backend_params["k"] <= max_sets, "linformer k must be <= max_sets")
+    elif backend == "exact":
+        forbid(bool(backend_params), "exact backend forbids backend_params")
 
     if backend in {"nystrom", "landmark"}:
         num_landmarks = backend_params.get("num_landmarks", 0)

@@ -5,8 +5,20 @@ class ConfigError(ValueError):
     pass
 
 
+COMMON_KEYS = {
+    "implementation",
+    "attention_family",
+    "backend",
+    "encoder_attention_family",
+    "encoder_backend",
+    "decoder_attention_family",
+    "decoder_backend",
+    "cross_attention_family",
+    "cross_backend",
+    "cross_attention",
+}
+
 BASELINE_KEYS = {
-    "family",
     "architecture",
     "vocab_size",
     "d_model",
@@ -17,14 +29,9 @@ BASELINE_KEYS = {
     "dropout",
     "max_seq_len",
     "seq2seq",
-    "decoder_family",
-    "decoder_set_only",
-    "cross_attention",
-    "cross_set_only",
 }
 
 SET_ONLY_KEYS = {
-    "family",
     "vocab_size",
     "d_model",
     "num_layers",
@@ -41,7 +48,6 @@ SET_ONLY_KEYS = {
     "features",
     "router_type",
     "router_topk",
-    "backend",
     "backend_params",
     "feature_mode",
     "feature_params",
@@ -52,10 +58,6 @@ SET_ONLY_KEYS = {
     "adapter_budget_fraction",
     "allow_token_token",
     "seq2seq",
-    "decoder_family",
-    "decoder_set_only",
-    "cross_attention",
-    "cross_set_only",
     "causal",
 }
 
@@ -73,66 +75,51 @@ def validate_config(cfg: dict) -> None:
         raise ConfigError("Missing 'training' section")
 
     model_cfg = cfg["model"]
-    family = model_cfg.get("family")
-    if family not in {"baseline_token", "set_only", "encoder_set_only"}:
-        raise ConfigError("model.family must be 'baseline_token', 'set_only', or 'encoder_set_only'")
-    decoder_family = model_cfg.get("decoder_family")
-    if decoder_family is not None and decoder_family not in {"baseline_token", "set_only"}:
-        raise ConfigError("decoder_family must be 'baseline_token' or 'set_only'")
+    impl = model_cfg.get("implementation")
+    if impl not in {
+        "baseline_token",
+        "set_only",
+        "encoder_set_only",
+        "decoder_set_only",
+        "cross_attention_set_only",
+        "encoder_set_decoder_baseline",
+        "encoder_baseline_decoder_set",
+    }:
+        raise ConfigError("model.implementation must be a supported value")
     cross_attention = model_cfg.get("cross_attention")
     if cross_attention is not None and cross_attention not in {"baseline", "set_only"}:
         raise ConfigError("cross_attention must be 'baseline' or 'set_only'")
 
-    if family == "baseline_token":
-        unexpected = set(model_cfg.keys()) - BASELINE_KEYS
-        if unexpected:
-            raise ConfigError(
-                f"Unexpected baseline_token keys: {sorted(unexpected)}"
-            )
+    allowed_keys = COMMON_KEYS | BASELINE_KEYS | SET_ONLY_KEYS
+    unexpected = set(model_cfg.keys()) - allowed_keys
+    if unexpected:
+        raise ConfigError(f"Unexpected model keys: {sorted(unexpected)}")
+
+    if model_cfg.get("architecture") is not None:
         if model_cfg.get("architecture") not in {"transformer_lm", "transformer_seq2seq"}:
             raise ConfigError("baseline_token architecture must be 'transformer_lm' or 'transformer_seq2seq'")
-    else:
-        unexpected = set(model_cfg.keys()) - SET_ONLY_KEYS
-        if unexpected:
-            raise ConfigError(f"Unexpected set_only keys: {sorted(unexpected)}")
-        if model_cfg.get("backend") not in {
-            "dense_exact",
-            "local_band",
-            "nystrom",
-            "landmark",
-            "sparse_topk",
-        }:
-            raise ConfigError("set_only backend must be a supported backend")
-        if model_cfg.get("router_type") not in {"uniform", "learned"}:
-            raise ConfigError("router_type must be 'uniform' or 'learned'")
-        if model_cfg.get("feature_mode", "geometry_only") not in {
-            "geometry_only",
-            "hashed_counts",
-            "kernel",
-        }:
-            raise ConfigError("feature_mode must be geometry_only, hashed_counts, or kernel")
 
-        max_seq_len = model_cfg.get("max_seq_len", 0)
-        window_size = model_cfg.get("window_size", 1)
-        stride = model_cfg.get("stride", 1)
-        if stride <= 0 or window_size <= 0:
-            raise ConfigError("window_size and stride must be positive")
-        max_sets = 1 if max_seq_len <= window_size else (
-            (max_seq_len - window_size + stride - 1) // stride + 1
-        )
-        if model_cfg.get("feature_mode") == "kernel" and max_sets > 500:
-            raise ConfigError("Kernel features forbidden when max_sets > 500")
-
-        if model_cfg.get("feature_mode") == "kernel" and model_cfg.get("backend") == "local_band":
-            import warnings
-
-            warnings.warn(
-                "Kernel features with local_band backend may be redundant.",
-                RuntimeWarning,
-            )
+    if model_cfg.get("backend") not in {
+        None,
+        "exact",
+        "local_band",
+        "linformer",
+        "nystrom",
+        "landmark",
+        "sparse_topk",
+    }:
+        raise ConfigError("backend must be a supported backend")
+    if model_cfg.get("router_type") is not None and model_cfg.get("router_type") not in {"uniform", "learned"}:
+        raise ConfigError("router_type must be 'uniform' or 'learned'")
+    if model_cfg.get("feature_mode") is not None and model_cfg.get("feature_mode", "geometry_only") not in {
+        "geometry_only",
+        "hashed_counts",
+        "kernel",
+    }:
+        raise ConfigError("feature_mode must be geometry_only, hashed_counts, or kernel")
 
     if "family" in cfg.get("data", {}):
-        raise ConfigError("data.family is not allowed; use model.family only")
+        raise ConfigError("data.family is not allowed; use model.implementation only")
 
     if "logging" in cfg:
         if not isinstance(cfg["logging"], dict):

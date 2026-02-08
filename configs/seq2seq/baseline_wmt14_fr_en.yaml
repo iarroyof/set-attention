@@ -1,7 +1,9 @@
 task: seq2seq
 
 model:
-  family: baseline_token
+  implementation: baseline_token
+  attention_family: dense
+  backend: exact
   architecture: transformer_seq2seq
   vocab_size: 0
   d_model: 256

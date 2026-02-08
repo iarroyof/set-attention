@@ -55,16 +55,20 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_model(model_cfg: dict) -> torch.nn.Module:
-    family = model_cfg["family"]
-    if family == "baseline_token":
+    impl = model_cfg["implementation"]
+    if impl == "baseline_token":
+        nhead = model_cfg.get("num_heads", model_cfg.get("nhead", 8))
         return TransformerLM(
             vocab_size=model_cfg["vocab_size"],
             d_model=model_cfg["d_model"],
-            nhead=model_cfg["nhead"],
+            nhead=nhead,
             num_layers=model_cfg["num_layers"],
             dim_feedforward=model_cfg["dim_feedforward"],
             dropout=model_cfg["dropout"],
             max_seq_len=model_cfg["max_seq_len"],
+            attention_family=model_cfg.get("attention_family", "dense"),
+            backend=model_cfg.get("backend", "exact"),
+            backend_params=model_cfg.get("backend_params"),
         )
     return SetOnlyLM(
         vocab_size=model_cfg["vocab_size"],
@@ -190,15 +194,30 @@ def main() -> None:
         train_loader, val_loader, vocab = build_seq2seq_dataloaders(cfg["data"], shared_vocab)
         if cfg["model"].get("vocab_size", 0) in (0, None):
             cfg["model"]["vocab_size"] = vocab["vocab_size"]
-        family = cfg["model"]["family"]
+        impl = cfg["model"]["implementation"]
         num_heads = cfg["model"].get("num_heads") or cfg["model"].get("nhead", 8)
         num_layers = cfg["model"].get("num_layers", 4)
         d_model = cfg["model"].get("d_model", 512)
         dim_ff = cfg["model"].get("dim_feedforward", d_model * 4)
         dropout = cfg["model"].get("dropout", 0.1)
         max_len = cfg["data"].get("seq_len", cfg["data"].get("max_len", 64))
-        encoder_family = "set_only" if family in {"set_only", "encoder_set_only"} else "baseline_token"
-        set_only_cfg = cfg["model"] if encoder_family == "set_only" else None
+        encoder_family = "baseline_token"
+        decoder_family = "baseline_token"
+        cross_attention = cfg["model"].get("cross_attention", "baseline")
+        if impl == "set_only":
+            encoder_family = "set_only"
+            decoder_family = "set_only"
+            cross_attention = "set_only"
+        elif impl in {"encoder_set_only", "encoder_set_decoder_baseline"}:
+            encoder_family = "set_only"
+        elif impl in {"decoder_set_only", "encoder_baseline_decoder_set"}:
+            decoder_family = "set_only"
+        elif impl == "cross_attention_set_only":
+            cross_attention = "set_only"
+        if cfg["model"].get("cross_attention") is not None:
+            cross_attention = cfg["model"]["cross_attention"]
+
+        set_only_cfg = cfg["model"] if encoder_family == "set_only" or decoder_family == "set_only" or cross_attention == "set_only" else None
         model = Seq2SeqTransformer(
             vocab_size=cfg["model"]["vocab_size"],
             d_model=d_model,
@@ -208,15 +227,22 @@ def main() -> None:
             dropout=dropout,
             max_len=max_len,
             encoder_family=encoder_family,
-            decoder_family=cfg["model"].get("decoder_family"),
-            cross_attention=cfg["model"].get("cross_attention", "baseline"),
+            decoder_family=decoder_family,
+            cross_attention=cross_attention,
             set_only_cfg=set_only_cfg,
-            decoder_set_only_cfg=cfg["model"].get("decoder_set_only"),
-            cross_set_only_cfg=cfg["model"].get("cross_set_only"),
             shared_embeddings=None,
             pad_id=vocab["pad_id"],
             bos_id=vocab["bos_id"],
             eos_id=vocab["eos_id"],
+            encoder_attention_family=cfg["model"].get("encoder_attention_family", cfg["model"].get("attention_family", "dense")),
+            encoder_backend=cfg["model"].get("encoder_backend", cfg["model"].get("backend", "exact")),
+            decoder_attention_family=cfg["model"].get("decoder_attention_family", cfg["model"].get("attention_family", "dense")),
+            decoder_backend=cfg["model"].get("decoder_backend", cfg["model"].get("backend", "exact")),
+            cross_attention_family=cfg["model"].get("cross_attention_family", cfg["model"].get("attention_family", "dense")),
+            cross_backend=cfg["model"].get("cross_backend", cfg["model"].get("backend", "exact")),
+            encoder_backend_params=cfg["model"].get("encoder_backend_params", cfg["model"].get("backend_params")),
+            decoder_backend_params=cfg["model"].get("decoder_backend_params", cfg["model"].get("backend_params")),
+            cross_backend_params=cfg["model"].get("cross_backend_params", cfg["model"].get("backend_params")),
         ).to(device)
     else:
         train_loader, val_loader, vocab_size = build_dataloaders(cfg["data"])

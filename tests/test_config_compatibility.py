@@ -7,7 +7,9 @@ from config.schema import ConfigError
 def _base_set_only_cfg():
     return {
         "model": {
-            "family": "set_only",
+            "implementation": "set_only",
+            "attention_family": "dense",
+            "backend": "exact",
             "vocab_size": 100,
             "d_model": 64,
             "num_layers": 2,
@@ -18,7 +20,6 @@ def _base_set_only_cfg():
             "max_seq_len": 32,
             "router_type": "uniform",
             "router_topk": 0,
-            "backend": "dense_exact",
             "feature_mode": "geometry_only",
         },
         "data": {"dataset": "wikitext2", "batch_size": 2, "seq_len": 32},
