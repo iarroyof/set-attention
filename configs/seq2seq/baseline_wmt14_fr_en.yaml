@@ -7,7 +7,7 @@ model:
   architecture: transformer_seq2seq
   vocab_size: 0
   d_model: 256
-  nhead: 8
+  num_heads: 8
   num_layers: 4
   dim_feedforward: 1024
   dropout: 0.1

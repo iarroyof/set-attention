@@ -4,7 +4,7 @@ This table uses the **canonical naming**:
 
 - `implementation`: baseline vs set-only placement
 - `attention_family`: dense / sparse / linear
-- `backend`: exact / local_band / sparse_topk / landmark / nystrom
+- `backend`: exact / local_band / landmark / nystrom / linformer
 
 ## Shared Hyperparameters (LM + Seq2Seq)
 
@@ -30,13 +30,13 @@ This table uses the **canonical naming**:
 | --- | --- | --- | --- |
 | `model.implementation` | Where set-only is used | LM: `baseline_token` or `set_only` | `baseline_token`, `set_only`, `encoder_set_only`, `decoder_set_only`, `cross_attention_set_only`, `encoder_set_decoder_baseline`, `encoder_baseline_decoder_set` |
 | `model.attention_family` | Complexity family | `dense` | `dense`, `sparse`, `linear` |
-| `model.backend` | Concrete backend | `exact` | `exact`, `local_band`, `sparse_topk` (deprecated), `landmark`, `nystrom`, `linformer` |
+| `model.backend` | Concrete backend | `exact` | `exact`, `local_band`, `landmark`, `nystrom`, `linformer` |
 | `model.encoder_attention_family` | Encoder attention family | defaults to `model.attention_family` | `dense`, `sparse`, `linear` |
-| `model.encoder_backend` | Encoder backend | defaults to `model.backend` | `exact`, `local_band`, `sparse_topk` (deprecated), `landmark`, `nystrom`, `linformer` |
+| `model.encoder_backend` | Encoder backend | defaults to `model.backend` | `exact`, `local_band`, `landmark`, `nystrom`, `linformer` |
 | `model.decoder_attention_family` | Decoder self-attn family | defaults to `model.attention_family` | `dense`, `sparse`, `linear` |
-| `model.decoder_backend` | Decoder self-attn backend | defaults to `model.backend` | `exact`, `local_band`, `sparse_topk` (deprecated), `landmark`, `nystrom`, `linformer` |
+| `model.decoder_backend` | Decoder self-attn backend | defaults to `model.backend` | `exact`, `local_band`, `landmark`, `nystrom`, `linformer` |
 | `model.cross_attention_family` | Cross-attn family | defaults to `model.attention_family` | `dense`, `sparse`, `linear` |
-| `model.cross_backend` | Cross-attn backend | defaults to `model.backend` | `exact`, `local_band`, `sparse_topk` (deprecated), `landmark`, `nystrom`, `linformer` |
+| `model.cross_backend` | Cross-attn backend | defaults to `model.backend` | `exact`, `local_band`, `landmark`, `nystrom`, `linformer` |
 | `model.cross_attention` | Cross-attn implementation | default derives from `implementation` | `baseline`, `set_only` |
 
 ## Set-Only Hyperparameters (shared across encoder/decoder/cross)
@@ -72,7 +72,7 @@ This table uses the **canonical naming**:
 | `stride <= window_size` | Set‑only models | Must hold |
 | `router_topk` required | `router_type=learned` | `1 <= router_topk <= max_sets` |
 | `attention_family=dense` | Any component | `backend=exact` |
-| `attention_family=sparse` | Any component | `backend in {local_band, sparse_topk}` |
+| `attention_family=sparse` | Any component | `backend in {local_band}` |
 | `attention_family=linear` | Any component | `backend in {landmark, nystrom, linformer}` |
 | `backend_params` required | `backend=local_band` | Must set `backend_params.radius >= 1`; optional `global_indices` (tokens) or `global_set_indices` (sets) |
 | `backend_params` required | `backend in {nystrom, landmark}` | Must set `backend_params.num_landmarks >= 2` and `< max_sets` |

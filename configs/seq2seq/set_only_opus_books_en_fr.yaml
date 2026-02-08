@@ -1,7 +1,7 @@
 task: seq2seq
 
 model:
-  implementation: encoder_set_only
+  implementation: set_only
   attention_family: dense
   backend: exact
   vocab_size: 0
