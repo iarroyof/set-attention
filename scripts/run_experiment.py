@@ -79,6 +79,7 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
         stride=model_cfg["stride"],
         dropout=model_cfg["dropout"],
         max_seq_len=model_cfg["max_seq_len"],
+        dim_feedforward=model_cfg.get("dim_feedforward"),
         pooling=model_cfg.get("pooling", "mean"),
         multiscale=model_cfg.get("multiscale", False),
         sig_gating=model_cfg.get("sig_gating"),

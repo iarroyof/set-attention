@@ -7,15 +7,22 @@ from set_attention.backends.base import SetAttentionBackend
 
 
 class SetAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, backend: SetAttentionBackend, mlp_ratio: int = 4) -> None:
+    def __init__(
+        self,
+        d_model: int,
+        backend: SetAttentionBackend,
+        mlp_ratio: int = 4,
+        dim_feedforward: int | None = None,
+    ) -> None:
         super().__init__()
         self.backend = backend
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
+        hidden = dim_feedforward or (d_model * mlp_ratio)
         self.mlp = nn.Sequential(
-            nn.Linear(d_model, d_model * mlp_ratio),
+            nn.Linear(d_model, hidden),
             nn.GELU(),
-            nn.Linear(d_model * mlp_ratio, d_model),
+            nn.Linear(hidden, d_model),
         )
 
     def forward(

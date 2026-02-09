@@ -13,7 +13,7 @@ model:
   router_type: uniform
   router_topk: 0
   backend_params:
-    num_landmarks: 32
+    num_landmarks: 8
   feature_mode: geometry_only
   gamma: 1.0
   beta: 0.0

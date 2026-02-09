@@ -2,25 +2,34 @@ model:
   implementation: set_only
   attention_family: dense
   backend: exact
+  architecture: transformer_lm
   vocab_size: 0
-  d_model: 256
-  num_layers: 4
+
+  d_model: 384
   num_heads: 8
-  window_size: 32
-  stride: 16
+  num_layers: 6
+  dim_feedforward: 1536
   dropout: 0.1
-  max_seq_len: 256
-  router_type: uniform
-  router_topk: 0
-  feature_mode: geometry_only
-  gamma: 1.0
-  beta: 0.0
+  max_seq_len: 512
+
+  window_size: 16
+  stride: 8
+
+  pooling:
+    mode: soft_trimmed_boltzmann
+    tau: 0.1
+    q: 0.85
+
+  feature_mode: hashed_counts
+  router_type: learned
+  router_topk: 16
 
 data:
   dataset: wikitext2
   batch_size: 16
-  seq_len: 256
+  seq_len: 512
 
 training:
-  epochs: 5
+  epochs: 10
   lr: 0.0003
+  warmup_steps: 1000

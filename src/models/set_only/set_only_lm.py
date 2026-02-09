@@ -35,6 +35,7 @@ class SetOnlyLM(nn.Module):
         stride: int = 16,
         dropout: float = 0.1,
         max_seq_len: int = 512,
+        dim_feedforward: int | None = None,
         pooling: str = "mean",
         multiscale: bool = False,
         sig_gating: dict | None = None,
@@ -237,7 +238,11 @@ class SetOnlyLM(nn.Module):
 
         self.blocks = nn.ModuleList(
             [
-                SetAttentionBlock(d_model=d_model, backend=make_backend())
+                SetAttentionBlock(
+                    d_model=d_model,
+                    backend=make_backend(),
+                    dim_feedforward=dim_feedforward,
+                )
                 for _ in range(num_layers)
             ]
         )

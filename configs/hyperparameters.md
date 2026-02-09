@@ -21,6 +21,7 @@ This table uses the **canonical naming**:
 | `model.d_model` | Hidden size | `256` | Recommended: `128–1024` |
 | `model.num_layers` | Number of layers | `4` | Recommended: `2–12` |
 | `model.num_heads` | Number of attention heads | `8` | Divisors of `d_model` |
+| `model.dim_feedforward` | FFN hidden size | `d_model * 4` | Recommended: `d_model*2–d_model*8` |
 | `model.dropout` | Dropout probability | `0.1` | Recommended: `0.0–0.3` |
 | `model.max_seq_len` | Max length for positional embeddings | `256` | Recommended: `>= data.seq_len` |
 
