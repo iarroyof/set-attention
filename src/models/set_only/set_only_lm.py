@@ -34,6 +34,9 @@ class SetOnlyLM(nn.Module):
         window_size: int = 32,
         stride: int = 16,
         dropout: float = 0.1,
+        attn_dropout: float | None = None,
+        resid_dropout: float | None = None,
+        ffn_dropout: float | None = None,
         max_seq_len: int = 512,
         dim_feedforward: int | None = None,
         pooling: str = "mean",
@@ -69,6 +72,9 @@ class SetOnlyLM(nn.Module):
         self.window_size = window_size
         self.stride = stride
         self.max_seq_len = max_seq_len
+        self.attn_dropout = attn_dropout if attn_dropout is not None else dropout
+        self.resid_dropout = resid_dropout if resid_dropout is not None else dropout
+        self.ffn_dropout = ffn_dropout if ffn_dropout is not None else dropout
         self.allow_token_token = bool(allow_token_token)
         self.causal = bool(causal)
         if isinstance(pooling, dict):
@@ -188,7 +194,7 @@ class SetOnlyLM(nn.Module):
                 return DenseExactBackend(
                     d_model=d_model,
                     num_heads=num_heads,
-                    dropout=dropout,
+                    dropout=self.attn_dropout,
                     allow_token_token=self.allow_token_token,
                 )
             if backend == "local_band":
@@ -196,7 +202,7 @@ class SetOnlyLM(nn.Module):
                     d_model=d_model,
                     num_heads=num_heads,
                     radius=backend_params.get("radius", 4),
-                    dropout=dropout,
+                    dropout=self.attn_dropout,
                     allow_token_token=self.allow_token_token,
                     global_set_indices=backend_params.get("global_set_indices"),
                 )
@@ -205,7 +211,7 @@ class SetOnlyLM(nn.Module):
                     d_model=d_model,
                     num_heads=num_heads,
                     num_landmarks=backend_params.get("num_landmarks", 32),
-                    dropout=dropout,
+                    dropout=self.attn_dropout,
                     allow_token_token=self.allow_token_token,
                     bias_scale=backend_params.get("bias_scale", 0.1),
                 )
@@ -214,7 +220,7 @@ class SetOnlyLM(nn.Module):
                     d_model=d_model,
                     num_heads=num_heads,
                     num_landmarks=backend_params.get("num_landmarks", 32),
-                    dropout=dropout,
+                    dropout=self.attn_dropout,
                     allow_token_token=self.allow_token_token,
                 )
             if backend == "sparse_topk":
@@ -222,7 +228,7 @@ class SetOnlyLM(nn.Module):
                     d_model=d_model,
                     num_heads=num_heads,
                     k_s=backend_params.get("k_s", 16),
-                    dropout=dropout,
+                    dropout=self.attn_dropout,
                     allow_token_token=self.allow_token_token,
                 )
             if backend == "linformer":
@@ -231,7 +237,7 @@ class SetOnlyLM(nn.Module):
                     num_heads=num_heads,
                     max_sets=max_sets,
                     k=backend_params.get("k", 32),
-                    dropout=dropout,
+                    dropout=self.attn_dropout,
                     allow_token_token=self.allow_token_token,
                 )
             raise ValueError(f"Unknown backend: {backend}")
@@ -242,6 +248,8 @@ class SetOnlyLM(nn.Module):
                     d_model=d_model,
                     backend=make_backend(),
                     dim_feedforward=dim_feedforward,
+                    resid_dropout=self.resid_dropout,
+                    ffn_dropout=self.ffn_dropout,
                 )
                 for _ in range(num_layers)
             ]

@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from typing import Dict, Optional
+import warnings
 
 import torch
 
 
 class SetDiagnostics:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        spectral_top_eig_warn: float = 0.7,
+        spectral_entropy_warn: float = 0.3,
+    ) -> None:
+        self.spectral_top_eig_warn = spectral_top_eig_warn
+        self.spectral_entropy_warn = spectral_entropy_warn
         self.reset()
 
     def reset(self) -> None:
@@ -83,6 +90,22 @@ class SetDiagnostics:
             confidence = router_probs.max(dim=-1).values
             self._add("ausa/router_confidence_mean", float(confidence.mean().item()))
             self._add("ausa/router_confidence_std", float(confidence.std().item()))
+            probs = router_probs.clamp_min(1e-12)
+            router_entropy = -(probs * torch.log(probs)).sum(dim=-1)
+            self._add("ausa/router_entropy", float(router_entropy.mean().item()))
+            self._add("ausa/router_top1_weight", float(confidence.mean().item()))
+            if probs.dim() >= 3 and probs.shape[-1] > 1:
+                util = probs.mean(dim=tuple(range(probs.dim() - 1)))
+                util = util / util.sum().clamp_min(1e-12)
+                util_sorted, _ = torch.sort(util)
+                n_util = util_sorted.shape[0]
+                idx_util = torch.arange(
+                    1, n_util + 1, device=util.device, dtype=util.dtype
+                )
+                util_gini = 1.0 - 2.0 * torch.sum(
+                    util_sorted * (n_util - idx_util + 0.5)
+                ) / n_util
+                self._add("ausa/router_set_utilization_gini", float(util_gini.item()))
             if num_sets > 1:
                 kl = (router_probs * torch.log(router_probs * float(num_sets) + 1e-8)).sum(dim=-1)
                 self._add("ausa/top1_vs_random_kl", float(kl.mean().item()))
@@ -93,6 +116,29 @@ class SetDiagnostics:
             self._add("ausa/set_embedding_variance", float(variance))
             norms = set_embeddings.norm(dim=-1)
             self._add("ausa/set_embedding_norm_mean", float(norms.mean().item()))
+
+            # Spectrum diagnostic for set attention conditioning:
+            # K = ZZ^T / M, where Z in R^{M x d}. Fast decay indicates an overconstrained set space.
+            if S > 1:
+                z = set_embeddings.float()
+                gram = torch.matmul(z, z.transpose(-2, -1)) / float(S)
+                try:
+                    eigvals = torch.linalg.eigvalsh(gram).clamp_min(0.0)
+                    eig_sum = eigvals.sum(dim=-1).clamp_min(1e-8)
+                    top_ratio = eigvals[:, -1] / eig_sum
+                    p = eigvals / eig_sum.unsqueeze(-1)
+                    spectral_entropy = -(p * torch.log(p.clamp_min(1e-12))).sum(dim=-1)
+                    spectral_entropy_norm = spectral_entropy / torch.log(
+                        torch.tensor(float(S), device=spectral_entropy.device)
+                    )
+                    self._add("ausa/set_gram_top_eig_ratio", float(top_ratio.mean().item()))
+                    self._add(
+                        "ausa/set_gram_spectral_entropy_norm",
+                        float(spectral_entropy_norm.mean().item()),
+                    )
+                except RuntimeError:
+                    # Keep training robust if an eigendecomposition fails on a rare batch.
+                    pass
 
             flat = set_embeddings.reshape(-1, D)
             if flat.shape[0] > 1:
@@ -165,6 +211,24 @@ class SetDiagnostics:
             stats["ausa/delta_routing_entropy"] = float("nan")
             stats["ausa/delta_set_variance"] = float("nan")
             stats["ausa/delta_router_confidence"] = float("nan")
+
+        top_eig_ratio = stats.get("ausa/set_gram_top_eig_ratio")
+        spectral_entropy = stats.get("ausa/set_gram_spectral_entropy_norm")
+        if (
+            top_eig_ratio is not None
+            and top_eig_ratio == top_eig_ratio
+            and top_eig_ratio > self.spectral_top_eig_warn
+        ) or (
+            spectral_entropy is not None
+            and spectral_entropy == spectral_entropy
+            and spectral_entropy < self.spectral_entropy_warn
+        ):
+            warnings.warn(
+                "Set Gram spectrum indicates possible overconstraint "
+                f"(top_eig_ratio={top_eig_ratio:.4f}, "
+                f"spectral_entropy_norm={spectral_entropy:.4f}).",
+                RuntimeWarning,
+            )
 
         self._prev_epoch_stats = stats.copy()
         return stats

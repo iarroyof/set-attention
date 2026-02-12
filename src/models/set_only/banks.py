@@ -1,3 +1,4 @@
+# src/models/set_only/banks.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -251,10 +252,24 @@ class InformativeBoltzmannPooling(nn.Module):
         ent = -(weights_flat * torch.log(weights_flat + 1e-12)).sum(dim=1)
         top1 = weights_flat.max(dim=1).values
         support = (weights_flat > 1e-3).sum(dim=1).float()
+        neff = 1.0 / (weights_flat.pow(2).sum(dim=1) + 1e-12)
         p_sorted, _ = torch.sort(weights_flat, dim=1)
         n = p_sorted.shape[1]
         idx = torch.arange(1, n + 1, device=p_sorted.device, dtype=p_sorted.dtype)
         gini = 1.0 - 2.0 * torch.sum(p_sorted * (n - idx + 0.5), dim=1) / n
+
+        if mask is not None:
+            valid = mask.float()
+            valid_tokens = valid.sum(dim=1).clamp_min(1.0)
+            neff_ratio = neff / valid_tokens
+            x_norm = x.norm(dim=-1)
+            x_norm_mean = (x_norm * valid).sum(dim=1) / valid_tokens
+        else:
+            valid_tokens = torch.full_like(neff, float(weights_flat.shape[1]))
+            neff_ratio = neff / valid_tokens
+            x_norm_mean = x.norm(dim=-1).mean(dim=1)
+        pooled_norm = pooled.norm(dim=-1)
+        norm_ratio = pooled_norm / (x_norm_mean + 1e-12)
 
         if support.min().item() <= 1:
             warnings.warn(
@@ -271,6 +286,9 @@ class InformativeBoltzmannPooling(nn.Module):
             "ausa/pooling_weight_entropy": float(ent.mean().item()),
             "ausa/pooling_top1_weight": float(top1.mean().item()),
             "ausa/pooling_effective_support": float(support.mean().item()),
+            "ausa/pooling_neff_l2": float(neff.mean().item()),
+            "ausa/pooling_neff_ratio": float(neff_ratio.mean().item()),
+            "ausa/pooling_norm_ratio": float(norm_ratio.mean().item()),
             "ausa/pooling_weight_gini": float(gini.mean().item()),
             "ausa/pooling_alpha_value": alpha_value,
         }

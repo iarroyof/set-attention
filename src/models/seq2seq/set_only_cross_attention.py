@@ -207,14 +207,21 @@ class SetOnlyCrossLayer(nn.Module):
         dim_feedforward: int,
         dropout: float,
         cross_attn: SetOnlyCrossAttention,
+        attn_dropout: float | None = None,
+        resid_dropout: float | None = None,
+        ffn_dropout: float | None = None,
     ) -> None:
         super().__init__()
+        attn_drop = attn_dropout if attn_dropout is not None else dropout
+        resid_drop = resid_dropout if resid_dropout is not None else dropout
+        ffn_drop = ffn_dropout if ffn_dropout is not None else dropout
         self.cross_attn = cross_attn
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.dropout = nn.Dropout(dropout)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
+        self.attn_dropout = nn.Dropout(attn_drop)
+        self.dropout = nn.Dropout(ffn_drop)
+        self.dropout1 = nn.Dropout(resid_drop)
+        self.dropout2 = nn.Dropout(resid_drop)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.activation = nn.GELU()
@@ -227,6 +234,7 @@ class SetOnlyCrossLayer(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         cross_input = self.norm1(x)
         cross_out, cross_weights = self.cross_attn(cross_input, memory, src_ids)
+        cross_out = self.attn_dropout(cross_out)
         x = x + self.dropout1(cross_out)
         ff_input = self.norm2(x)
         ff_output = self.linear2(self.dropout(self.activation(self.linear1(ff_input))))

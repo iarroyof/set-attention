@@ -144,5 +144,8 @@ class NystromBackend(SetAttentionBackend):
             denom = torch.matmul(k_mL, tilde).clamp_min(self.eps)
             out = out / denom
 
+        # Apply dropout after solve/normalization to avoid destabilizing k_LL inversion.
+        out = self.dropout(out)
+
         out = out.transpose(1, 2).contiguous().view(batch, m, self.d_model)
         return self.out_proj(out)

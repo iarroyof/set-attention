@@ -65,6 +65,9 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
             num_layers=model_cfg["num_layers"],
             dim_feedforward=model_cfg["dim_feedforward"],
             dropout=model_cfg["dropout"],
+            attn_dropout=model_cfg.get("attn_dropout"),
+            resid_dropout=model_cfg.get("resid_dropout"),
+            ffn_dropout=model_cfg.get("ffn_dropout"),
             max_seq_len=model_cfg["max_seq_len"],
             attention_family=model_cfg.get("attention_family", "dense"),
             backend=model_cfg.get("backend", "exact"),
@@ -78,6 +81,9 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
         window_size=model_cfg["window_size"],
         stride=model_cfg["stride"],
         dropout=model_cfg["dropout"],
+        attn_dropout=model_cfg.get("attn_dropout"),
+        resid_dropout=model_cfg.get("resid_dropout"),
+        ffn_dropout=model_cfg.get("ffn_dropout"),
         max_seq_len=model_cfg["max_seq_len"],
         dim_feedforward=model_cfg.get("dim_feedforward"),
         pooling=model_cfg.get("pooling", "mean"),
@@ -201,6 +207,9 @@ def main() -> None:
         d_model = cfg["model"].get("d_model", 512)
         dim_ff = cfg["model"].get("dim_feedforward", d_model * 4)
         dropout = cfg["model"].get("dropout", 0.1)
+        attn_dropout = cfg["model"].get("attn_dropout")
+        resid_dropout = cfg["model"].get("resid_dropout")
+        ffn_dropout = cfg["model"].get("ffn_dropout")
         max_len = cfg["data"].get("seq_len", cfg["data"].get("max_len", 64))
         encoder_family = "baseline_token"
         decoder_family = "baseline_token"
@@ -226,6 +235,9 @@ def main() -> None:
             num_heads=num_heads,
             dim_feedforward=dim_ff,
             dropout=dropout,
+            attn_dropout=attn_dropout,
+            resid_dropout=resid_dropout,
+            ffn_dropout=ffn_dropout,
             max_len=max_len,
             encoder_family=encoder_family,
             decoder_family=decoder_family,

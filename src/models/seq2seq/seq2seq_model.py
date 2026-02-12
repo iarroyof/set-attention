@@ -18,16 +18,22 @@ class Seq2SeqEncoderLayer(nn.Module):
         nhead: int,
         dim_feedforward: int,
         dropout: float,
+        attn_dropout: float | None,
+        resid_dropout: float | None,
+        ffn_dropout: float | None,
         attention_family: str,
         backend: str,
         backend_params: Optional[dict],
         max_seq_len: int,
     ) -> None:
         super().__init__()
+        attn_drop = attn_dropout if attn_dropout is not None else dropout
+        resid_drop = resid_dropout if resid_dropout is not None else dropout
+        ffn_drop = ffn_dropout if ffn_dropout is not None else dropout
         self.self_attn = BaselineAttention(
             d_model=d_model,
             num_heads=nhead,
-            dropout=dropout,
+            dropout=attn_drop,
             attention_family=attention_family,
             backend=backend,
             backend_params=backend_params,
@@ -37,9 +43,9 @@ class Seq2SeqEncoderLayer(nn.Module):
         )
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.dropout = nn.Dropout(dropout)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(ffn_drop)
+        self.dropout1 = nn.Dropout(resid_drop)
+        self.dropout2 = nn.Dropout(resid_drop)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.activation = nn.GELU()
@@ -69,6 +75,9 @@ class Seq2SeqDecoderLayer(nn.Module):
         nhead: int,
         dim_feedforward: int,
         dropout: float,
+        attn_dropout: float | None,
+        resid_dropout: float | None,
+        ffn_dropout: float | None,
         self_attention_family: str,
         self_backend: str,
         self_backend_params: Optional[dict],
@@ -78,10 +87,13 @@ class Seq2SeqDecoderLayer(nn.Module):
         max_seq_len: int,
     ) -> None:
         super().__init__()
+        attn_drop = attn_dropout if attn_dropout is not None else dropout
+        resid_drop = resid_dropout if resid_dropout is not None else dropout
+        ffn_drop = ffn_dropout if ffn_dropout is not None else dropout
         self.self_attn = BaselineAttention(
             d_model=d_model,
             num_heads=nhead,
-            dropout=dropout,
+            dropout=attn_drop,
             attention_family=self_attention_family,
             backend=self_backend,
             backend_params=self_backend_params,
@@ -92,7 +104,7 @@ class Seq2SeqDecoderLayer(nn.Module):
         self.cross_attn = BaselineAttention(
             d_model=d_model,
             num_heads=nhead,
-            dropout=dropout,
+            dropout=attn_drop,
             attention_family=cross_attention_family,
             backend=cross_backend,
             backend_params=cross_backend_params,
@@ -102,10 +114,10 @@ class Seq2SeqDecoderLayer(nn.Module):
         )
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.dropout = nn.Dropout(dropout)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-        self.dropout3 = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(ffn_drop)
+        self.dropout1 = nn.Dropout(resid_drop)
+        self.dropout2 = nn.Dropout(resid_drop)
+        self.dropout3 = nn.Dropout(resid_drop)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.norm3 = nn.LayerNorm(d_model)
@@ -146,6 +158,9 @@ class Seq2SeqDecoderLayerSetOnlyCross(nn.Module):
         nhead: int,
         dim_feedforward: int,
         dropout: float,
+        attn_dropout: float | None,
+        resid_dropout: float | None,
+        ffn_dropout: float | None,
         self_attention_family: str,
         self_backend: str,
         self_backend_params: Optional[dict],
@@ -153,10 +168,13 @@ class Seq2SeqDecoderLayerSetOnlyCross(nn.Module):
         max_seq_len: int,
     ) -> None:
         super().__init__()
+        attn_drop = attn_dropout if attn_dropout is not None else dropout
+        resid_drop = resid_dropout if resid_dropout is not None else dropout
+        ffn_drop = ffn_dropout if ffn_dropout is not None else dropout
         self.self_attn = BaselineAttention(
             d_model=d_model,
             num_heads=nhead,
-            dropout=dropout,
+            dropout=attn_drop,
             attention_family=self_attention_family,
             backend=self_backend,
             backend_params=self_backend_params,
@@ -167,10 +185,10 @@ class Seq2SeqDecoderLayerSetOnlyCross(nn.Module):
         self.cross_attn = cross_attn
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.dropout = nn.Dropout(dropout)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-        self.dropout3 = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(ffn_drop)
+        self.dropout1 = nn.Dropout(resid_drop)
+        self.dropout2 = nn.Dropout(resid_drop)
+        self.dropout3 = nn.Dropout(resid_drop)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.norm3 = nn.LayerNorm(d_model)
@@ -206,16 +224,22 @@ class Seq2SeqCrossOnlyLayer(nn.Module):
         nhead: int,
         dim_feedforward: int,
         dropout: float,
+        attn_dropout: float | None,
+        resid_dropout: float | None,
+        ffn_dropout: float | None,
     ) -> None:
         super().__init__()
+        attn_drop = attn_dropout if attn_dropout is not None else dropout
+        resid_drop = resid_dropout if resid_dropout is not None else dropout
+        ffn_drop = ffn_dropout if ffn_dropout is not None else dropout
         self.cross_attn = nn.MultiheadAttention(
-            d_model, nhead, dropout=dropout, batch_first=True
+            d_model, nhead, dropout=attn_drop, batch_first=True
         )
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.dropout = nn.Dropout(dropout)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(ffn_drop)
+        self.dropout1 = nn.Dropout(resid_drop)
+        self.dropout2 = nn.Dropout(resid_drop)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.activation = nn.GELU()
@@ -251,6 +275,9 @@ class Seq2SeqTransformer(nn.Module):
         num_heads: int = 8,
         dim_feedforward: Optional[int] = None,
         dropout: float = 0.1,
+        attn_dropout: float | None = None,
+        resid_dropout: float | None = None,
+        ffn_dropout: float | None = None,
         max_len: int = 256,
         encoder_family: str = "baseline_token",
         decoder_family: str | None = None,
@@ -298,6 +325,9 @@ class Seq2SeqTransformer(nn.Module):
                 window_size=set_only_cfg.get("window_size", 32),
                 stride=set_only_cfg.get("stride", 16),
                 dropout=set_only_cfg.get("dropout", dropout),
+                attn_dropout=set_only_cfg.get("attn_dropout", attn_dropout),
+                resid_dropout=set_only_cfg.get("resid_dropout", resid_dropout),
+                ffn_dropout=set_only_cfg.get("ffn_dropout", ffn_dropout),
                 max_seq_len=set_only_cfg.get("max_seq_len", max_len),
                 dim_feedforward=set_only_cfg.get("dim_feedforward", ff),
                 pooling=set_only_cfg.get("pooling", "mean"),
@@ -329,6 +359,9 @@ class Seq2SeqTransformer(nn.Module):
                         nhead=num_heads,
                         dim_feedforward=ff,
                         dropout=dropout,
+                        attn_dropout=attn_dropout,
+                        resid_dropout=resid_dropout,
+                        ffn_dropout=ffn_dropout,
                         attention_family=encoder_attention_family,
                         backend=encoder_backend,
                         backend_params=encoder_backend_params,
@@ -370,7 +403,10 @@ class Seq2SeqTransformer(nn.Module):
                         SetOnlyCrossLayer(
                             d_model=d_model,
                             dim_feedforward=ff,
-                            dropout=dropout,
+                            dropout=decoder_cfg.get("dropout", dropout),
+                            attn_dropout=decoder_cfg.get("attn_dropout", attn_dropout),
+                            resid_dropout=decoder_cfg.get("resid_dropout", resid_dropout),
+                            ffn_dropout=decoder_cfg.get("ffn_dropout", ffn_dropout),
                             cross_attn=cross_attn,
                         )
                         for _ in range(num_layers)
@@ -385,6 +421,9 @@ class Seq2SeqTransformer(nn.Module):
                             nhead=num_heads,
                             dim_feedforward=ff,
                             dropout=dropout,
+                            attn_dropout=attn_dropout,
+                            resid_dropout=resid_dropout,
+                            ffn_dropout=ffn_dropout,
                         )
                         for _ in range(num_layers)
                     ]
@@ -398,6 +437,9 @@ class Seq2SeqTransformer(nn.Module):
                 window_size=decoder_cfg.get("window_size", 32),
                 stride=decoder_cfg.get("stride", 16),
                 dropout=decoder_cfg.get("dropout", dropout),
+                attn_dropout=decoder_cfg.get("attn_dropout", attn_dropout),
+                resid_dropout=decoder_cfg.get("resid_dropout", resid_dropout),
+                ffn_dropout=decoder_cfg.get("ffn_dropout", ffn_dropout),
                 max_seq_len=decoder_cfg.get("max_seq_len", max_len),
                 dim_feedforward=decoder_cfg.get("dim_feedforward", ff),
                 pooling=decoder_cfg.get("pooling", "mean"),
@@ -450,6 +492,9 @@ class Seq2SeqTransformer(nn.Module):
                             nhead=num_heads,
                             dim_feedforward=ff,
                             dropout=dropout,
+                            attn_dropout=attn_dropout,
+                            resid_dropout=resid_dropout,
+                            ffn_dropout=ffn_dropout,
                             self_attention_family=decoder_attention_family,
                             self_backend=decoder_backend,
                             self_backend_params=decoder_backend_params,
@@ -463,12 +508,15 @@ class Seq2SeqTransformer(nn.Module):
             else:
                 self.decoder_layers = nn.ModuleList(
                     [
-                    Seq2SeqDecoderLayer(
-                        d_model=d_model,
-                        nhead=num_heads,
-                        dim_feedforward=ff,
-                        dropout=dropout,
-                        self_attention_family=decoder_attention_family,
+                        Seq2SeqDecoderLayer(
+                            d_model=d_model,
+                            nhead=num_heads,
+                            dim_feedforward=ff,
+                            dropout=dropout,
+                            attn_dropout=attn_dropout,
+                            resid_dropout=resid_dropout,
+                            ffn_dropout=ffn_dropout,
+                            self_attention_family=decoder_attention_family,
                         self_backend=decoder_backend,
                         self_backend_params=decoder_backend_params,
                         cross_attention_family=cross_attention_family,

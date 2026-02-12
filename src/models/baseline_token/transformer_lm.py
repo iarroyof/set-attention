@@ -14,16 +14,22 @@ class BaselineEncoderLayer(nn.Module):
         nhead: int,
         dim_feedforward: int,
         dropout: float,
+        attn_dropout: float | None,
+        resid_dropout: float | None,
+        ffn_dropout: float | None,
         attention_family: str,
         backend: str,
         backend_params: dict | None,
         max_seq_len: int,
     ) -> None:
         super().__init__()
+        attn_drop = attn_dropout if attn_dropout is not None else dropout
+        resid_drop = resid_dropout if resid_dropout is not None else dropout
+        ffn_drop = ffn_dropout if ffn_dropout is not None else dropout
         self.self_attn = BaselineAttention(
             d_model=d_model,
             num_heads=nhead,
-            dropout=dropout,
+            dropout=attn_drop,
             attention_family=attention_family,
             backend=backend,
             backend_params=backend_params,
@@ -33,9 +39,9 @@ class BaselineEncoderLayer(nn.Module):
         )
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.dropout = nn.Dropout(dropout)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(ffn_drop)
+        self.dropout1 = nn.Dropout(resid_drop)
+        self.dropout2 = nn.Dropout(resid_drop)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.activation = nn.GELU()
@@ -69,6 +75,9 @@ class TransformerLM(nn.Module):
         num_layers: int = 6,
         dim_feedforward: int = 2048,
         dropout: float = 0.1,
+        attn_dropout: float | None = None,
+        resid_dropout: float | None = None,
+        ffn_dropout: float | None = None,
         max_seq_len: int = 512,
         attention_family: str = "dense",
         backend: str = "exact",
@@ -85,6 +94,9 @@ class TransformerLM(nn.Module):
                     nhead=nhead,
                     dim_feedforward=dim_feedforward,
                     dropout=dropout,
+                    attn_dropout=attn_dropout,
+                    resid_dropout=resid_dropout,
+                    ffn_dropout=ffn_dropout,
                     attention_family=attention_family,
                     backend=backend,
                     backend_params=backend_params,

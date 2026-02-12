@@ -9,6 +9,9 @@ model:
   window_size: 64
   stride: 64
   dropout: 0.1
+  attn_dropout: null
+  resid_dropout: null
+  ffn_dropout: null
   max_seq_len: 256
   router_topk: 4
   feature_mode: hashed_counts

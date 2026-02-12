@@ -1,3 +1,4 @@
+# src/models/set_only/ska_block.py
 from __future__ import annotations
 
 import torch
@@ -13,15 +14,20 @@ class SetAttentionBlock(nn.Module):
         backend: SetAttentionBackend,
         mlp_ratio: int = 4,
         dim_feedforward: int | None = None,
+        resid_dropout: float = 0.0,
+        ffn_dropout: float = 0.0,
     ) -> None:
         super().__init__()
         self.backend = backend
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(resid_dropout)
+        self.dropout2 = nn.Dropout(resid_dropout)
         hidden = dim_feedforward or (d_model * mlp_ratio)
         self.mlp = nn.Sequential(
             nn.Linear(d_model, hidden),
             nn.GELU(),
+            nn.Dropout(ffn_dropout),
             nn.Linear(hidden, d_model),
         )
 
@@ -34,6 +40,6 @@ class SetAttentionBlock(nn.Module):
         seq_len: int,
     ) -> torch.Tensor:
         attn_out = self.backend(self.norm1(z), geom_bias, content_bias, sig_mask, seq_len)
-        z = z + attn_out
-        z = z + self.mlp(self.norm2(z))
+        z = z + self.dropout1(attn_out)
+        z = z + self.dropout2(self.mlp(self.norm2(z)))
         return z

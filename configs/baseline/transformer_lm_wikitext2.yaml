@@ -9,6 +9,9 @@ model:
   num_layers: 6
   dim_feedforward: 1536
   dropout: 0.1
+  attn_dropout: null
+  resid_dropout: null
+  ffn_dropout: null
   max_seq_len: 512
 
 data:

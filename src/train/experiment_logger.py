@@ -264,6 +264,7 @@ class ExperimentLogger:
             "training.precision",
             "training.grad_accum_steps",
             "training.clip_grad_norm",
+            "training.output_dir",
             "data.dataset",
             "data.lm_dataset",
             "data.seq_dataset",
@@ -271,6 +272,10 @@ class ExperimentLogger:
             "data.vit_dataset",
             "data.batch_size",
             "data.seq_len",
+            "data.limit",
+            "data.val_limit",
+            "data.streaming",
+            "data.cache_root",
             "model.implementation",
             "model.attention_family",
             "model.backend",
@@ -282,20 +287,101 @@ class ExperimentLogger:
             "model.cross_backend",
             "model.cross_attention",
             "model.feature_mode",
+            "model.feature_params.minhash_k",
+            "model.feature_params.num_bins",
+            "model.feature_params.fusion",
+            "model.feature_params.allow_unsafe",
+            "model.features.hashed_counts.fusion",
             "model.router_type",
             "model.router_topk",
             "model.d_model",
+            "model.dim_feedforward",
             "model.num_layers",
             "model.num_heads",
+            "model.nhead",
+            "model.dropout",
+            "model.attn_dropout",
+            "model.resid_dropout",
+            "model.ffn_dropout",
+            "model.max_seq_len",
             "model.window_size",
             "model.stride",
             "model.vocab_size",
             "model.ska_score_mode",
             "model.minhash_k",
+            "model.pooling.mode",
+            "model.pooling.tau",
+            "model.pooling.q",
+            "model.pooling.alpha",
+            "model.pooling.learnable_alpha",
+            "model.pooling.tiny_set_n",
+            "model.pooling.isotropy_eps",
+            "model.sig_gating.enabled",
+            "model.sig_gating.method",
+            "model.sig_gating.k",
+            "model.sig_gating.sig_k",
+            "model.sig_gating.delta_threshold",
+            "model.sig_gating.symmetric",
+            "model.sig_gating.include_self",
+            "model.d_phi",
+            "model.geometry.enabled",
+            "model.geometry.apply_as_bias",
+            "model.geometry.apply_in_phi_attn",
+            "model.allow_token_token",
+            "model.backend_params.radius",
+            "model.backend_params.k_s",
+            "model.backend_params.num_landmarks",
+            "model.backend_params.k",
+            "model.backend_params.global_indices",
+            "model.backend_params.global_set_indices",
+            "model.backend_params.bias_scale",
+            "model.encoder_backend_params.radius",
+            "model.encoder_backend_params.k_s",
+            "model.encoder_backend_params.num_landmarks",
+            "model.encoder_backend_params.k",
+            "model.encoder_backend_params.global_indices",
+            "model.encoder_backend_params.global_set_indices",
+            "model.encoder_backend_params.bias_scale",
+            "model.decoder_backend_params.radius",
+            "model.decoder_backend_params.k_s",
+            "model.decoder_backend_params.num_landmarks",
+            "model.decoder_backend_params.k",
+            "model.decoder_backend_params.global_indices",
+            "model.decoder_backend_params.global_set_indices",
+            "model.decoder_backend_params.bias_scale",
+            "model.cross_backend_params.radius",
+            "model.cross_backend_params.k_s",
+            "model.cross_backend_params.num_landmarks",
+            "model.cross_backend_params.k",
+            "model.cross_backend_params.global_indices",
+            "model.cross_backend_params.global_set_indices",
+            "model.cross_backend_params.bias_scale",
         ]
+        # Keep the legacy core fields first for readability, then append any
+        # additional flattened config keys so new hyperparameters are always
+        # logged without needing manual logger updates.
+        core = set(cfg_fields)
+        extra_cfg_fields = sorted(
+            k
+            for k in self.flat_cfg.keys()
+            if k not in core
+            and k not in ATTENTION_TAGS
+            and not k.startswith("_")
+            and (
+                k.startswith("model.")
+                or k.startswith("data.")
+                or k.startswith("training.")
+                or k.startswith("logging.")
+                or k == "stage"
+            )
+        )
+        cfg_fields = cfg_fields + extra_cfg_fields
         columns = [
             "task",
             "dataset",
+            "run_name",
+            "run_id",
+            "config_fingerprint",
             "epoch",
         ]
         columns += cfg_fields
@@ -363,6 +449,9 @@ class ExperimentLogger:
         row = {
             "task": self.task,
             "dataset": self.dataset,
+            "run_name": self.run_name,
+            "run_id": self.run_id,
+            "config_fingerprint": self.config_fingerprint,
             "epoch": epoch,
         }
         for col in self._columns():
