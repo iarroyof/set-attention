@@ -36,7 +36,21 @@ def _flatten_cfg(cfg: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
 
 
 def _config_fingerprint(flat_cfg: Dict[str, Any]) -> str:
-    payload = json.dumps(flat_cfg, sort_keys=True, default=str).encode("utf-8")
+    # Fingerprint should reflect experiment-defining hyperparameters and remain
+    # stable across reruns. Exclude transient/private logging and warning fields.
+    excluded = {
+        "logging.wandb.run_name",
+        "logging.wandb.tags",
+        "logging.wandb.enable",
+        "logging.wandb.project",
+        "logging.csv.path",
+    }
+    stable_cfg = {
+        k: v
+        for k, v in flat_cfg.items()
+        if not k.startswith("_") and k not in excluded
+    }
+    payload = json.dumps(stable_cfg, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha1(payload).hexdigest()
 
 

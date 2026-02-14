@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 import warnings
+import math
 
 import torch
 
@@ -9,11 +10,15 @@ import torch
 class SetDiagnostics:
     def __init__(
         self,
-        spectral_top_eig_warn: float = 0.7,
+        spectral_top_eig_warn: float = 0.3,
         spectral_entropy_warn: float = 0.3,
+        pooling_neff_ratio_warn: float = 0.3,
+        router_top1_weight_warn: float = 0.8,
     ) -> None:
         self.spectral_top_eig_warn = spectral_top_eig_warn
         self.spectral_entropy_warn = spectral_entropy_warn
+        self.pooling_neff_ratio_warn = pooling_neff_ratio_warn
+        self.router_top1_weight_warn = router_top1_weight_warn
         self.reset()
 
     def reset(self) -> None:
@@ -136,6 +141,38 @@ class SetDiagnostics:
                         "ausa/set_gram_spectral_entropy_norm",
                         float(spectral_entropy_norm.mean().item()),
                     )
+                    cond_eps = 1e-12
+                    cond_num = eigvals[:, -1] / eigvals[:, 0].clamp_min(cond_eps)
+                    self._add("ausa/set_gram_condition_number", float(cond_num.mean().item()))
+
+                    logdet_eps = 1e-8
+                    logdet = torch.log(eigvals + logdet_eps).sum(dim=-1)
+                    self._add("ausa/set_gram_logdet", float(logdet.mean().item()))
+
+                    # Power-law slope in the eigenspectrum tail:
+                    # lambda_i ~ i^{-alpha} => log(lambda_i) ~ -alpha * log(i) + c.
+                    i_min = max(3, int(math.ceil(0.05 * S)))
+                    i_max = min(S, int(math.floor(0.8 * S)))
+                    if i_max - i_min >= 1:
+                        alpha_vals: list[torch.Tensor] = []
+                        idx_1based = torch.arange(1, S + 1, device=eigvals.device, dtype=eigvals.dtype)
+                        for b_idx in range(eigvals.shape[0]):
+                            vals_desc = torch.flip(eigvals[b_idx], dims=[0])
+                            floor = vals_desc[0].clamp_min(1e-12) * 1e-12
+                            fit_mask = (idx_1based >= i_min) & (idx_1based <= i_max) & (vals_desc >= floor)
+                            if int(fit_mask.sum().item()) < 2:
+                                continue
+                            x = torch.log(idx_1based[fit_mask].to(vals_desc.dtype))
+                            y = torch.log(vals_desc[fit_mask].clamp_min(1e-12))
+                            x_center = x - x.mean()
+                            denom = (x_center * x_center).sum()
+                            if float(denom.item()) <= 0.0:
+                                continue
+                            slope = (x_center * (y - y.mean())).sum() / denom
+                            alpha_vals.append((-slope).detach())
+                        if alpha_vals:
+                            alpha = torch.stack(alpha_vals).mean()
+                            self._add("ausa/set_gram_powerlaw_alpha", float(alpha.item()))
                 except RuntimeError:
                     # Keep training robust if an eigendecomposition fails on a rare batch.
                     pass
@@ -214,7 +251,7 @@ class SetDiagnostics:
 
         top_eig_ratio = stats.get("ausa/set_gram_top_eig_ratio")
         spectral_entropy = stats.get("ausa/set_gram_spectral_entropy_norm")
-        if (
+        spectrum_collapse = (
             top_eig_ratio is not None
             and top_eig_ratio == top_eig_ratio
             and top_eig_ratio > self.spectral_top_eig_warn
@@ -222,11 +259,34 @@ class SetDiagnostics:
             spectral_entropy is not None
             and spectral_entropy == spectral_entropy
             and spectral_entropy < self.spectral_entropy_warn
-        ):
+        )
+        if spectrum_collapse:
             warnings.warn(
                 "Set Gram spectrum indicates possible overconstraint "
                 f"(top_eig_ratio={top_eig_ratio:.4f}, "
                 f"spectral_entropy_norm={spectral_entropy:.4f}).",
+                RuntimeWarning,
+            )
+        pooling_neff_ratio = stats.get("ausa/pooling_neff_ratio")
+        if (
+            pooling_neff_ratio is not None
+            and pooling_neff_ratio == pooling_neff_ratio
+            and pooling_neff_ratio < self.pooling_neff_ratio_warn
+        ):
+            warnings.warn(
+                "Pooling effective support is low; potential pooling collapse "
+                f"(pooling_neff_ratio={pooling_neff_ratio:.4f}).",
+                RuntimeWarning,
+            )
+        router_top1 = stats.get("ausa/router_top1_weight")
+        if (
+            router_top1 is not None
+            and router_top1 == router_top1
+            and router_top1 > self.router_top1_weight_warn
+        ):
+            warnings.warn(
+                "Routing appears near-hard top-1; sparse gate may be overconfident "
+                f"(router_top1_weight={router_top1:.4f}).",
                 RuntimeWarning,
             )
 
