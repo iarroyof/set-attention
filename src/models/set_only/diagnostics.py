@@ -14,11 +14,23 @@ class SetDiagnostics:
         spectral_entropy_warn: float = 0.3,
         pooling_neff_ratio_warn: float = 0.3,
         router_top1_weight_warn: float = 0.8,
+        spectrum_interval: int = 200,
+        embedding_structure_interval: int = 200,
+        max_spectrum_sets: int = 48,
+        max_embedding_samples: int = 64,
+        powerlaw_collapse_gate: float = 0.5,
+        condition_number_cap: float = 1e6,
     ) -> None:
         self.spectral_top_eig_warn = spectral_top_eig_warn
         self.spectral_entropy_warn = spectral_entropy_warn
         self.pooling_neff_ratio_warn = pooling_neff_ratio_warn
         self.router_top1_weight_warn = router_top1_weight_warn
+        self.spectrum_interval = max(1, int(spectrum_interval))
+        self.embedding_structure_interval = max(1, int(embedding_structure_interval))
+        self.max_spectrum_sets = max(8, int(max_spectrum_sets))
+        self.max_embedding_samples = max(8, int(max_embedding_samples))
+        self.powerlaw_collapse_gate = float(powerlaw_collapse_gate)
+        self.condition_number_cap = float(condition_number_cap)
         self.reset()
 
     def reset(self) -> None:
@@ -28,9 +40,19 @@ class SetDiagnostics:
         self._prev_bank_indices = None
         self._prev_router_params = None
         self._prev_epoch_stats: dict[str, float] | None = None
+        self._step = 0
 
     def _add(self, key: str, value: float) -> None:
-        self._sums[key] = self._sums.get(key, 0.0) + float(value)
+        v = float(value)
+        if not math.isfinite(v):
+            self._sums["ausa/diagnostics_nonfinite_count"] = (
+                self._sums.get("ausa/diagnostics_nonfinite_count", 0.0) + 1.0
+            )
+            self._counts["ausa/diagnostics_nonfinite_count"] = (
+                self._counts.get("ausa/diagnostics_nonfinite_count", 0) + 1
+            )
+            return
+        self._sums[key] = self._sums.get(key, 0.0) + v
         self._counts[key] = self._counts.get(key, 0) + 1
 
     def update_with_router_state(
@@ -40,7 +62,9 @@ class SetDiagnostics:
         router_probs: Optional[torch.Tensor] = None,
         set_embeddings: Optional[torch.Tensor] = None,
         set_attention_weights: Optional[torch.Tensor] = None,
+        token_to_sets: Optional[torch.Tensor] = None,
     ) -> None:
+        self._step += 1
         if bank_indices.numel() == 0 or num_sets <= 0:
             return
         flat = bank_indices.reshape(-1).clamp(min=0, max=num_sets - 1)
@@ -92,6 +116,7 @@ class SetDiagnostics:
         self._prev_bank_indices = bank_indices.detach()
 
         if router_probs is not None:
+            router_probs = router_probs.detach().to(torch.float32)
             confidence = router_probs.max(dim=-1).values
             self._add("ausa/router_confidence_mean", float(confidence.mean().item()))
             self._add("ausa/router_confidence_std", float(confidence.std().item()))
@@ -99,6 +124,70 @@ class SetDiagnostics:
             router_entropy = -(probs * torch.log(probs)).sum(dim=-1)
             self._add("ausa/router_entropy", float(router_entropy.mean().item()))
             self._add("ausa/router_top1_weight", float(confidence.mean().item()))
+            if token_to_sets is not None and token_to_sets.numel() > 0:
+                token_to_sets = token_to_sets.to(router_probs.device)
+                if token_to_sets.dim() == 2:
+                    # [T, C] -> [B, T, C]
+                    cand_idx = token_to_sets.unsqueeze(0).expand(router_probs.shape[0], -1, -1)
+                elif token_to_sets.dim() == 3:
+                    cand_idx = token_to_sets
+                    if cand_idx.shape[0] == 1 and router_probs.shape[0] > 1:
+                        cand_idx = cand_idx.expand(router_probs.shape[0], -1, -1)
+                else:
+                    cand_idx = None
+
+                if cand_idx is not None and cand_idx.shape[1] == router_probs.shape[1]:
+                    valid = cand_idx >= 0
+                    cand_raw = valid.sum(dim=-1)
+                    cand = cand_raw.clamp_min(1)
+                    idx_safe = cand_idx.clamp(min=0, max=num_sets - 1)
+                    probs_c = probs.gather(dim=-1, index=idx_safe)
+                    probs_c = probs_c * valid.to(probs.dtype)
+                    den = probs_c.sum(dim=-1, keepdim=True)
+                    probs_c = torch.where(
+                        den > 0,
+                        probs_c / den.clamp_min(1e-12),
+                        torch.zeros_like(probs_c),
+                    )
+                    router_entropy_c = -(probs_c * torch.log(probs_c.clamp_min(1e-12))).sum(dim=-1)
+                    top1_c = probs_c.max(dim=-1).values
+                else:
+                    # Fallback when candidate topology does not align with current batch shape.
+                    cand_raw = torch.full(
+                        router_entropy.shape,
+                        num_sets,
+                        dtype=torch.long,
+                        device=router_probs.device,
+                    )
+                    cand = cand_raw
+                    router_entropy_c = router_entropy
+                    top1_c = confidence
+
+                cand_f_raw = cand_raw.to(router_probs.dtype)
+                self._add("ausa/router_candidate_count_mean", float(cand_f_raw.mean().item()))
+                self._add("ausa/router_candidate_count_min", float(cand_f_raw.min().item()))
+                self._add("ausa/router_candidate_count_max", float(cand_f_raw.max().item()))
+                cand_f = cand.to(router_probs.dtype)
+                log_c = torch.log(cand_f.clamp_min(1.0)).clamp_min(1e-12)
+                entropy_norm_c = torch.where(
+                    cand_f > 1.0,
+                    router_entropy_c / log_c,
+                    torch.zeros_like(router_entropy_c),
+                )
+                self._add(
+                    "ausa/router_entropy_norm_by_candidates",
+                    float(entropy_norm_c.mean().item()),
+                )
+                u = 1.0 / cand_f.clamp_min(1.0)
+                top1_gap_norm = torch.where(
+                    cand_f > 1.0,
+                    (top1_c - u) / (1.0 - u + 1e-12),
+                    torch.zeros_like(top1_c),
+                )
+                self._add(
+                    "ausa/router_top1_gap_norm",
+                    float(top1_gap_norm.mean().item()),
+                )
             if probs.dim() >= 3 and probs.shape[-1] > 1:
                 util = probs.mean(dim=tuple(range(probs.dim() - 1)))
                 util = util / util.sum().clamp_min(1e-12)
@@ -116,6 +205,7 @@ class SetDiagnostics:
                 self._add("ausa/top1_vs_random_kl", float(kl.mean().item()))
 
         if set_embeddings is not None:
+            set_embeddings = set_embeddings.detach().to(torch.float32)
             B, S, D = set_embeddings.shape
             variance = set_embeddings.var(dim=(0, 1), unbiased=False).mean().item()
             self._add("ausa/set_embedding_variance", float(variance))
@@ -124,17 +214,27 @@ class SetDiagnostics:
 
             # Spectrum diagnostic for set attention conditioning:
             # K = ZZ^T / M, where Z in R^{M x d}. Fast decay indicates an overconstrained set space.
-            if S > 1:
-                z = set_embeddings.float()
-                gram = torch.matmul(z, z.transpose(-2, -1)) / float(S)
+            do_spectrum = (self._step % self.spectrum_interval == 0)
+            if S > 1 and do_spectrum:
+                z = set_embeddings
+                if S > self.max_spectrum_sets:
+                    idx_sets = torch.randperm(S, device=z.device)[: self.max_spectrum_sets]
+                    z = z[:, idx_sets]
+                s_eff = z.shape[1]
                 try:
-                    eigvals = torch.linalg.eigvalsh(gram).clamp_min(0.0)
+                    if D < s_eff:
+                        cov = torch.matmul(z.transpose(-2, -1), z) / float(s_eff)
+                        eigvals = torch.linalg.eigvalsh(cov).clamp_min(0.0)
+                    else:
+                        gram = torch.matmul(z, z.transpose(-2, -1)) / float(s_eff)
+                        eigvals = torch.linalg.eigvalsh(gram).clamp_min(0.0)
                     eig_sum = eigvals.sum(dim=-1).clamp_min(1e-8)
                     top_ratio = eigvals[:, -1] / eig_sum
                     p = eigvals / eig_sum.unsqueeze(-1)
                     spectral_entropy = -(p * torch.log(p.clamp_min(1e-12))).sum(dim=-1)
+                    n_eval = float(eigvals.shape[-1])
                     spectral_entropy_norm = spectral_entropy / torch.log(
-                        torch.tensor(float(S), device=spectral_entropy.device)
+                        torch.tensor(max(n_eval, 2.0), device=spectral_entropy.device)
                     )
                     self._add("ausa/set_gram_top_eig_ratio", float(top_ratio.mean().item()))
                     self._add(
@@ -143,6 +243,7 @@ class SetDiagnostics:
                     )
                     cond_eps = 1e-12
                     cond_num = eigvals[:, -1] / eigvals[:, 0].clamp_min(cond_eps)
+                    cond_num = cond_num.clamp_max(self.condition_number_cap)
                     self._add("ausa/set_gram_condition_number", float(cond_num.mean().item()))
 
                     logdet_eps = 1e-8
@@ -151,15 +252,24 @@ class SetDiagnostics:
 
                     # Power-law slope in the eigenspectrum tail:
                     # lambda_i ~ i^{-alpha} => log(lambda_i) ~ -alpha * log(i) + c.
-                    i_min = max(3, int(math.ceil(0.05 * S)))
-                    i_max = min(S, int(math.floor(0.8 * S)))
+                    n_eigs = eigvals.shape[-1]
+                    i_min = max(3, int(math.ceil(0.1 * n_eigs)))
+                    i_max = min(n_eigs, int(math.floor(0.6 * n_eigs)))
                     if i_max - i_min >= 1:
                         alpha_vals: list[torch.Tensor] = []
-                        idx_1based = torch.arange(1, S + 1, device=eigvals.device, dtype=eigvals.dtype)
+                        idx_1based = torch.arange(
+                            1, n_eigs + 1, device=eigvals.device, dtype=eigvals.dtype
+                        )
                         for b_idx in range(eigvals.shape[0]):
+                            if float(top_ratio[b_idx].item()) > self.powerlaw_collapse_gate:
+                                continue
                             vals_desc = torch.flip(eigvals[b_idx], dims=[0])
                             floor = vals_desc[0].clamp_min(1e-12) * 1e-12
-                            fit_mask = (idx_1based >= i_min) & (idx_1based <= i_max) & (vals_desc >= floor)
+                            fit_mask = (
+                                (idx_1based >= i_min)
+                                & (idx_1based <= i_max)
+                                & (vals_desc >= floor)
+                            )
                             if int(fit_mask.sum().item()) < 2:
                                 continue
                             x = torch.log(idx_1based[fit_mask].to(vals_desc.dtype))
@@ -178,8 +288,9 @@ class SetDiagnostics:
                     pass
 
             flat = set_embeddings.reshape(-1, D)
-            if flat.shape[0] > 1:
-                n_samples = min(100, flat.shape[0])
+            do_structure = (self._step % self.embedding_structure_interval == 0)
+            if flat.shape[0] > 1 and do_structure:
+                n_samples = min(self.max_embedding_samples, flat.shape[0])
                 idx = torch.randperm(flat.shape[0], device=flat.device)[:n_samples]
                 samples = flat[idx]
                 sims = torch.mm(samples, samples.t())
@@ -189,13 +300,13 @@ class SetDiagnostics:
                 self._add("ausa/set_cosine_similarity_mean", float(cos_sim[mask].mean().item()))
 
                 centered = samples - samples.mean(dim=0, keepdim=True)
-                cov = (centered.transpose(0, 1) @ centered) / centered.shape[0]
-                trace = torch.trace(cov)
-                fro = torch.norm(cov, p="fro")
-                eff_rank = (trace ** 2) / (fro ** 2 + 1e-8)
+                svals = torch.linalg.svdvals(centered)
+                s2 = svals.pow(2)
+                eff_rank = (s2.sum() ** 2) / (s2.pow(2).sum() + 1e-8)
                 self._add("ausa/set_rank_effective", float(eff_rank.item()))
 
         if set_attention_weights is not None:
+            set_attention_weights = set_attention_weights.detach().to(torch.float32)
             attn_entropy = -(set_attention_weights * torch.log(set_attention_weights + 1e-10)).sum(dim=-1)
             self._add("ausa/set_attention_entropy_mean", float(attn_entropy.mean().item()))
             top1_prob = set_attention_weights.max(dim=-1).values
@@ -226,6 +337,30 @@ class SetDiagnostics:
     def update_with_pooling_stats(self, stats: Dict[str, float]) -> None:
         for key, value in stats.items():
             self._add(key, float(value))
+
+    def update_with_gradient_probe(
+        self,
+        grad_h: float,
+        grad_z0: float,
+        grad_zl: float,
+    ) -> None:
+        vals = torch.tensor([grad_h, grad_z0, grad_zl], dtype=torch.float32)
+        nonfinite = (~torch.isfinite(vals)).sum().item()
+        if nonfinite > 0:
+            self._add("ausa/grad_probe_nonfinite_count", float(nonfinite))
+        vals = torch.nan_to_num(vals, nan=0.0, posinf=0.0, neginf=0.0)
+        grad_h, grad_z0, grad_zl = [float(v.item()) for v in vals]
+        eps = 1e-12
+        self._add("ausa/grad_norm_token_pre_pool", float(grad_h))
+        self._add("ausa/grad_norm_set_post_pool", float(grad_z0))
+        self._add("ausa/grad_norm_set_post_blocks", float(grad_zl))
+
+        rho_p = grad_z0 / (grad_h + eps)
+        rho_a = grad_zl / (grad_z0 + eps)
+        rho_total = grad_zl / (grad_h + eps)
+        self._add("ausa/grad_ratio_pool_rho_p", float(rho_p))
+        self._add("ausa/grad_ratio_set_stack_rho_a", float(rho_a))
+        self._add("ausa/grad_ratio_total_rho_pa", float(rho_total))
 
     def get_epoch_stats(self) -> Dict[str, float]:
         stats: Dict[str, float] = {}

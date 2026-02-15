@@ -68,6 +68,10 @@ class SetOnlyLM(nn.Module):
             nn.GELU(),
             nn.Linear(d_model, d_model),
         )
+        self.grad_probe_interval = 200
+        self._forward_step = 0
+        self._grad_probe_active = False
+        self._grad_probe_tensors: dict[str, torch.Tensor] = {}
         self._last_set_embeddings: torch.Tensor | None = None
         self.window_size = window_size
         self.stride = stride
@@ -309,6 +313,18 @@ class SetOnlyLM(nn.Module):
             params=self.pooling_params,
             pooling_module=self.pooling_module,
         )
+        self._grad_probe_active = bool(
+            self.training
+            and self.grad_probe_interval > 0
+            and (self._forward_step % self.grad_probe_interval == 0)
+        )
+        self._forward_step += 1
+        self._grad_probe_tensors = {}
+        if self._grad_probe_active:
+            token_states.retain_grad()
+            set_states.retain_grad()
+            self._grad_probe_tensors["token_pre_pool"] = token_states
+            self._grad_probe_tensors["set_post_pool"] = set_states
         if self.training:
             self._last_set_embeddings = set_states
         if self.training and self.pooling_module is not None:
@@ -400,6 +416,9 @@ class SetOnlyLM(nn.Module):
         )
         for block in self.blocks:
             set_states = block(set_states, geom_bias, content_bias, sig_mask, guard_seq_len)
+        if self._grad_probe_active:
+            set_states.retain_grad()
+            self._grad_probe_tensors["set_post_blocks"] = set_states
 
         if isinstance(self.router, UniformRouter):
             router_out: RouterOutput = self.router(set_states, bank.token_to_sets)
@@ -414,6 +433,7 @@ class SetOnlyLM(nn.Module):
                 router_probs=router_out.probs,
                 set_embeddings=set_states,
                 set_attention_weights=None,
+                token_to_sets=bank.token_to_sets,
             )
 
         return router_out.token_repr, router_out
@@ -437,3 +457,27 @@ class SetOnlyLM(nn.Module):
 
     def get_last_set_embeddings(self) -> torch.Tensor | None:
         return self._last_set_embeddings
+
+    def collect_grad_diagnostics(self) -> None:
+        if not self._grad_probe_active:
+            return
+        t_h = self._grad_probe_tensors.get("token_pre_pool")
+        t_z0 = self._grad_probe_tensors.get("set_post_pool")
+        t_zl = self._grad_probe_tensors.get("set_post_blocks")
+        if t_h is None or t_z0 is None or t_zl is None:
+            self._grad_probe_active = False
+            self._grad_probe_tensors = {}
+            return
+
+        def _gnorm(t: torch.Tensor) -> float:
+            if t.grad is None:
+                return float("nan")
+            return float(t.grad.detach().norm().item())
+
+        self.diagnostics.update_with_gradient_probe(
+            grad_h=_gnorm(t_h),
+            grad_z0=_gnorm(t_z0),
+            grad_zl=_gnorm(t_zl),
+        )
+        self._grad_probe_active = False
+        self._grad_probe_tensors = {}

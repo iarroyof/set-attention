@@ -39,6 +39,11 @@ def _maybe_add_set_diversity_loss(model: nn.Module, loss: torch.Tensor) -> torch
 
 
 def _update_diagnostics(model: nn.Module) -> None:
+    if hasattr(model, "collect_grad_diagnostics"):
+        try:
+            model.collect_grad_diagnostics()
+        except Exception:
+            pass
     if hasattr(model, "diagnostics") and hasattr(model, "router"):
         try:
             router_params = dict(model.router.named_parameters())
@@ -47,8 +52,24 @@ def _update_diagnostics(model: nn.Module) -> None:
             pass
     if hasattr(model, "encoder") and hasattr(model.encoder, "diagnostics") and hasattr(model.encoder, "router"):
         try:
+            if hasattr(model.encoder, "collect_grad_diagnostics"):
+                model.encoder.collect_grad_diagnostics()
+        except Exception:
+            pass
+        try:
             router_params = dict(model.encoder.router.named_parameters())
             model.encoder.diagnostics.update_router_params(router_params)
+        except Exception:
+            pass
+    if hasattr(model, "decoder") and hasattr(model.decoder, "diagnostics") and hasattr(model.decoder, "router"):
+        try:
+            if hasattr(model.decoder, "collect_grad_diagnostics"):
+                model.decoder.collect_grad_diagnostics()
+        except Exception:
+            pass
+        try:
+            router_params = dict(model.decoder.router.named_parameters())
+            model.decoder.diagnostics.update_router_params(router_params)
         except Exception:
             pass
     if hasattr(model, "diagnostics") and hasattr(model, "attention_params"):
