@@ -47,10 +47,12 @@ class SetOnlyLM(nn.Module):
         features: dict | None = None,
         router_type: str = "uniform",
         router_topk: int = 0,
+        router_multihead: bool = False,
         backend: str = "exact",
         backend_params: dict | None = None,
         feature_mode: str = "geometry_only",
         feature_params: dict | None = None,
+        token_mlp: bool | dict | None = None,
         adapter_type: str = "auto",
         adapter_hidden_multiplier: int = 2,
         adapter_budget_fraction: float = 0.15,
@@ -63,10 +65,21 @@ class SetOnlyLM(nn.Module):
         super().__init__()
         self.token_emb = token_embedding or nn.Embedding(vocab_size, d_model)
         self.pos_emb = nn.Embedding(max_seq_len, d_model)
-        self.token_mlp = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.GELU(),
-            nn.Linear(d_model, d_model),
+        if isinstance(token_mlp, dict):
+            token_mlp_enabled = bool(token_mlp.get("enabled", True))
+        elif token_mlp is None:
+            token_mlp_enabled = True
+        else:
+            token_mlp_enabled = bool(token_mlp)
+        self.token_mlp_enabled = token_mlp_enabled
+        self.token_mlp = (
+            nn.Sequential(
+                nn.Linear(d_model, d_model),
+                nn.GELU(),
+                nn.Linear(d_model, d_model),
+            )
+            if self.token_mlp_enabled
+            else nn.Identity()
         )
         self.grad_probe_interval = 200
         self._forward_step = 0
@@ -79,6 +92,7 @@ class SetOnlyLM(nn.Module):
         self.attn_dropout = attn_dropout if attn_dropout is not None else dropout
         self.resid_dropout = resid_dropout if resid_dropout is not None else dropout
         self.ffn_dropout = ffn_dropout if ffn_dropout is not None else dropout
+        self.router_multihead = bool(router_multihead)
         self.allow_token_token = bool(allow_token_token)
         self.causal = bool(causal)
         if isinstance(pooling, dict):
@@ -189,6 +203,8 @@ class SetOnlyLM(nn.Module):
                     "apply_as_bias": self.geom_apply_bias,
                     "apply_in_phi_attn": self.geom_apply_in_phi,
                 },
+                "router_multihead": self.router_multihead,
+                "token_mlp": {"enabled": self.token_mlp_enabled},
             }
         )
 
@@ -262,7 +278,13 @@ class SetOnlyLM(nn.Module):
         if router_type == "uniform":
             self.router = UniformRouter()
         elif router_type == "learned":
-            self.router = LearnedRouter(d_model=d_model, topk=router_topk)
+            self.router = LearnedRouter(
+                d_model=d_model,
+                num_heads=num_heads,
+                d_phi=self.d_phi,
+                topk=router_topk,
+                multihead=self.router_multihead,
+            )
         else:
             raise ValueError(f"Unknown router_type: {router_type}")
 

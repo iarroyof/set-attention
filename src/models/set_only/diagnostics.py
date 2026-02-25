@@ -5,6 +5,7 @@ import warnings
 import math
 
 import torch
+import torch.nn.functional as F
 
 
 class SetDiagnostics:
@@ -38,6 +39,7 @@ class SetDiagnostics:
         self._counts: dict[str, int] = {}
         self._prev_active = None
         self._prev_bank_indices = None
+        self._prev_bank_indices_h = None
         self._prev_router_params = None
         self._prev_epoch_stats: dict[str, float] | None = None
         self._step = 0
@@ -104,10 +106,6 @@ class SetDiagnostics:
         self._add("ausa/active_set_ratio", float(ratio.item()))
         self._add("ausa/active_set_size_mean", float(active_mean.item()))
         self._add("ausa/active_set_size_std", float(active_std.item()))
-        self._add("ausa/routing_entropy", float(entropy.item()))
-        self._add("ausa/routing_entropy_norm", float(entropy_norm.item()))
-        self._add("ausa/routing_gini", float(gini.item()))
-        self._add("ausa/routing_top1_prob_mean", float(top1.item()))
         self._add("ausa/tokens_per_set_variance", float(counts.var(unbiased=False).item()))
 
         if self._prev_bank_indices is not None and bank_indices.shape == self._prev_bank_indices.shape:
@@ -117,29 +115,110 @@ class SetDiagnostics:
 
         if router_probs is not None:
             router_probs = router_probs.detach().to(torch.float32)
-            confidence = router_probs.max(dim=-1).values
+            probs_heads = None
+            cand_struct_for_eff: torch.Tensor | None = None
+            if router_probs.dim() == 4:
+                # Multihead routing: keep backward-compatible metrics on Pbar,
+                # and add explicit head diversity metrics.
+                probs_heads = router_probs.clamp_min(0.0)
+                probs_heads = probs_heads / probs_heads.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+                probs = probs_heads.mean(dim=1).clamp_min(0.0)
+                probs = probs / probs.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+                probs_heads_safe = probs_heads.clamp_min(1e-12)
+                heads = float(probs_heads.shape[1])
+                ent_h = -(probs_heads_safe * torch.log(probs_heads_safe)).sum(dim=-1)  # [B,H,T]
+                self._add("ausa/router_head_entropy_mean", float(ent_h.mean().item()))
+                self._add(
+                    "ausa/router_head_entropy_std",
+                    float(ent_h.std(dim=1, unbiased=False).mean().item()),
+                )
+                top1_idx = probs_heads.argmax(dim=-1)  # [B,H,T]
+                modal_counts = F.one_hot(top1_idx, num_classes=num_sets).sum(dim=1)  # [B,T,M]
+                top1_agreement = modal_counts.amax(dim=-1).to(probs.dtype) / max(heads, 1.0)
+                self._add(
+                    "ausa/router_head_top1_agreement",
+                    float(top1_agreement.mean().item()),
+                )
+                bank_indices_h = top1_idx
+                if (
+                    self._prev_bank_indices_h is not None
+                    and bank_indices_h.shape == self._prev_bank_indices_h.shape
+                ):
+                    # Per-head temporal routing stability across consecutive updates.
+                    head_consistency = (
+                        bank_indices_h == self._prev_bank_indices_h
+                    ).to(probs.dtype).mean(dim=(0, 2))  # [H]
+                    self._add(
+                        "ausa/router_head_routing_consistency_mean",
+                        float(head_consistency.mean().item()),
+                    )
+                    self._add(
+                        "ausa/router_head_routing_consistency_std",
+                        float(head_consistency.std(unbiased=False).item()),
+                    )
+                self._prev_bank_indices_h = bank_indices_h.detach()
+                pbar = probs.unsqueeze(1).clamp_min(1e-12)
+                m = (0.5 * (probs_heads + pbar)).clamp_min(1e-12)
+                kl_h_m = (probs_heads_safe * (torch.log(probs_heads_safe) - torch.log(m))).sum(dim=-1)
+                kl_p_m = (pbar * (torch.log(pbar) - torch.log(m))).sum(dim=-1)
+                js = 0.5 * (kl_h_m + kl_p_m)
+                self._add("ausa/router_head_js_to_mean", float(js.mean().item()))
+                self._add(
+                    "ausa/router_head_prob_var",
+                    float(probs_heads.var(dim=1, unbiased=False).mean().item()),
+                )
+                eff_counts_raw = (router_probs > 0).sum(dim=-1).to(torch.float32)  # [B,H,T]
+            elif router_probs.dim() == 3:
+                probs = router_probs.clamp_min(0.0)
+                probs = probs / probs.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+                eff_counts_raw = (router_probs > 0).sum(dim=-1).to(torch.float32)  # [B,T]
+            else:
+                raise ValueError("router_probs must be [B,T,M] or [B,H,T,M]")
+
+            probs_safe = probs.clamp_min(1e-12)
+            routing_entropy = -(probs_safe * torch.log(probs_safe)).sum(dim=-1)
+            self._add("ausa/routing_entropy", float(routing_entropy.mean().item()))
+            log_m = torch.log(torch.tensor(float(num_sets), device=probs.device)).clamp_min(1e-12)
+            routing_entropy_norm = (
+                routing_entropy / log_m
+                if num_sets > 1
+                else torch.zeros_like(routing_entropy)
+            )
+            self._add("ausa/routing_entropy_norm", float(routing_entropy_norm.mean().item()))
+
+            confidence = probs.max(dim=-1).values
+            self._add("ausa/routing_top1_prob_mean", float(confidence.mean().item()))
+            p_sorted = torch.sort(probs, dim=-1).values
+            n_prob = p_sorted.shape[-1]
+            idx_prob = torch.arange(
+                1, n_prob + 1, device=p_sorted.device, dtype=p_sorted.dtype
+            )
+            gini_prob = 1.0 - 2.0 * torch.sum(
+                p_sorted * (n_prob - idx_prob + 0.5), dim=-1
+            ) / n_prob
+            self._add("ausa/routing_gini", float(gini_prob.mean().item()))
             self._add("ausa/router_confidence_mean", float(confidence.mean().item()))
-            self._add("ausa/router_confidence_std", float(confidence.std().item()))
-            probs = router_probs.clamp_min(1e-12)
-            router_entropy = -(probs * torch.log(probs)).sum(dim=-1)
+            self._add("ausa/router_confidence_std", float(confidence.std(unbiased=False).item()))
+            router_entropy = -(probs_safe * torch.log(probs_safe)).sum(dim=-1)
             self._add("ausa/router_entropy", float(router_entropy.mean().item()))
             self._add("ausa/router_top1_weight", float(confidence.mean().item()))
             if token_to_sets is not None and token_to_sets.numel() > 0:
-                token_to_sets = token_to_sets.to(router_probs.device)
+                token_to_sets = token_to_sets.to(probs.device)
                 if token_to_sets.dim() == 2:
                     # [T, C] -> [B, T, C]
-                    cand_idx = token_to_sets.unsqueeze(0).expand(router_probs.shape[0], -1, -1)
+                    cand_idx = token_to_sets.unsqueeze(0).expand(probs.shape[0], -1, -1)
                 elif token_to_sets.dim() == 3:
                     cand_idx = token_to_sets
-                    if cand_idx.shape[0] == 1 and router_probs.shape[0] > 1:
-                        cand_idx = cand_idx.expand(router_probs.shape[0], -1, -1)
+                    if cand_idx.shape[0] == 1 and probs.shape[0] > 1:
+                        cand_idx = cand_idx.expand(probs.shape[0], -1, -1)
                 else:
                     cand_idx = None
 
-                if cand_idx is not None and cand_idx.shape[1] == router_probs.shape[1]:
+                if cand_idx is not None and cand_idx.shape[1] == probs.shape[1]:
                     valid = cand_idx >= 0
-                    cand_raw = valid.sum(dim=-1)
-                    cand = cand_raw.clamp_min(1)
+                    cand_struct_raw = valid.sum(dim=-1)
+                    cand_struct_for_eff = cand_struct_raw
+                    cand = cand_struct_raw.clamp_min(1)
                     idx_safe = cand_idx.clamp(min=0, max=num_sets - 1)
                     probs_c = probs.gather(dim=-1, index=idx_safe)
                     probs_c = probs_c * valid.to(probs.dtype)
@@ -153,21 +232,24 @@ class SetDiagnostics:
                     top1_c = probs_c.max(dim=-1).values
                 else:
                     # Fallback when candidate topology does not align with current batch shape.
-                    cand_raw = torch.full(
+                    cand_struct_raw = torch.full(
                         router_entropy.shape,
                         num_sets,
                         dtype=torch.long,
-                        device=router_probs.device,
+                        device=probs.device,
                     )
-                    cand = cand_raw
+                    cand = cand_struct_raw
                     router_entropy_c = router_entropy
                     top1_c = confidence
 
-                cand_f_raw = cand_raw.to(router_probs.dtype)
+                cand_f_raw = cand_struct_raw.to(probs.dtype)
                 self._add("ausa/router_candidate_count_mean", float(cand_f_raw.mean().item()))
                 self._add("ausa/router_candidate_count_min", float(cand_f_raw.min().item()))
                 self._add("ausa/router_candidate_count_max", float(cand_f_raw.max().item()))
-                cand_f = cand.to(router_probs.dtype)
+                self._add("ausa/router_candidate_count_struct_mean", float(cand_f_raw.mean().item()))
+                self._add("ausa/router_candidate_count_struct_min", float(cand_f_raw.min().item()))
+                self._add("ausa/router_candidate_count_struct_max", float(cand_f_raw.max().item()))
+                cand_f = cand.to(probs.dtype)
                 log_c = torch.log(cand_f.clamp_min(1.0)).clamp_min(1e-12)
                 entropy_norm_c = torch.where(
                     cand_f > 1.0,
@@ -188,7 +270,52 @@ class SetDiagnostics:
                     "ausa/router_top1_gap_norm",
                     float(top1_gap_norm.mean().item()),
                 )
-            if probs.dim() >= 3 and probs.shape[-1] > 1:
+
+            eff_counts_on_pbar = (probs > 0).sum(dim=-1).to(torch.float32)  # [B,T]
+            if cand_struct_for_eff is not None:
+                cand_eff_bt = cand_struct_for_eff.to(eff_counts_on_pbar.dtype)
+                eff_counts_on_pbar = torch.minimum(eff_counts_on_pbar, cand_eff_bt)
+            self._add(
+                "ausa/router_candidate_count_eff_mean_on_pbar",
+                float(eff_counts_on_pbar.mean().item()),
+            )
+            self._add(
+                "ausa/router_candidate_count_eff_min_on_pbar",
+                float(eff_counts_on_pbar.min().item()),
+            )
+            self._add(
+                "ausa/router_candidate_count_eff_max_on_pbar",
+                float(eff_counts_on_pbar.max().item()),
+            )
+
+            if eff_counts_raw.dim() == 3:
+                eff_counts_over_heads = eff_counts_raw
+                if cand_struct_for_eff is not None:
+                    cand_eff_bht = cand_struct_for_eff.to(eff_counts_over_heads.dtype).unsqueeze(1)
+                    cand_eff_bht = cand_eff_bht.expand_as(eff_counts_over_heads)
+                    eff_counts_over_heads = torch.minimum(eff_counts_over_heads, cand_eff_bht)
+            else:
+                eff_counts_over_heads = eff_counts_on_pbar.unsqueeze(1)
+
+            self._add(
+                "ausa/router_candidate_count_eff_mean_over_heads",
+                float(eff_counts_over_heads.mean().item()),
+            )
+            self._add(
+                "ausa/router_candidate_count_eff_min_over_heads",
+                float(eff_counts_over_heads.min().item()),
+            )
+            self._add(
+                "ausa/router_candidate_count_eff_max_over_heads",
+                float(eff_counts_over_heads.max().item()),
+            )
+
+            # Backward-compatible key keeps single-distribution semantics (on Pbar).
+            self._add("ausa/router_candidate_count_eff_mean", float(eff_counts_on_pbar.mean().item()))
+            self._add("ausa/router_candidate_count_eff_min", float(eff_counts_on_pbar.min().item()))
+            self._add("ausa/router_candidate_count_eff_max", float(eff_counts_on_pbar.max().item()))
+
+            if probs.shape[-1] > 1:
                 util = probs.mean(dim=tuple(range(probs.dim() - 1)))
                 util = util / util.sum().clamp_min(1e-12)
                 util_sorted, _ = torch.sort(util)
@@ -200,9 +327,55 @@ class SetDiagnostics:
                     util_sorted * (n_util - idx_util + 0.5)
                 ) / n_util
                 self._add("ausa/router_set_utilization_gini", float(util_gini.item()))
+                if probs_heads is not None:
+                    util_h = probs_heads.mean(dim=(0, 2))  # [H, M]
+                    util_h = util_h / util_h.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+                    util_h_sorted, _ = torch.sort(util_h, dim=-1)
+                    n_util_h = util_h_sorted.shape[-1]
+                    idx_h = torch.arange(
+                        1, n_util_h + 1, device=util_h.device, dtype=util_h.dtype
+                    ).view(1, -1)
+                    gini_h = 1.0 - 2.0 * torch.sum(
+                        util_h_sorted * (n_util_h - idx_h + 0.5), dim=-1
+                    ) / n_util_h
+                    self._add(
+                        "ausa/router_head_set_utilization_gini_mean",
+                        float(gini_h.mean().item()),
+                    )
+                    self._add(
+                        "ausa/router_head_set_utilization_gini_std",
+                        float(gini_h.std(unbiased=False).item()),
+                    )
+                    # Head-wise top1 set utilization (argmax assignments) gini.
+                    top1_h = probs_heads.argmax(dim=-1)  # [B,H,T]
+                    top1_oh = F.one_hot(top1_h, num_classes=num_sets).to(probs.dtype)  # [B,H,T,M]
+                    util_top1_h = top1_oh.mean(dim=(0, 2))  # [H, M]
+                    util_top1_h = util_top1_h / util_top1_h.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+                    util_top1_h_sorted, _ = torch.sort(util_top1_h, dim=-1)
+                    n_util_top1 = util_top1_h_sorted.shape[-1]
+                    idx_top1 = torch.arange(
+                        1, n_util_top1 + 1, device=util_top1_h.device, dtype=util_top1_h.dtype
+                    ).view(1, -1)
+                    gini_top1_h = 1.0 - 2.0 * torch.sum(
+                        util_top1_h_sorted * (n_util_top1 - idx_top1 + 0.5), dim=-1
+                    ) / n_util_top1
+                    self._add(
+                        "ausa/router_head_top1_set_utilization_gini_mean",
+                        float(gini_top1_h.mean().item()),
+                    )
+                    self._add(
+                        "ausa/router_head_top1_set_utilization_gini_std",
+                        float(gini_top1_h.std(unbiased=False).item()),
+                    )
             if num_sets > 1:
-                kl = (router_probs * torch.log(router_probs * float(num_sets) + 1e-8)).sum(dim=-1)
+                kl = (probs * torch.log(probs * float(num_sets) + 1e-8)).sum(dim=-1)
                 self._add("ausa/top1_vs_random_kl", float(kl.mean().item()))
+        else:
+            # Fallback when router probabilities are unavailable.
+            self._add("ausa/routing_entropy", float(entropy.item()))
+            self._add("ausa/routing_entropy_norm", float(entropy_norm.item()))
+            self._add("ausa/routing_gini", float(gini.item()))
+            self._add("ausa/routing_top1_prob_mean", float(top1.item()))
 
         if set_embeddings is not None:
             set_embeddings = set_embeddings.detach().to(torch.float32)

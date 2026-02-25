@@ -179,6 +179,21 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     d_phi = model.get("d_phi")
     if d_phi is not None:
         require(int(d_phi) > 0, "set_only: d_phi must be positive")
+    router_multihead = model.get("router_multihead", False)
+    require(isinstance(router_multihead, bool), "set_only: router_multihead must be a boolean")
+    token_mlp = model.get("token_mlp", {"enabled": True})
+    if isinstance(token_mlp, bool):
+        model["token_mlp"] = {"enabled": token_mlp}
+    elif isinstance(token_mlp, dict):
+        if "enabled" in token_mlp:
+            require(
+                isinstance(token_mlp.get("enabled"), bool),
+                "set_only: token_mlp.enabled must be a boolean",
+            )
+        else:
+            token_mlp["enabled"] = True
+    else:
+        raise ConfigError("set_only: token_mlp must be a bool or mapping")
 
     require(window_size <= seq_len, "set_only: window_size must be <= max_seq_len")
     require(stride <= window_size, "set_only: stride must be <= window_size")
@@ -234,6 +249,8 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     else:
         if router_topk is not None:
             _warn("router_topk is ignored for uniform router")
+        if router_multihead:
+            _warn("router_multihead is ignored when router_type=uniform")
     if router_topk == max_sets:
         _warn("router_topk == max_sets is equivalent to full softmax")
 

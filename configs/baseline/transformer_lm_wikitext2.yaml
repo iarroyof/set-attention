@@ -9,9 +9,9 @@ model:
   num_layers: 6
   dim_feedforward: 1536
   dropout: 0.1
-  attn_dropout: null
-  resid_dropout: null
-  ffn_dropout: null
+  attn_dropout: 0.1
+  resid_dropout: 0.1
+  ffn_dropout: 0.1
   max_seq_len: 512
 
 data:
@@ -20,6 +20,7 @@ data:
   seq_len: 512
 
 training:
+  seed: 0
   epochs: 10
   lr: 0.0003
   warmup_steps: 1000

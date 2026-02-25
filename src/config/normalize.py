@@ -72,5 +72,34 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if cross_attention is not None:
         model["cross_attention"] = cross_attention
 
+    # Keep split dropout fields explicit for auditability/comparability in logs.
+    dropout = model.get("dropout", 0.1)
+    if model.get("attn_dropout") is None:
+        model["attn_dropout"] = dropout
+    if model.get("resid_dropout") is None:
+        model["resid_dropout"] = dropout
+    if model.get("ffn_dropout") is None:
+        model["ffn_dropout"] = dropout
+
+    impl = model.get("implementation")
+    uses_set_only = impl in {
+        "set_only",
+        "encoder_set_only",
+        "decoder_set_only",
+        "cross_attention_set_only",
+        "encoder_set_decoder_baseline",
+        "encoder_baseline_decoder_set",
+    }
+    if uses_set_only or model.get("cross_attention") == "set_only":
+        # Set-only parity/ablation defaults.
+        model.setdefault("router_multihead", False)
+        token_mlp = model.get("token_mlp")
+        if token_mlp is None:
+            model["token_mlp"] = {"enabled": True}
+        elif isinstance(token_mlp, bool):
+            model["token_mlp"] = {"enabled": token_mlp}
+        elif isinstance(token_mlp, dict):
+            token_mlp.setdefault("enabled", True)
+
     cfg["model"] = model
     return cfg

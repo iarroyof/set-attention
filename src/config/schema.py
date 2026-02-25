@@ -54,6 +54,7 @@ SET_ONLY_KEYS = {
     "features",
     "router_type",
     "router_topk",
+    "router_multihead",
     "backend_params",
     "feature_mode",
     "feature_params",
@@ -63,6 +64,7 @@ SET_ONLY_KEYS = {
     "adapter_hidden_multiplier",
     "adapter_budget_fraction",
     "allow_token_token",
+    "token_mlp",
     "seq2seq",
     "causal",
 }
