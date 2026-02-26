@@ -21,6 +21,7 @@ class BaselineEncoderLayer(nn.Module):
         backend: str,
         backend_params: dict | None,
         max_seq_len: int,
+        causal: bool = True,
     ) -> None:
         super().__init__()
         attn_drop = attn_dropout if attn_dropout is not None else dropout
@@ -34,7 +35,7 @@ class BaselineEncoderLayer(nn.Module):
             backend=backend,
             backend_params=backend_params,
             max_seq_len=max_seq_len,
-            causal=False,
+            causal=causal,
             is_cross=False,
         )
         self.linear1 = nn.Linear(d_model, dim_feedforward)
@@ -82,6 +83,7 @@ class TransformerLM(nn.Module):
         attention_family: str = "dense",
         backend: str = "exact",
         backend_params: dict | None = None,
+        causal: bool = True,
     ) -> None:
         super().__init__()
         self.token_emb = nn.Embedding(vocab_size, d_model)
@@ -101,12 +103,14 @@ class TransformerLM(nn.Module):
                     backend=backend,
                     backend_params=backend_params,
                     max_seq_len=max_seq_len,
+                    causal=causal,
                 )
                 for _ in range(num_layers)
             ]
         )
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         self.max_seq_len = max_seq_len
+        self.causal = causal
         self.diagnostics = BaselineAttentionDiagnostics()
 
     def forward(

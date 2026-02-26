@@ -14,6 +14,7 @@ model:
   resid_dropout: 0.1
   ffn_dropout: 0.1
   max_seq_len: 512
+  causal: true
 
   window_size: 16
   stride: 8
@@ -45,3 +46,5 @@ training:
   epochs: 10
   lr: 0.0003
   warmup_steps: 1000
+  set_diversity_weight: 0.0
+  set_diversity_mode: position_contrastive

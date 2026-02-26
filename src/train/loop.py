@@ -5,7 +5,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from models.set_only.losses import set_diversity_loss
 
-LOSS_MODE='position_contrastive'
+DEFAULT_SET_DIVERSITY_MODE = "position_contrastive"
 
 
 def _grad_norm(model: nn.Module) -> float:
@@ -18,20 +18,27 @@ def _grad_norm(model: nn.Module) -> float:
     return total ** 0.5
 
 
-def _maybe_add_set_diversity_loss(model: nn.Module, loss: torch.Tensor) -> torch.Tensor:
+def _maybe_add_set_diversity_loss(
+    model: nn.Module,
+    loss: torch.Tensor,
+    weight: float = 0.0,
+    mode: str = DEFAULT_SET_DIVERSITY_MODE,
+) -> torch.Tensor:
+    if weight <= 0.0:
+        return loss
     if hasattr(model, "get_last_set_embeddings"):
         set_embs = model.get_last_set_embeddings()
         if set_embs is not None:
-            if LOSS_MODE != "position_contrastive":
-                loss = loss + 0.5 * set_diversity_loss(
-                    set_embs, mode=LOSS_MODE, target_similarity=0.3
+            if mode != "position_contrastive":
+                loss = loss + weight * set_diversity_loss(
+                    set_embs, mode=mode, target_similarity=0.3
                 )
             else:
                 num_sets = set_embs.shape[1]
                 set_positions = torch.arange(num_sets, device=set_embs.device)
-                loss = loss + 0.1 * set_diversity_loss(
+                loss = loss + weight * set_diversity_loss(
                     set_embs,
-                    mode=LOSS_MODE,
+                    mode=mode,
                     set_positions=set_positions,
                     margin=0.3,
                 )
@@ -84,6 +91,8 @@ def train_one_epoch(
     dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    set_diversity_weight: float = 0.0,
+    set_diversity_mode: str = DEFAULT_SET_DIVERSITY_MODE,
 ) -> dict:
     model.train()
     total_loss = 0.0
@@ -98,7 +107,12 @@ def train_one_epoch(
         loss = torch.nn.functional.cross_entropy(
             logits.view(-1, logits.size(-1)), labels.view(-1)
         )
-        loss = _maybe_add_set_diversity_loss(model, loss)
+        loss = _maybe_add_set_diversity_loss(
+            model,
+            loss,
+            weight=set_diversity_weight,
+            mode=set_diversity_mode,
+        )
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -141,6 +155,8 @@ def train_one_epoch_seq2seq(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     pad_id: int,
+    set_diversity_weight: float = 0.0,
+    set_diversity_mode: str = DEFAULT_SET_DIVERSITY_MODE,
 ) -> dict:
     model.train()
     total_loss = 0.0
@@ -161,7 +177,12 @@ def train_one_epoch_seq2seq(
             labels.reshape(-1),
             ignore_index=pad_id,
         )
-        loss = _maybe_add_set_diversity_loss(model, loss)
+        loss = _maybe_add_set_diversity_loss(
+            model,
+            loss,
+            weight=set_diversity_weight,
+            mode=set_diversity_mode,
+        )
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         _update_diagnostics(model)

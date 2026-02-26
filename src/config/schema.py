@@ -31,6 +31,7 @@ BASELINE_KEYS = {
     "resid_dropout",
     "ffn_dropout",
     "max_seq_len",
+    "causal",
     "seq2seq",
 }
 

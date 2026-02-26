@@ -72,6 +72,7 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
             attention_family=model_cfg.get("attention_family", "dense"),
             backend=model_cfg.get("backend", "exact"),
             backend_params=model_cfg.get("backend_params"),
+            causal=bool(model_cfg.get("causal", True)),
         )
     return SetOnlyLM(
         vocab_size=model_cfg["vocab_size"],
@@ -106,6 +107,7 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
         gamma=model_cfg.get("gamma", 1.0),
         beta=model_cfg.get("beta", 0.0),
         allow_token_token=bool(model_cfg.get("allow_token_token", False)),
+        causal=bool(model_cfg.get("causal", True)),
     )
 
 
@@ -274,6 +276,8 @@ def main() -> None:
     )
     logger.log_model_complexity(model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=float(cfg["training"]["lr"]))
+    set_diversity_weight = float(cfg["training"].get("set_diversity_weight", 0.0))
+    set_diversity_mode = str(cfg["training"].get("set_diversity_mode", "position_contrastive"))
 
     epochs = cfg["training"]["epochs"]
     try:
@@ -286,7 +290,13 @@ def main() -> None:
             logger.start_epoch(num_train_samples=num_samples or 0)
             if task == "seq2seq":
                 train_metrics = train_one_epoch_seq2seq(
-                    model, train_loader, optimizer, device, pad_id=vocab["pad_id"]
+                    model,
+                    train_loader,
+                    optimizer,
+                    device,
+                    pad_id=vocab["pad_id"],
+                    set_diversity_weight=set_diversity_weight,
+                    set_diversity_mode=set_diversity_mode,
                 )
                 eval_bundle = evaluate_seq2seq(
                     model,
@@ -303,7 +313,14 @@ def main() -> None:
                     val_metrics["bleu"] = bleu_score(eval_bundle["preds"], eval_bundle["refs"])
                     val_metrics["rougeL"] = rouge_l_f1(eval_bundle["preds"], eval_bundle["refs"])
             else:
-                train_metrics = train_one_epoch(model, train_loader, optimizer, device)
+                train_metrics = train_one_epoch(
+                    model,
+                    train_loader,
+                    optimizer,
+                    device,
+                    set_diversity_weight=set_diversity_weight,
+                    set_diversity_mode=set_diversity_mode,
+                )
                 val_metrics = evaluate(model, val_loader, device)
             set_diagnostics = model.get_diagnostics() if hasattr(model, "get_diagnostics") else None
             logger.log_epoch(epoch, train_metrics, val_metrics, set_diagnostics)
