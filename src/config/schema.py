@@ -48,6 +48,7 @@ SET_ONLY_KEYS = {
     "ffn_dropout",
     "max_seq_len",
     "pooling",
+    "pooling_multihead",
     "multiscale",
     "sig_gating",
     "d_phi",

@@ -88,6 +88,7 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
         max_seq_len=model_cfg["max_seq_len"],
         dim_feedforward=model_cfg.get("dim_feedforward"),
         pooling=model_cfg.get("pooling", "mean"),
+        pooling_multihead=bool(model_cfg.get("pooling_multihead", False)),
         multiscale=model_cfg.get("multiscale", False),
         sig_gating=model_cfg.get("sig_gating"),
         d_phi=model_cfg.get("d_phi"),

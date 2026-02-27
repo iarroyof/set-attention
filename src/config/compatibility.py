@@ -181,6 +181,8 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
         require(int(d_phi) > 0, "set_only: d_phi must be positive")
     router_multihead = model.get("router_multihead", False)
     require(isinstance(router_multihead, bool), "set_only: router_multihead must be a boolean")
+    pooling_multihead = model.get("pooling_multihead", False)
+    require(isinstance(pooling_multihead, bool), "set_only: pooling_multihead must be a boolean")
     token_mlp = model.get("token_mlp", {"enabled": True})
     if isinstance(token_mlp, bool):
         model["token_mlp"] = {"enabled": token_mlp}
@@ -204,6 +206,8 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     require(d_model % num_heads == 0, "set_only: d_model must be divisible by num_heads")
     d_head = d_model // num_heads
     require(d_head >= min_head_dim, "set_only: head dimension too small")
+    if pooling_multihead:
+        require(d_model % num_heads == 0, "set_only: pooling_multihead requires d_model divisible by num_heads")
 
     backend = model.get("backend")
     backend_params = model.get("backend_params") or {}

@@ -243,12 +243,16 @@ class ExperimentLogger:
         tags = list(dict.fromkeys([*auto_tags, *tags]))
         flat_cfg = dict(self.flat_cfg)
         flat_cfg["config_fingerprint"] = self.config_fingerprint
+        init_timeout = int(_get_cfg_value(self.cfg, "training.wandb_init_timeout", 180) or 180)
+        init_timeout = max(1, init_timeout)
+        wb_settings = wandb.Settings(init_timeout=init_timeout)
 
         if sweep_env:
             self.wandb = wandb.init(
                 project=project,
                 tags=tags,
                 reinit=True,
+                settings=wb_settings,
             )
             if self.wandb:
                 for key, value in flat_cfg.items():
@@ -260,6 +264,7 @@ class ExperimentLogger:
                 config=flat_cfg,
                 tags=tags,
                 reinit=True,
+                settings=wb_settings,
             )
         if self.wandb:
             wandb.define_metric("epoch")
@@ -275,6 +280,7 @@ class ExperimentLogger:
             "training.lr",
             "training.weight_decay",
             "training.warmup_steps",
+            "training.wandb_init_timeout",
             "training.precision",
             "training.grad_accum_steps",
             "training.clip_grad_norm",
@@ -308,6 +314,8 @@ class ExperimentLogger:
             "model.features.hashed_counts.fusion",
             "model.router_type",
             "model.router_topk",
+            "model.router_multihead",
+            "model.pooling_multihead",
             "model.d_model",
             "model.dim_feedforward",
             "model.num_layers",

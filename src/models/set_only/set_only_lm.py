@@ -40,6 +40,7 @@ class SetOnlyLM(nn.Module):
         max_seq_len: int = 512,
         dim_feedforward: int | None = None,
         pooling: str = "mean",
+        pooling_multihead: bool = False,
         multiscale: bool = False,
         sig_gating: dict | None = None,
         d_phi: int | None = None,
@@ -93,6 +94,7 @@ class SetOnlyLM(nn.Module):
         self.resid_dropout = resid_dropout if resid_dropout is not None else dropout
         self.ffn_dropout = ffn_dropout if ffn_dropout is not None else dropout
         self.router_multihead = bool(router_multihead)
+        self.pooling_multihead = bool(pooling_multihead)
         self.allow_token_token = bool(allow_token_token)
         self.causal = bool(causal)
         if isinstance(pooling, dict):
@@ -119,6 +121,8 @@ class SetOnlyLM(nn.Module):
                 learnable_alpha=bool(self.pooling_params.get("learnable_alpha", False)),
                 tiny_set_n=int(self.pooling_params.get("tiny_set_n", 3)),
                 isotropy_eps=float(self.pooling_params.get("isotropy_eps", 1e-4)),
+                pooling_multihead=self.pooling_multihead,
+                num_heads=num_heads,
             )
         self.multiscale = multiscale
         self.sig_gating = sig_gating or {}
@@ -196,6 +200,7 @@ class SetOnlyLM(nn.Module):
         print(
             {
                 "pooling": {"mode": self.pooling_mode, **self.pooling_params},
+                "pooling_multihead": self.pooling_multihead,
                 "sig_gating": self.sig_gating,
                 "d_phi": self.d_phi,
                 "geometry": {

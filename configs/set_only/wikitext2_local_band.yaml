@@ -23,6 +23,7 @@ model:
     mode: soft_trimmed_boltzmann
     tau: 0.1
     q: 0.85
+  pooling_multihead: false
 
   feature_mode: hashed_counts
   router_type: learned
