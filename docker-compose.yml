@@ -19,6 +19,7 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
       WANDB_API_KEY: "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"
+      PYTHONNOUSERSITE: "1"
     user: "${UID}:${GID}"
     volumes:
       # 1) Mount your repo so code edits persist (optional if you bake code into image)
