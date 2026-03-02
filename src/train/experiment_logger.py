@@ -278,6 +278,7 @@ class ExperimentLogger:
             "training.seed",
             "training.epochs",
             "training.lr",
+            "training.batch_size",
             "training.weight_decay",
             "training.warmup_steps",
             "training.wandb_init_timeout",
@@ -493,6 +494,13 @@ class ExperimentLogger:
                 continue
             if set_diagnostics and col in set_diagnostics:
                 row[col] = set_diagnostics[col]
+                continue
+            if col == "training.batch_size":
+                row[col] = _get_cfg_value(
+                    self.cfg,
+                    "training.batch_size",
+                    _get_cfg_value(self.cfg, "data.batch_size", "NA"),
+                )
                 continue
             row[col] = _get_cfg_value(self.cfg, col, "NA")
 
