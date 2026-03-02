@@ -57,6 +57,7 @@ SET_ONLY_KEYS = {
     "router_type",
     "router_topk",
     "router_multihead",
+    "router_temperature",
     "backend_params",
     "feature_mode",
     "feature_params",
@@ -121,6 +122,13 @@ def validate_config(cfg: dict) -> None:
         raise ConfigError("backend must be a supported backend")
     if model_cfg.get("router_type") is not None and model_cfg.get("router_type") not in {"uniform", "learned"}:
         raise ConfigError("router_type must be 'uniform' or 'learned'")
+    if model_cfg.get("router_temperature") is not None:
+        try:
+            router_temperature = float(model_cfg.get("router_temperature"))
+        except (TypeError, ValueError):
+            raise ConfigError("router_temperature must be a float > 0")
+        if router_temperature <= 0:
+            raise ConfigError("router_temperature must be > 0")
     if model_cfg.get("feature_mode") is not None and model_cfg.get("feature_mode", "geometry_only") not in {
         "geometry_only",
         "hashed_counts",

@@ -35,6 +35,7 @@ class SetOnlyCrossAttention(nn.Module):
         d_phi: Optional[int],
         gamma: float,
         beta: float,
+        router_temperature: float = 1.0,
     ) -> None:
         super().__init__()
         self.window_size = window_size
@@ -46,6 +47,7 @@ class SetOnlyCrossAttention(nn.Module):
         self.sig_gating = sig_gating or {}
         self.router_type = router_type
         self.router_topk = router_topk
+        self.router_temperature = float(router_temperature)
 
         if isinstance(pooling, dict):
             self.pooling_mode = pooling.get("mode", "mean")
@@ -112,6 +114,7 @@ class SetOnlyCrossAttention(nn.Module):
                 topk=router_topk,
                 restrict_to_sets=False,
             )
+            self.router.temperature.fill_(self.router_temperature)
         else:
             raise ValueError(f"Unknown router_type: {router_type}")
 

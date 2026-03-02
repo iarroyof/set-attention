@@ -97,6 +97,7 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
         router_type=model_cfg["router_type"],
         router_topk=model_cfg["router_topk"],
         router_multihead=bool(model_cfg.get("router_multihead", False)),
+        router_temperature=float(model_cfg.get("router_temperature", 1.0)),
         backend=model_cfg["backend"],
         backend_params=model_cfg.get("backend_params"),
         feature_mode=model_cfg.get("feature_mode", "geometry_only"),

@@ -49,6 +49,7 @@ class SetOnlyLM(nn.Module):
         router_type: str = "uniform",
         router_topk: int = 0,
         router_multihead: bool = False,
+        router_temperature: float = 1.0,
         backend: str = "exact",
         backend_params: dict | None = None,
         feature_mode: str = "geometry_only",
@@ -94,6 +95,7 @@ class SetOnlyLM(nn.Module):
         self.resid_dropout = resid_dropout if resid_dropout is not None else dropout
         self.ffn_dropout = ffn_dropout if ffn_dropout is not None else dropout
         self.router_multihead = bool(router_multihead)
+        self.router_temperature = float(router_temperature)
         self.pooling_multihead = bool(pooling_multihead)
         self.allow_token_token = bool(allow_token_token)
         self.causal = bool(causal)
@@ -209,6 +211,7 @@ class SetOnlyLM(nn.Module):
                     "apply_in_phi_attn": self.geom_apply_in_phi,
                 },
                 "router_multihead": self.router_multihead,
+                "router_temperature": self.router_temperature,
                 "token_mlp": {"enabled": self.token_mlp_enabled},
             }
         )
@@ -290,6 +293,7 @@ class SetOnlyLM(nn.Module):
                 topk=router_topk,
                 multihead=self.router_multihead,
             )
+            self.router.temperature.fill_(self.router_temperature)
         else:
             raise ValueError(f"Unknown router_type: {router_type}")
 

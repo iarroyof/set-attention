@@ -316,6 +316,7 @@ class ExperimentLogger:
             "model.router_type",
             "model.router_topk",
             "model.router_multihead",
+            "model.router_temperature",
             "model.pooling_multihead",
             "model.d_model",
             "model.dim_feedforward",

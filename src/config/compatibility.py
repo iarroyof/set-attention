@@ -246,6 +246,12 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     router_type = model.get("router_type", "uniform")
     router_topk = model.get("router_topk", None)
+    router_temperature = model.get("router_temperature", 1.0)
+    require(
+        isinstance(router_temperature, (int, float)),
+        "set_only: router_temperature must be numeric",
+    )
+    require(float(router_temperature) > 0.0, "set_only: router_temperature must be > 0")
     if router_type == "learned":
         require(router_topk is not None, "learned router requires router_topk")
         require(router_topk >= 1, "learned router_topk must be >= 1")

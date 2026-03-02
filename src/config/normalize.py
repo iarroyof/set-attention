@@ -93,6 +93,7 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if uses_set_only or model.get("cross_attention") == "set_only":
         # Set-only parity/ablation defaults.
         model.setdefault("router_multihead", False)
+        model.setdefault("router_temperature", 1.0)
         model.setdefault("pooling_multihead", False)
         token_mlp = model.get("token_mlp")
         if token_mlp is None:
