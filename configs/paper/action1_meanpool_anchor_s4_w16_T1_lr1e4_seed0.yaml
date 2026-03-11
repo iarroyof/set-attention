@@ -1,0 +1,51 @@
+model:
+  implementation: set_only
+  attention_family: dense
+  backend: exact
+  architecture: transformer_lm
+
+  vocab_size: 0
+  d_model: 384
+  num_heads: 8
+  num_layers: 6
+  dim_feedforward: 1536
+
+  dropout: 0.1
+  attn_dropout: 0.1
+  resid_dropout: 0.1
+  ffn_dropout: 0.1
+
+  max_seq_len: 512
+  causal: true
+
+  window_size: 16
+  stride: 4
+
+  pooling:
+    mode: mean
+
+  pooling_multihead: false
+
+  feature_mode: hashed_counts
+
+  router_type: learned
+  router_topk: 16
+  router_multihead: true
+  router_temperature: 1.0
+
+  token_mlp:
+    enabled: false
+
+data:
+  dataset: wikitext2
+  batch_size: 16
+  seq_len: 512
+
+training:
+  seed: 0
+  epochs: 10
+  lr: 1.0e-4
+  warmup_steps: 1000
+  set_diversity_weight: 0.0
+  set_diversity_mode: position_contrastive
+  wandb_init_timeout: 180
