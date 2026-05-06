@@ -1,0 +1,576 @@
+% Drop-in notation cleanup for the ICML 2026 Set Attention manuscript.
+% This file does not modify the paper archive directly; it provides
+% replacement text/equations for the notation-heavy parts of Sections 4 and 5.
+
+\section*{Notation Cleanup Patch}
+
+\subsection*{Global Conventions}
+
+The current draft mixes batched tensors and single-sample objects under the same
+bold uppercase symbols. To remove this ambiguity, use the following convention
+throughout:
+\begin{itemize}
+    \item \textbf{Batched tensors} use bold uppercase letters, for example
+    \[
+    \mathbf H^{(0)} \in \mathbb R^{B\times L\times D},
+    \qquad
+    \mathbf S^{(\ell)} \in \mathbb R^{B\times M\times D},
+    \qquad
+    \mathbf R \in \mathbb R^{B\times L\times D}.
+    \]
+    \item \textbf{Single-sample objects} use the same letter without boldface:
+    \[
+    H^{(0)} \in \mathbb R^{L\times D},
+    \qquad
+    S^{(\ell)} \in \mathbb R^{M\times D},
+    \qquad
+    R \in \mathbb R^{L\times D}.
+    \]
+    \item Routing heads are indexed by
+    \[
+    u \in \{1,\dots,H_r\},
+    \]
+    whereas set-attention heads are indexed by
+    \[
+    h \in \{1,\dots,H_a\}.
+    \]
+    Do not reuse the same head index for both modules.
+    \item Use
+    \[
+    V_{\mathrm{vocab}} \in \mathbb N
+    \]
+    for vocabulary size. Reserve
+    \[
+    [L] := \{1,\dots,L\}
+    \]
+    for the token-position index set.
+    \item For a finite set \(A\), denote the probability simplex on \(A\) by
+    \[
+    \Delta(A)
+    :=
+    \left\{p:A\to[0,1]\ :\ \sum_{a\in A} p(a)=1\right\}.
+    \]
+    This avoids overloading \(\mathcal P\), which is already used for the pooling operator.
+    \item Use
+    \[
+    \delta_a
+    \]
+    to denote the Dirac mass concentrated at \(a\), and define this inline the
+    first time it appears.
+    \item Avoid the notation \(x_{\cdot}\) unless it is explicitly defined.
+    When the whole candidate-indexed vector is needed, write
+    \[
+    (x_m)_{m\in A}
+    \]
+    or define the corresponding function \(x:A\to\mathbb R\).
+\end{itemize}
+
+\subsection*{Replacement for Basic Notation and Section 4 Setup}
+
+\paragraph{Sequence, representation, and architecture parameters.}
+Let
+\begin{itemize}
+    \item \(B \in \mathbb N\) denote the batch size;
+    \item \(L \in \mathbb N\) denote the sequence length;
+    \item \(L_{\max} \in \mathbb N\) denote the maximum sequence length supported by the learned positional embedding table;
+    \item \(D \in \mathbb N\) denote the model dimension;
+    \item \(K \in \mathbb N\) denote the number of set-attention blocks;
+    \item \(H_r \in \mathbb N\) denote the number of routing heads;
+    \item \(d_r = D/H_r\) denote the routing-head dimension;
+    \item \(H_a \in \mathbb N\) denote the number of set-attention heads;
+    \item \(d_a = D/H_a\) denote the set-attention-head dimension;
+    \item \(d_{\mathrm{ff}} \in \mathbb N\) denote the hidden width of the set-level feedforward network;
+    \item \(V_{\mathrm{vocab}} \in \mathbb N\) denote the vocabulary size.
+\end{itemize}
+
+\paragraph{Embedding parameters.}
+The token and positional embedding tables are
+\[
+E \in \mathbb R^{V_{\mathrm{vocab}}\times D},
+\qquad
+P \in \mathbb R^{L_{\max}\times D}.
+\]
+
+\paragraph{Input sequence and batched token states.}
+For a single sample, the input sequence is
+\[
+x=(x_1,\dots,x_L)\in\{1,\dots,V_{\mathrm{vocab}}\}^L.
+\]
+Its initial token-state matrix is
+\[
+H^{(0)} \in \mathbb R^{L\times D},
+\qquad
+H^{(0)}_{t,:}=E_{x_t,:}+P_{t,:}.
+\]
+At the batch level,
+\[
+\mathbf H^{(0)} \in \mathbb R^{B\times L\times D}.
+\]
+If the optional token MLP is enabled, it acts pointwise on the last dimension:
+\[
+H^{(0)} \leftarrow \operatorname{TokenMLP}(H^{(0)}),
+\qquad
+\operatorname{TokenMLP}(h)=W_2\,\operatorname{GELU}(W_1 h),
+\]
+with
+\[
+W_1\in\mathbb R^{d_{\mathrm{ff}}\times D},
+\qquad
+W_2\in\mathbb R^{D\times d_{\mathrm{ff}}}.
+\]
+
+\subsection*{Replacement for Bank Topology}
+
+\paragraph{Set bank.}
+The implementation creates one set start every \(s\) positions, including
+trailing sets near the sequence end. Therefore the number of sets is
+\[
+M=\left\lceil \frac{L}{s}\right\rceil.
+\]
+For each set index \(m\in\{1,\dots,M\}\), define its start position
+\[
+a_m = 1 + (m-1)s
+\]
+and the corresponding set
+\[
+S_m
+:=
+\{\, t\in[L] : a_m \le t \le \min(a_m+w-1,L)\,\}
+\subseteq [L],
+\qquad
+[L]=\{1,\dots,L\}.
+\]
+Hence the bank is
+\[
+\mathcal S=\{S_1,\dots,S_M\}\subseteq 2^{[L]}.
+\]
+
+\paragraph{Incidence structure and candidate family.}
+The bank topology is the finite hypergraph
+\[
+\mathcal H_{L,w,s}=([L],\mathcal S).
+\]
+Its incidence matrix is
+\[
+A\in\{0,1\}^{L\times M},
+\qquad
+A_{t,m}=\mathbbm 1_{S_m}(t).
+\]
+For each token position \(t\in[L]\), define the candidate family
+\[
+\mathcal C_t
+:=
+\{m\in\{1,\dots,M\}:t\in S_m\}
+=
+\{m:A_{t,m}=1\},
+\]
+with candidate count
+\[
+C_t := |\mathcal C_t|.
+\]
+
+\subsection*{Replacement for Pooling}
+
+\paragraph{Single-sample token-state restriction to a set.}
+For each set \(S_m\), define
+\[
+H^{(m)}:S_m\to\mathbb R^D,
+\qquad
+t\mapsto H^{(0)}_{t,:}.
+\]
+
+\paragraph{Mean pooling case.}
+If mean pooling is used, then
+\[
+\omega_{t,m}=\frac{1}{|S_m|}
+\qquad \text{for } t\in S_m,
+\]
+and the pooled set state is
+\[
+S_m^{(0)}
+=
+\frac{1}{|S_m|}\sum_{t\in S_m} H^{(0)}_{t,:}.
+\]
+
+\paragraph{Soft-trimmed Boltzmann pooling case.}
+If soft-trimmed Boltzmann pooling is used, define the set mean
+\[
+\mu_m
+:=
+\frac{1}{|S_m|}\sum_{t\in S_m} H^{(0)}_{t,:},
+\]
+the normalized squared deviations
+\[
+\delta_{t,m}
+:=
+\frac{\|H^{(0)}_{t,:}-\mu_m\|_2^2}{D},
+\qquad t\in S_m,
+\]
+the quantile threshold
+\[
+\theta_m := \operatorname{Quantile}_q\bigl(\{\delta_{t,m}:t\in S_m\}\bigr),
+\]
+and the soft gate
+\[
+g_{t,m}
+:=
+\sigma\!\bigl(\alpha(\theta_m-\delta_{t,m})\bigr),
+\qquad
+\sigma(u)=\frac{1}{1+e^{-u}}.
+\]
+Then the pooling logits and weights are
+\[
+\ell^{\mathrm{pool}}_{t,m}
+:=
+-\frac{\delta_{t,m}}{\tau_{\mathrm{pool}}}
++ \log(g_{t,m}+\varepsilon_0),
+\qquad
+\varepsilon_0=10^{-8},
+\]
+\[
+\omega_{t,m}
+:=
+\frac{\exp(\ell^{\mathrm{pool}}_{t,m})}
+{\sum_{u\in S_m}\exp(\ell^{\mathrm{pool}}_{u,m})},
+\qquad t\in S_m.
+\]
+These weights define a probability law on \(S_m\),
+\[
+\mathbb P_m \in \Delta(S_m),
+\qquad
+\mathbb P_m(\{t\})=\omega_{t,m},
+\]
+and the pooled set state is
+\[
+S_m^{(0)}
+=
+\sum_{t\in S_m}\omega_{t,m}H^{(0)}_{t,:}.
+\]
+
+\paragraph{Set-state matrices and tensors.}
+For one sample,
+\[
+S^{(0)} \in \mathbb R^{M\times D},
+\qquad
+S^{(0)}_{m,:}=S_m^{(0)}.
+\]
+At batch level,
+\[
+\mathbf S^{(0)} \in \mathbb R^{B\times M\times D}.
+\]
+
+\subsection*{Replacement for Set Processing}
+
+\paragraph{Set-attention block states.}
+For one sample,
+\[
+S^{(\ell)}\in\mathbb R^{M\times D},
+\qquad
+\ell\in\{0,1,\dots,K\}.
+\]
+At batch level,
+\[
+\mathbf S^{(\ell)}\in\mathbb R^{B\times M\times D}.
+\]
+
+\paragraph{Causal and structural masking.}
+Define the causal set mask
+\[
+C^{\mathrm{causal}}\in\{0,1\}^{M\times M},
+\qquad
+C^{\mathrm{causal}}_{i,j}=
+\begin{cases}
+1,& i\ge j,\\
+0,& i<j.
+\end{cases}
+\]
+If additional structural masks are used, absorb them into a generic mask term
+\[
+M_{i,j}\in\{0,-\infty\}.
+\]
+
+\paragraph{Multi-head set attention with bias terms.}
+For each set-attention head \(h\in\{1,\dots,H_a\}\),
+\[
+Q^{(h)} = S W_Q^{(h)} \in \mathbb R^{M\times d_a},
+\qquad
+K^{(h)} = S W_K^{(h)} \in \mathbb R^{M\times d_a},
+\qquad
+V^{(h)} = S W_V^{(h)} \in \mathbb R^{M\times d_a},
+\]
+with
+\[
+W_Q^{(h)},W_K^{(h)},W_V^{(h)}\in\mathbb R^{D\times d_a}.
+\]
+The implemented score matrix is
+\[
+\Sigma^{(h)}_{i,j}
+=
+\frac{\langle Q^{(h)}_{i,:},K^{(h)}_{j,:}\rangle}{\sqrt{d_a}}
++ G_{i,j}
++ B^{(h)}_{i,j}
++ M_{i,j},
+\]
+where
+\begin{itemize}
+    \item \(G_{i,j}\) is the geometry bias term;
+    \item \(B_{i,j}^{(h)}\) is the per-head content bias term induced by the feature adapter;
+    \item \(M_{i,j}\) is the masking term, equal to \(0\) on allowed pairs and \(-\infty\) otherwise.
+\end{itemize}
+Then
+\[
+A^{(h)}=\operatorname{softmax}_j(\Sigma^{(h)})\in\mathbb R^{M\times M},
+\qquad
+O^{(h)}=A^{(h)}V^{(h)}\in\mathbb R^{M\times d_a}.
+\]
+The multi-head output is
+\[
+\operatorname{SetAttention}(S)
+=
+[O^{(1)};\dots;O^{(H_a)}]W_O,
+\qquad
+W_O\in\mathbb R^{D\times D}.
+\]
+
+\paragraph{Set-level feedforward network.}
+For a generic set-state vector \(s\in\mathbb R^D\),
+\[
+\operatorname{FFN}(s)=W_2\,\operatorname{GELU}(W_1 s),
+\qquad
+W_1\in\mathbb R^{d_{\mathrm{ff}}\times D},
+\quad
+W_2\in\mathbb R^{D\times d_{\mathrm{ff}}}.
+\]
+
+\paragraph{Processed set states.}
+For one sample,
+\[
+S^{(K)}\in\mathbb R^{M\times D}.
+\]
+At batch level,
+\[
+\mathbf S^{(K)}\in\mathbb R^{B\times M\times D}.
+\]
+The samplewise set-processing operator is
+\[
+\Phi_{\mathrm{set}}:\mathbb R^{M\times D}\to\mathbb R^{M\times D},
+\qquad
+S^{(K)}=\Phi_{\mathrm{set}}(S^{(0)}).
+\]
+
+\subsection*{Replacement for Multi-Head Routing}
+
+\paragraph{Router descriptors and routing logits.}
+For each token \(t\in\{1,\dots,L\}\) and routing head \(u\in\{1,\dots,H_r\}\), let
+\[
+g_t^{(u)}:\mathcal C_t\to\mathbb R,
+\qquad
+m\mapsto g_{t,m}^{(u)},
+\]
+denote the raw routing logit function on the candidate family \(\mathcal C_t\).
+If top-\(k\) routing is used, define the surviving candidate subset
+\[
+\mathcal C_t^{(u,k)}\subseteq \mathcal C_t.
+\]
+Then the masked logits are
+\[
+\widetilde g_{t,m}^{(u)}
+=
+\begin{cases}
+g_{t,m}^{(u)},& m\in \mathcal C_t^{(u,k)},\\
+-\infty,& m\notin \mathcal C_t^{(u,k)}.
+\end{cases}
+\]
+This eliminates the ambiguous notation \(\widetilde g_{t,\cdot}^{(u)}\).
+
+\paragraph{Routing distributions.}
+For each token \(t\) and routing head \(u\), define the routing law
+\[
+\mathbb Q_t^{(u)}\in\Delta(\mathcal C_t)
+\]
+by
+\[
+\pi_{t,m}^{(u)}
+:=
+\mathbb Q_t^{(u)}(\{m\})
+=
+\frac{\exp(\widetilde g_{t,m}^{(u)}/\tau_r^{\mathrm{eff}})}
+{\sum_{j=1}^{M}\exp(\widetilde g_{t,j}^{(u)}/\tau_r^{\mathrm{eff}})}.
+\]
+
+\paragraph{Headwise routed token states.}
+Split each processed set state as
+\[
+S_m^{(K)}
+=
+[S_m^{(K,1)};\dots;S_m^{(K,H_r)}],
+\qquad
+S_m^{(K,u)}\in\mathbb R^{d_r}.
+\]
+Then the routed head-subvector is
+\[
+r_t^{(u)}
+=
+\sum_{m=1}^M \pi_{t,m}^{(u)}S_m^{(K,u)}
+\in\mathbb R^{d_r},
+\]
+and the routed token state is
+\[
+r_t
+=
+\operatorname{Concat}(r_t^{(1)},\dots,r_t^{(H_r)})
+\in\mathbb R^D.
+\]
+Collecting all tokens yields
+\[
+R\in\mathbb R^{L\times D},
+\qquad
+\mathbf R\in\mathbb R^{B\times L\times D}.
+\]
+
+\paragraph{Aggregated routing law.}
+Define
+\[
+\bar\pi_{t,m}
+:=
+\frac{1}{H_r}\sum_{u=1}^{H_r}\pi_{t,m}^{(u)},
+\qquad
+\bar{\mathbb Q}_t\in \Delta(\mathcal C_t),
+\qquad
+\bar{\mathbb Q}_t(\{m\})=\bar\pi_{t,m}.
+\]
+
+\paragraph{Routing operator.}
+The samplewise routing operator is
+\[
+\mathcal R_{H_r,\tau_r,\mathcal H,k}:\mathbb R^{M\times D}\to\mathbb R^{L\times D},
+\qquad
+R=\mathcal R_{H_r,\tau_r,\mathcal H,k}(S^{(K)}).
+\]
+
+\subsection*{Replacement for the LM Head and Full Pipeline}
+
+\paragraph{Readout.}
+The vocabulary logits are
+\[
+Y = R W_{\mathrm{lm}}^\top + b_{\mathrm{lm}}
+\in \mathbb R^{L\times V_{\mathrm{vocab}}},
+\]
+with
+\[
+W_{\mathrm{lm}}\in\mathbb R^{V_{\mathrm{vocab}}\times D},
+\qquad
+b_{\mathrm{lm}}\in\mathbb R^{V_{\mathrm{vocab}}}.
+\]
+At batch level,
+\[
+\mathbf Y\in\mathbb R^{B\times L\times V_{\mathrm{vocab}}}.
+\]
+
+\paragraph{Pipeline summary.}
+For one sample,
+\[
+x
+\xrightarrow{\mathrm{Embed}}
+H^{(0)}
+\xrightarrow{\mathcal P}
+S^{(0)}
+\xrightarrow{\Phi_{\mathrm{set}}}
+S^{(K)}
+\xrightarrow{\mathcal R}
+R
+\xrightarrow{\mathrm{LM\ Head}}
+Y.
+\]
+
+\subsection*{Targeted Fixes for the Theory Section}
+
+\paragraph{Replace ambiguous head indices.}
+Whenever a theorem currently says ``router head \(r\)'', change the routing-head
+index to \(u\). Keep \(h\) exclusively for set-attention heads.
+
+\paragraph{Replace \( \widetilde g_{t,\cdot}^{(u)} \).}
+In all entropy and variance expressions, replace
+\[
+\mathbb E_{\mathbb Q_t^{(u)}}[\widetilde g_{t,\cdot}^{(u)}]
+\]
+by
+\[
+\mathbb E_{m\sim\mathbb Q_t^{(u)}}[\widetilde g_{t,m}^{(u)}],
+\]
+and replace
+\[
+\operatorname{Var}_{\mathbb Q_t^{(u)}}(\widetilde g_{t,\cdot}^{(u)})
+\]
+by
+\[
+\operatorname{Var}_{m\sim\mathbb Q_t^{(u)}}(\widetilde g_{t,m}^{(u)}).
+\]
+
+\paragraph{Replace \( \pi_{t,\cdot}^{(u)} \).}
+In strict-inclusion arguments, replace
+\[
+\pi_{t,\cdot}^{(1)}=\delta_a,
+\qquad
+\pi_{t,\cdot}^{(2)}=\delta_b
+\]
+by
+\[
+\mathbb Q_t^{(1)}=\delta_a,
+\qquad
+\mathbb Q_t^{(2)}=\delta_b,
+\]
+where \(\delta_a\) and \(\delta_b\) are Dirac measures on the candidate family.
+
+\paragraph{Use one entropy notation.}
+Choose one notation and keep it everywhere. A low-friction option is
+\[
+H(\mathbb Q_t^{(u)})
+\]
+for entropy in theory and
+\[
+\overline H_t
+\]
+or
+\[
+H_{\mathrm{agg}},\ H_{\mathrm{head}}
+\]
+for aggregates. Do not mix \(H\), \(\mathcal E\), and \(\mathcal H\) for the
+same quantity family.
+
+\paragraph{Define KL and JS explicitly.}
+Before using Jensen--Shannon divergence, add
+\[
+\operatorname{KL}(p\|q)
+:=
+\sum_{a\in A} p(a)\log\frac{p(a)}{q(a)},
+\]
+for probability laws \(p,q\in\Delta(A)\) with \(p\) absolutely continuous with
+respect to \(q\), and define \(\operatorname{JS}\) in terms of \(\operatorname{KL}\).
+
+\paragraph{Fix the Jacobian statement.}
+In the Jacobian sandwich proposition, replace ``smallest eigenvalues'' by
+``smallest singular values''.
+
+\paragraph{Fix normalized effective support.}
+Replace
+\[
+\rho_{\mathrm{eff}}^{(m)}=\frac{n_{\mathrm{eff}}^{(m)}}{w}
+\]
+by
+\[
+\rho_{\mathrm{eff}}^{(m)}=\frac{n_{\mathrm{eff}}^{(m)}}{|S_m|}.
+\]
+If a long-sequence interior approximation is desired, state separately that
+\[
+|S_m|=w
+\]
+for interior, non-truncated sets.
+
+\paragraph{Clarify the readout loss notation.}
+If \(\mathcal L\) is used both as a scalar and as a functional, replace the
+functional version by
+\[
+\mathscr L(\cdot)
+\]
+and reserve \(\mathcal L\) for the realized scalar loss value.

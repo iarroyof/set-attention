@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd ~/set-attention
+mkdir -p configs/paper_complements logs out/paper_complements
+
+cat > configs/paper_complements/family_dense_exact.yaml <<'YAML'
+task: lm
+
+data:
+  dataset: wikitext2
+  seq_len: 512
+  batch_size: 16
+
+training:
+  seed: 0
+  lr: 1e-4
+  epochs: 10
+  warmup_steps: 1000
+  weight_decay: null
+  precision: null
+  grad_accum_steps: null
+  clip_grad_norm: null
+  set_diversity_weight: 0.0
+  set_diversity_mode: position_contrastive
+  wandb_init_timeout: 180
+
+model:
+  implementation: set_only
+  attention_family: dense
+  backend: exact
+  architecture: transformer_lm
+  vocab_size: 76618
+  d_model: 384
+  num_layers: 6
+  num_heads: 8
+  dim_feedforward: 1536
+  dropout: 0.1
+  attn_dropout: 0.1
+  resid_dropout: 0.1
+  ffn_dropout: 0.1
+  max_seq_len: 512
+  causal: true
+
+  feature_mode: hashed_counts
+  router_type: learned
+  router_topk: 16
+  router_multihead: true
+  pooling_multihead: false
+  token_mlp:
+    enabled: false
+
+  window_size: 16
+  stride: 8
+  router_temperature: 1.0
+
+  pooling:
+    mode: soft_trimmed_boltzmann
+    tau: 0.1
+    q: 0.85
+
+logging:
+  wandb:
+    enable: true
+    project: set-attention
+YAML
+
+cat > configs/paper_complements/family_sparse_local_band.yaml <<'YAML'
+task: lm
+
+data:
+  dataset: wikitext2
+  seq_len: 512
+  batch_size: 16
+
+training:
+  seed: 0
+  lr: 1e-4
+  epochs: 10
+  warmup_steps: 1000
+  weight_decay: null
+  precision: null
+  grad_accum_steps: null
+  clip_grad_norm: null
+  set_diversity_weight: 0.0
+  set_diversity_mode: position_contrastive
+  wandb_init_timeout: 180
+
+model:
+  implementation: set_only
+  attention_family: sparse
+  backend: local_band
+  architecture: transformer_lm
+  vocab_size: 76618
+  d_model: 384
+  num_layers: 6
+  num_heads: 8
+  dim_feedforward: 1536
+  dropout: 0.1
+  attn_dropout: 0.1
+  resid_dropout: 0.1
+  ffn_dropout: 0.1
+  max_seq_len: 512
+  causal: true
+
+  feature_mode: hashed_counts
+  router_type: learned
+  router_topk: 16
+  router_multihead: true
+  pooling_multihead: false
+  token_mlp:
+    enabled: false
+
+  window_size: 16
+  stride: 8
+  router_temperature: 1.0
+
+  backend_params:
+    radius: 4
+
+  pooling:
+    mode: soft_trimmed_boltzmann
+    tau: 0.1
+    q: 0.85
+
+logging:
+  wandb:
+    enable: true
+    project: set-attention
+YAML
+
+cat > configs/paper_complements/family_linear_landmark.yaml <<'YAML'
+task: lm
+
+data:
+  dataset: wikitext2
+  seq_len: 512
+  batch_size: 16
+
+training:
+  seed: 0
+  lr: 1e-4
+  epochs: 10
+  warmup_steps: 1000
+  weight_decay: null
+  precision: null
+  grad_accum_steps: null
+  clip_grad_norm: null
+  set_diversity_weight: 0.0
+  set_diversity_mode: position_contrastive
+  wandb_init_timeout: 180
+
+model:
+  implementation: set_only
+  attention_family: linear
+  backend: landmark
+  architecture: transformer_lm
+  vocab_size: 76618
+  d_model: 384
+  num_layers: 6
+  num_heads: 8
+  dim_feedforward: 1536
+  dropout: 0.1
+  attn_dropout: 0.1
+  resid_dropout: 0.1
+  ffn_dropout: 0.1
+  max_seq_len: 512
+  causal: true
+
+  feature_mode: hashed_counts
+  router_type: learned
+  router_topk: 16
+  router_multihead: true
+  pooling_multihead: false
+  token_mlp:
+    enabled: false
+
+  window_size: 16
+  stride: 8
+  router_temperature: 1.0
+
+  backend_params:
+    num_landmarks: 24
+
+  pooling:
+    mode: soft_trimmed_boltzmann
+    tau: 0.1
+    q: 0.85
+
+logging:
+  wandb:
+    enable: true
+    project: set-attention
+YAML
+
+echo "Wrote base family yamls to configs/paper_complements/"

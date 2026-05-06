@@ -110,4 +110,9 @@ stage_*.sh
 !src/data/**
 !src/train/
 !src/train/**
+
+# Keep source exceptions above from re-including Python caches.
+__pycache__/
+**/__pycache__/
+*.py[cod]
 .local/
