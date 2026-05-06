@@ -54,6 +54,19 @@ Semantics:
 - Current routing over all containing sets.
 - Must be explicitly labeled non-causal when used in AR contexts.
 
+### Our model would be comparable to token-level causal LM only if you verify one of these:
+
+- Causal pooling: for token t, each set contributing to its prediction excludes tokens >t
+- Causal bank construction: each set is truncated causally relative to the prediction point
+- Prefix-time recomputation: set states are recomputed from prefixes only
+- Equivalent proof: a formal argument that the current routing/pooling pipeline cannot leak future token information to token t
+
+Without one of those, I would not claim fairness against standard token-causal baselines.
+
+Analyze the problem and suggest the best option (not necessarily limited to the Branches bellow) that optimizes simultaneously efficiency (time and spatial complexity), expressivity (prove mathematically that under the full current contex conditions the approach will not significantly loss information with respect to the current future-leaking model) ease to integrate to our existing implementation.
+
+Meanwhile the following are options quickly suggested.
+
 ### Branch 1b: End-Aligned Causal Bank
 
 This is the likely strongest defensible path if we want to preserve efficiency.
