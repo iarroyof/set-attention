@@ -33,8 +33,8 @@ Current behavior:
 - `Bank.pool()` pools all valid tokens in each set with only padding masks.
 - `token_to_sets` includes every set containing token `t`.
 - `SetOnlyLM.causal=True` only applies an inter-set causal mask after pooling.
-- `LearnedRouter` and `UniformRouter` route over `token_to_sets` without enforcing $\max S_m \le t$.
-- WikiText-2 labels are next-token shifted, but this does not prevent leakage because $z_t$ can already contain future input tokens through pooled set states.
+- `LearnedRouter` and `UniformRouter` route over `token_to_sets` without enforcing `max S_m <= t`.
+- WikiText-2 labels are next-token shifted, but this does not prevent leakage because `z_t` can already contain future input tokens through pooled set states.
 
 Therefore:
 - Current AR LM perplexity claims are not causally valid.
@@ -69,10 +69,10 @@ Semantics:
 
 ### Our model would be comparable to token-level causal LM only if you verify one of these:
 
-- Causal pooling: for token $t$, each set contributing to its prediction excludes tokens $>t$.
+- Causal pooling: for token `t`, each set contributing to its prediction excludes tokens `> t`.
 - Causal bank construction: each set is truncated causally relative to the prediction point
 - Prefix-time recomputation: set states are recomputed from prefixes only
-- Equivalent proof: a formal argument that the current routing/pooling pipeline cannot leak future token information to token $t$.
+- Equivalent proof: a formal argument that the current routing/pooling pipeline cannot leak future token information to token `t`.
 
 Without one of those, I would not claim fairness against standard token-causal baselines.
 
@@ -111,23 +111,21 @@ Required implementation:
 - Add explicit tests that no token representation depends on future tokens.
 
 Paper math:
-$$
-\mathcal{C}_t^-=\{m:\max S_m\le t\},
-\qquad
-z_t^{(u)}=\sum_{m\in\mathcal{C}_t^-}\pi_{t,m}^{(u)}\tilde{s}_m^{(u)}.
-$$
+```text
+C_t^- = {m : max S_m <= t},
+z_t^(u) = sum_{m in C_t^-} pi_{t,m}^(u) * s_tilde_m^(u).
+```
 
 ### Branch 1a: Causal Prefix Pooling
 
 This is the cleanest semantic fix but likely weakens the efficiency story.
 
 Semantics:
-$$
+```text
 s_{m,t}^{(0)}
 =
-\sum_{u\in S_m,\ u\le t}
-\omega_{u,m,t}h_u^{(0)}.
-$$
+sum_{u in S_m, u <= t} omega_{u,m,t} h_u^{(0)}.
+```
 
 Implementation implications:
 - Pooling becomes token-conditioned.
