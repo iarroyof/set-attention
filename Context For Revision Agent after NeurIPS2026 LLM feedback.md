@@ -17,6 +17,40 @@ Access and credentials:
   - blue-demon dev copy: `blue-demon:~/set-attention`.
 - Use Git for tracked source files. Use provenance-preserving artifact sync for ignored generated outputs under `out/` only when those artifacts are needed across machines.
 
+Blue-demon experiment environment:
+- SSH target: `iarroyof@192.168.241.149`, repo path `~/set-attention`.
+- The host repo is the Docker Compose control directory. Do not run experiment Python with host `/usr/bin/python3`; it may not have `torch` installed.
+- Run all model tests, smoke checks, and experiments inside the Docker Compose service `set-attention`.
+- Verified runtime:
+  - Compose service: `set-attention`
+  - Container working directory: `/workspace`
+  - Python inside container: `/usr/bin/python`
+  - Python version: `3.11.0rc1`
+  - PyTorch: `2.5.1+cu124`
+  - CUDA available: yes
+  - GPU count: 2
+  - GPU model: NVIDIA GeForce RTX 4090
+- Use this command pattern for Python checks:
+```bash
+sshpass -f ~/.ssh/.sshpass ssh iarroyof@192.168.241.149 \
+  'cd ~/set-attention && docker compose exec -T set-attention python - <<PY
+import torch
+print(torch.__version__, torch.cuda.is_available(), torch.cuda.device_count())
+PY'
+```
+- Use this command pattern for experiments:
+```bash
+sshpass -f ~/.ssh/.sshpass ssh iarroyof@192.168.241.149 \
+  'cd ~/set-attention && docker compose exec -T \
+    -e CUDA_VISIBLE_DEVICES=0 \
+    -e HF_DATASETS_OFFLINE=1 \
+    -e HF_HUB_OFFLINE=1 \
+    set-attention \
+    python scripts/run_experiment.py --config <config.yaml> --csv-path <out.csv>'
+```
+- Existing blue-demon run scripts already use this pattern, for example `scripts/gpu0_run_lrnorm_headline_pairs.sh`.
+- For Git operations, summaries, and file transfer, use the host shell from `~/set-attention`; for any code path importing project modules, `torch`, CUDA, datasets, or training utilities, use the `set-attention` container.
+
 **Critical Finding**
 
 The current set-only LM implementation has an autoregressive causality leak.
