@@ -17,6 +17,23 @@ Access and credentials:
   - blue-demon dev copy: `blue-demon:~/set-attention`.
 - Use Git for tracked source files. Use provenance-preserving artifact sync for ignored generated outputs under `out/` only when those artifacts are needed across machines.
 
+Highest-value workflow rule:
+- Prefer a blue-demon-first workflow for tracked source changes until the local WSL `/mnt/d` Git metadata issue is fully fixed.
+- The local WSL file contents can be correct while local `.git/` metadata is stale or read-only. In that state, local `git status` may show modified files even when the file content already matches the pushed commit.
+- Do not waste time trying to commit from local WSL if `.git/index.lock` or `.git/config.lock` fails with read-only or permission errors.
+- Preferred tracked-file workflow:
+  1. Edit locally only if convenient.
+  2. Copy the edited tracked file to `blue-demon:~/set-attention`.
+  3. Commit on blue-demon.
+  4. Push from blue-demon if GitHub credentials are available there.
+  5. If blue-demon cannot push, create a Git bundle on blue-demon, copy it to local `/tmp`, import it into a temporary clone such as `/tmp/set-attention-push`, and push from there using the Windows GitHub token file.
+- When using the Windows token file, extract only the actual token line beginning with `ghp_` or `github_pat_`; the file may contain explanatory text and blank lines.
+- Verify sync by comparing:
+  - blue-demon `git rev-parse HEAD`;
+  - GitHub `origin/paper/final-results-bundle`;
+  - `sha256sum` of the relevant file across local and the temporary/blue-demon copy.
+- Do not rely solely on local WSL `git status` while the `.git/` mount issue persists.
+
 Blue-demon experiment environment:
 - SSH target: `iarroyof@192.168.241.149`, repo path `~/set-attention`.
 - The host repo is the Docker Compose control directory. Do not run experiment Python with host `/usr/bin/python3`; it may not have `torch` installed.
