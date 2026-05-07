@@ -5,7 +5,17 @@ Repository/source of truth:
 - Local paper/workspace mirror may exist at:
   `/mnt/d/UserFolders/Documents/GitHub/set-attention`
 - Treat blue-demon as the source of truth for completed experiments and generated artifacts.
-- Preserve the current implementation as an optional configurable mode. Do not delete it; it may remain useful for non-causal / bidirectional appendix diagnostics.
+- Preserve the current implementation as an optional configurable mode. Do not delete it; it is a valid non-causal set-attention behavior for bidirectional/non-AR tasks and diagnostics, although not valid as evidence for autoregressive LM claims.
+
+Access and credentials:
+- Blue-demon SSH credentials are available locally via the existing SSH/password files already used by Codex. Prefer the configured SSH entry or password file, and never paste credential contents into logs or committed files.
+- GitHub credential/token file on the Windows host: `C:\Users\nachi\Documents\github_toke.txt`.
+- Use credential files only when needed for sync operations. Do not commit credential files, token contents, copied secrets, shell history containing tokens, or generated logs that expose them.
+- Keep the three repo copies synced when source/config/script/context changes are made:
+  - local WSL copy: `/mnt/d/UserFolders/Documents/GitHub/set-attention`;
+  - remote GitHub branch: `origin/paper/final-results-bundle`;
+  - blue-demon dev copy: `blue-demon:~/set-attention`.
+- Use Git for tracked source files. Use provenance-preserving artifact sync for ignored generated outputs under `out/` only when those artifacts are needed across machines.
 
 **Critical Finding**
 
@@ -28,7 +38,7 @@ Current behavior:
 
 Therefore:
 - Current AR LM perplexity claims are not causally valid.
-- Current non-causal set-only results may be retained only as non-causal / bidirectional / diagnostic appendix evidence.
+- Current non-causal set-only results may be retained only as non-causal / bidirectional / diagnostic appendix evidence until evaluated on tasks where non-causal access is appropriate.
 - The revision should not defend the old AR headline as-is.
 
 ---
@@ -41,6 +51,7 @@ Implement the fork cleanly so we can select the strongest path later.
 
 Purpose:
 - Preserve current implementation for diagnostics, bidirectional tasks, and appendix comparisons.
+- Keep this as a first-class, named behavior, not as a failed or negative-result variant.
 
 Suggested config:
 ```yaml
@@ -53,6 +64,8 @@ Semantics:
 - Current pooling.
 - Current routing over all containing sets.
 - Must be explicitly labeled non-causal when used in AR contexts.
+- If this mode is selected with an autoregressive LM objective, the code should emit a clear warning in logs and run manifests.
+- Paper drafts that show AR-LM results from this mode must include visible draft annotations warning that the numbers are non-causal and not valid headline AR evidence.
 
 ### Our model would be comparable to token-level causal LM only if you verify one of these:
 
@@ -63,7 +76,9 @@ Semantics:
 
 Without one of those, I would not claim fairness against standard token-causal baselines.
 
-Analyze the problem and suggest the best option (not necessarily limited to the Branches bellow) that optimizes simultaneously efficiency (time and spatial complexity), expressivity (prove mathematically that under the full current contex conditions the approach will not significantly loss information with respect to the current future-leaking model) ease to integrate to our existing implementation.
+Analyze the problem and suggest the best option, not necessarily limited to the branches below, that jointly optimizes efficiency, expressivity, causality, and ease of integration with the existing implementation.
+
+The branch-selection analysis should include a theory-motivated comparison against the current non-causal operator as a reference. A Lipschitz-style or operator-perturbation argument is acceptable if a stronger equivalence proof is not available: characterize what information or candidate support is lost when moving from the non-causal reference to a causal branch, and connect that argument to measurable diagnostics such as candidate count, pooling support, entropy, transport, and validation loss.
 
 Meanwhile the following are options quickly suggested.
 
@@ -174,14 +189,14 @@ Add:
 Suggested enum:
 ```python
 SetCausalityMode = Literal[
-    "noncausal_current",
+    "noncausal",
     "end_aligned",
     "prefix_pooling",
     "bidirectional",
 ]
 ```
 
-Keep old behavior exactly reachable through `noncausal_current`.
+Keep old behavior exactly reachable through `noncausal`.
 
 ### B. Dataset / Objective
 
@@ -309,9 +324,11 @@ Learning rates:
 Families:
 ```text
 baseline_dense_exact
-set_dense_exact_end_aligned
-set_sparse_local_band_end_aligned
-set_linear_landmark_end_aligned
+baseline_sparse_local_band
+baseline_linear_landmark
+set_dense_exact_end_aligned (or the selected causal branch)
+set_sparse_local_band_end_aligned (or the selected causal branch)
+set_linear_landmark_end_aligned (or the selected causal branch)
 ```
 
 Reference size:
@@ -348,18 +365,22 @@ L: 1024, 2048, 4096
 
 For long context:
 - Use best few operating points only.
-- Include baseline where feasible.
-- If dense baseline becomes infeasible, report memory/time limits explicitly.
+- Include baselines where feasible.
+- If baselines become infeasible, report memory/time limits explicitly.
 
 ### Required Comparisons
 
 At minimum:
 - Dense causal Transformer baseline.
+- Sparse causal Transformer baseline.
+- Linear causal Transformer baseline.
 - Causal Set Dense.
 - Causal Set Sparse.
 - Causal Set Linear.
 
-If time permits, add one published efficient-attention baseline:
+If the token-baseline sparse or linear backends do not already exist, implement them rather than omitting them, provided the implementation can be validated with the same causality tests and smoke-training gates. Name these clearly as token-attention baselines with backend `dense_exact`, `local_band`, or `landmark`, distinct from Set Attention families.
+
+Make this matrix effective across all relevant parts of the plan. If time permits, add one published efficient-attention baseline:
 - Performer
 - Longformer
 - Routing Transformer
@@ -371,6 +392,15 @@ Do not claim broad efficient-attention superiority without at least one publishe
 ## Provenance Requirements
 
 Reuse existing provenance style, but tighten it.
+
+Current artifact sync state:
+- Source branch for this revision work: `paper/final-results-bundle`.
+- `main` has been verified separately and should not be mixed into the paper branch except by an explicit merge/rebase decision.
+- Ignored artifacts under `out/` were non-destructively synced between local and blue-demon with sync ID `20260506_130440`.
+- Preserve existing sync manifests and conflict archives under:
+  - `out/_artifact_sync_manifests/20260506_130440/`
+  - `out/_artifact_sync_conflicts/20260506_130440/`
+- Do not bulk-commit `out/`. Use manifests, summaries, copied paper assets, or explicit tracked provenance files when information must be shared by Git.
 
 For every run, write:
 ```text
@@ -418,33 +448,43 @@ Summary scripts must never reconstruct numbers from memory. They must read only:
 ## Paper Revision Guidance
 
 Until causal reruns are complete:
-- Remove headline AR LM claims based on old set-only runs.
-- Move old non-causal set-only AR results to appendix as diagnostic/non-causal evidence.
-- Keep Tier C theory and diagnostics if framed architecture-independently.
-- State that causal variants are under evaluation only after results exist.
+- Do not silently delete old AR-LM claims; instead mark them clearly in draft form as non-causal historical evidence and demote them away from headline claims.
+- Before any camera-ready or submission PDF, remove visible draft notes and ensure old non-causal set-only AR results appear only as historical/non-causal appendix evidence, with explicit non-causality clarification.
+- Keep Tier C theory and diagnostics if framed architecture-independently; where a statement depends on causality, annotate the draft and update the math after the causal branch is selected.
+- State that causal variants are under evaluation only after results exist, and only in draft comments where appropriate.
 
-If Branch 1b succeeds:
+If Branch 1b, or another approved causal approach, succeeds:
 - Main paper can return to AR LM framing.
 - Rebuild Table 1 and headline figure only from causal runs.
 - Add causality audit table in main or appendix.
 
 If Branch 1b fails:
 - Do not force the narrative.
-- Pivot to Branch 2 or Branch 3.
+- Pivot to Branch 2 or Branch 3, or another approved approach that meets the above requirements.
 
 ---
 
 ## Immediate First Tasks For New Codex Chat
 
-1. Inspect current code and confirm the leak with a minimal failing test.
-2. Add `set_causality_mode=noncausal_current` preserving exact old behavior.
-3. Implement `end_aligned` bank/routing mode.
-4. Add causality audit tests and diagnostics.
-5. Generate reference configs for:
-   - baseline dense exact
-   - set dense exact end-aligned
-   - set sparse local-band end-aligned
-   - set linear landmark end-aligned
-6. Add run scripts for dual RTX 4090 scheduling.
-7. Add provenance manifests for every run.
-8. Only after tests pass, launch the seed/LR grid on blue-demon.
+1. Inspect current code and add a minimal regression test that reproduces the leak under `set_causality_mode=noncausal` in an AR-LM setting.
+2. Add or verify `set_causality_mode=noncausal`, preserving exact old behavior for valid non-causal/bidirectional use cases.
+3. Add warning logs, run-manifest warnings, and draft paper annotations whenever `noncausal` is paired with an AR-LM objective.
+4. Produce a short branch-selection memo comparing `end_aligned`, `prefix_pooling`, and any better proposed causal design against the non-causal reference using efficiency, expressivity, implementation risk, and measurable diagnostics.
+5. Implement the selected causal bank/routing mode, with `end_aligned` as the default starting point unless the memo justifies another choice.
+6. Add causality audit tests and diagnostics:
+   - non-causal AR mode should fail the leak test by design;
+   - causal AR modes must pass perturbation, gradient, and candidate-family audits.
+7. Verify or implement token-attention baselines for dense exact, sparse local-band, and linear landmark backends.
+8. Make sure the hyperparameter space is sufficiently, but not excessively, sampled to show informative ranges to a meticulous reader.
+9. Generate reference configs for:
+   - token baseline dense exact;
+   - token baseline sparse local-band;
+   - token baseline linear landmark;
+   - causal set dense exact;
+   - causal set sparse local-band;
+   - causal set linear landmark;
+   - non-causal set variants for appropriate non-AR tasks/datasets.
+10. Add run scripts for dual RTX 4090 scheduling on blue-demon.
+11. Add provenance manifests for every run.
+12. Run all smoke tests and short production-readiness checks on blue-demon before launching expensive experiments.
+13. Only after tests, diagnostics, manifests, and smoke runs pass, launch the seed/LR grid on blue-demon.
