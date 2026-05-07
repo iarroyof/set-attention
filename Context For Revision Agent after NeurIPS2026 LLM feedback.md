@@ -18,13 +18,14 @@ Access and credentials:
 - Use Git for tracked source files. Use provenance-preserving artifact sync for ignored generated outputs under `out/` only when those artifacts are needed across machines.
 
 Highest-value workflow rule:
-- Prefer a blue-demon-first workflow for tracked source changes until the local WSL `/mnt/d` Git metadata issue is fully fixed.
+- Prefer a blue-demon-authoritative workflow for tracked source changes until the local WSL `/mnt/d` Git metadata issue is fully fixed.
+- It is valid to edit a local WSL copy as a scratch/work buffer when that is faster, but the edit is not authoritative until it has been copied to `blue-demon:~/set-attention`, checked there, and committed there.
 - The local WSL file contents can be correct while local `.git/` metadata is stale or read-only. In that state, local `git status` may show modified files even when the file content already matches the pushed commit.
 - Do not waste time trying to commit from local WSL if `.git/index.lock` or `.git/config.lock` fails with read-only or permission errors.
 - Preferred tracked-file workflow:
-  1. Edit locally only if convenient.
+  1. Edit on blue-demon directly when convenient; otherwise edit the local WSL copy as scratch.
   2. Copy the edited tracked file to `blue-demon:~/set-attention`.
-  3. Commit on blue-demon.
+  3. Inspect the diff and commit on blue-demon.
   4. Push from blue-demon if GitHub credentials are available there.
   5. If blue-demon cannot push, create a Git bundle on blue-demon, copy it to local `/tmp`, import it into a temporary clone such as `/tmp/set-attention-push`, and push from there using the Windows GitHub token file.
 - When using the Windows token file, extract only the actual token line beginning with `ghp_` or `github_pat_`; the file may contain explanatory text and blank lines.
