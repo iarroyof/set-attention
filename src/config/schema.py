@@ -72,6 +72,10 @@ SET_ONLY_KEYS = {
     "token_mlp",
     "set_causality_mode",
     "output_residual_mode",
+    "anchor",
+    "set_diversity",
+    "multivector_basis",
+    "candidate_fiber",
     "seq2seq",
     "hybrid",
 }
@@ -172,8 +176,57 @@ def validate_config(cfg: dict) -> None:
         "direct",
         "empty_only",
         "none",
+        "anchor_span",
     }:
-        raise ConfigError("output_residual_mode must be 'direct', 'empty_only', or 'none'")
+        raise ConfigError("output_residual_mode must be 'direct', 'empty_only', 'none', or 'anchor_span'")
+    if model_cfg.get("anchor") is not None:
+        anchor_cfg = model_cfg["anchor"]
+        if not isinstance(anchor_cfg, dict):
+            raise ConfigError("model.anchor must be a mapping")
+        unexpected_anchor = set(anchor_cfg.keys()) - {
+            "enabled",
+            "target",
+            "pre_encoder_layers",
+            "lambda_h",
+            "detach_target",
+            "norm",
+            "teacher",
+        }
+        if unexpected_anchor:
+            raise ConfigError(f"Unexpected model.anchor keys: {sorted(unexpected_anchor)}")
+        teacher_cfg = anchor_cfg.get("teacher", {})
+        if teacher_cfg is not None:
+            if not isinstance(teacher_cfg, dict):
+                raise ConfigError("model.anchor.teacher must be a mapping")
+            unexpected_teacher = set(teacher_cfg.keys()) - {"enabled"}
+            if unexpected_teacher:
+                raise ConfigError(
+                    f"Unexpected model.anchor.teacher keys: {sorted(unexpected_teacher)}"
+                )
+    if model_cfg.get("set_diversity") is not None:
+        set_diversity_cfg = model_cfg["set_diversity"]
+        if not isinstance(set_diversity_cfg, dict):
+            raise ConfigError("model.set_diversity must be a mapping")
+        unexpected_div = set(set_diversity_cfg.keys()) - {"lambda_div"}
+        if unexpected_div:
+            raise ConfigError(f"Unexpected model.set_diversity keys: {sorted(unexpected_div)}")
+    if model_cfg.get("multivector_basis") is not None:
+        multivector_cfg = model_cfg["multivector_basis"]
+        if not isinstance(multivector_cfg, dict):
+            raise ConfigError("model.multivector_basis must be a mapping")
+        unexpected_multivec = set(multivector_cfg.keys()) - {"enabled", "r"}
+        if unexpected_multivec:
+            raise ConfigError(
+                f"Unexpected model.multivector_basis keys: {sorted(unexpected_multivec)}"
+            )
+    if model_cfg.get("candidate_fiber") is not None and model_cfg.get("candidate_fiber") not in {
+        "endpoint_window",
+        "all_past",
+        "window_plus_landmarks",
+    }:
+        raise ConfigError(
+            "candidate_fiber must be endpoint_window, all_past, or window_plus_landmarks"
+        )
 
     if "family" in cfg.get("data", {}):
         raise ConfigError("data.family is not allowed; use model.implementation only")

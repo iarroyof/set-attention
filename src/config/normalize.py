@@ -133,6 +133,37 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
         model.setdefault("set_state_dim", None)
         model.setdefault("adapter_type", "auto")
         model.setdefault("output_residual_mode", "direct")
+        anchor_cfg = model.get("anchor")
+        if anchor_cfg is None:
+            anchor_cfg = {}
+        if isinstance(anchor_cfg, dict):
+            teacher_cfg = anchor_cfg.get("teacher")
+            if teacher_cfg is None:
+                teacher_cfg = {}
+            if isinstance(teacher_cfg, dict):
+                teacher_cfg.setdefault("enabled", False)
+            anchor_cfg.setdefault("enabled", False)
+            anchor_cfg.setdefault("target", "pre_encoder")
+            anchor_cfg.setdefault("pre_encoder_layers", 2)
+            anchor_cfg.setdefault("lambda_h", 0.1)
+            anchor_cfg.setdefault("detach_target", True)
+            anchor_cfg.setdefault("norm", "layernorm")
+            anchor_cfg["teacher"] = teacher_cfg
+        model["anchor"] = anchor_cfg
+        set_diversity_cfg = model.get("set_diversity")
+        if set_diversity_cfg is None:
+            set_diversity_cfg = {}
+        if isinstance(set_diversity_cfg, dict):
+            set_diversity_cfg.setdefault("lambda_div", 0.0)
+        model["set_diversity"] = set_diversity_cfg
+        multivector_cfg = model.get("multivector_basis")
+        if multivector_cfg is None:
+            multivector_cfg = {}
+        if isinstance(multivector_cfg, dict):
+            multivector_cfg.setdefault("enabled", False)
+            multivector_cfg.setdefault("r", 1)
+        model["multivector_basis"] = multivector_cfg
+        model.setdefault("candidate_fiber", "endpoint_window")
         data_cfg = cfg.get("data", {})
         task = cfg.get("task")
         if task is None:

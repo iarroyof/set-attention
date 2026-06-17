@@ -76,6 +76,17 @@ def test_a1_4_normalize_preserves_canonical_defaults():
     assert model["output_residual_mode"] == "direct"
     assert model["set_causality_mode"] == "strict_past"
     assert "causal" not in model
+    assert model["anchor"]["enabled"] is False
+    assert model["anchor"]["target"] == "pre_encoder"
+    assert model["anchor"]["pre_encoder_layers"] == 2
+    assert model["anchor"]["lambda_h"] == 0.1
+    assert model["anchor"]["detach_target"] is True
+    assert model["anchor"]["norm"] == "layernorm"
+    assert model["anchor"]["teacher"]["enabled"] is False
+    assert model["set_diversity"]["lambda_div"] == 0.0
+    assert model["multivector_basis"]["enabled"] is False
+    assert model["multivector_basis"]["r"] == 1
+    assert model["candidate_fiber"] == "endpoint_window"
 
 
 def test_a1_4_config_values_reach_set_only_submodules():
@@ -107,6 +118,8 @@ def test_a1_4_config_values_reach_set_only_submodules():
     assert isinstance(model.pooling_module.alpha, torch.nn.Parameter)
     assert model.router.min_temp == 0.25
     assert model.router.score_mode == "candidate_gather"
+    assert model.anchor_enabled is False
+    assert model.anchor_pre_encoder is None
     assert model.feature_builder.num_bins == 17
     assert model.feature_builder.hash_seed == 99
     assert model.feature_builder.normalize is False
@@ -151,6 +164,17 @@ def test_a1_4_resolved_metadata_reaches_json_and_csv():
         assert json_payload["resolved.hash_normalize"] is True
         assert json_payload["resolved.hash_num_bins"] == 19
         assert json_payload["resolved.output_residual_mode"] == "direct"
+        assert json_payload["resolved.anchor_enabled"] is False
+        assert json_payload["resolved.anchor_target"] == "pre_encoder"
+        assert json_payload["resolved.anchor_pre_encoder_layers"] == 0
+        assert json_payload["resolved.anchor_lambda_h"] == 0.1
+        assert json_payload["resolved.anchor_detach_target"] is True
+        assert json_payload["resolved.anchor_norm"] == "layernorm"
+        assert json_payload["resolved.anchor_teacher_enabled"] is False
+        assert json_payload["resolved.set_diversity_lambda_div"] == 0.0
+        assert json_payload["resolved.multivector_basis_enabled"] is False
+        assert json_payload["resolved.multivector_basis_r"] == 1
+        assert json_payload["resolved.candidate_fiber"] == "endpoint_window"
 
         rows = list(csv.DictReader((tmp_path / "metrics.csv").open()))
         assert rows[0]["resolved.d_phi"] == "128"
@@ -163,6 +187,17 @@ def test_a1_4_resolved_metadata_reaches_json_and_csv():
         assert rows[0]["resolved.hash_normalize"] == "True"
         assert rows[0]["resolved.hash_num_bins"] == "19"
         assert rows[0]["resolved.output_residual_mode"] == "direct"
+        assert rows[0]["resolved.anchor_enabled"] == "False"
+        assert rows[0]["resolved.anchor_target"] == "pre_encoder"
+        assert rows[0]["resolved.anchor_pre_encoder_layers"] == "0"
+        assert rows[0]["resolved.anchor_lambda_h"] == "0.1"
+        assert rows[0]["resolved.anchor_detach_target"] == "True"
+        assert rows[0]["resolved.anchor_norm"] == "layernorm"
+        assert rows[0]["resolved.anchor_teacher_enabled"] == "False"
+        assert rows[0]["resolved.set_diversity_lambda_div"] == "0.0"
+        assert rows[0]["resolved.multivector_basis_enabled"] == "False"
+        assert rows[0]["resolved.multivector_basis_r"] == "1"
+        assert rows[0]["resolved.candidate_fiber"] == "endpoint_window"
 
 
 def test_a1_4_explicit_defaults_preserve_eval_forward_fingerprint():

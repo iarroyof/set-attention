@@ -96,6 +96,21 @@ def test_empty_only_matches_none_when_singleton_bank_has_no_empty_tokens():
     assert torch.allclose(direct_repr, none_repr + tokens)
 
 
+def test_anchor_span_uses_thin_anchor_plus_span():
+    input_ids = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]], dtype=torch.long)
+    anchor_span = _make_model("anchor_span")
+    none = _make_model("none")
+    none.load_state_dict(anchor_span.state_dict())
+
+    with torch.no_grad():
+        anchor_repr = anchor_span.encode(input_ids)
+        span_only = none.encode(input_ids)
+        pos_ids = torch.arange(input_ids.shape[1], device=input_ids.device).unsqueeze(0)
+        thin_anchor = anchor_span.token_emb(input_ids) + anchor_span.pos_emb(pos_ids)
+
+    assert torch.allclose(anchor_repr, thin_anchor + span_only)
+
+
 def test_output_residual_mode_config_validation():
     cfg = {
         "model": {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 import warnings
 
@@ -20,6 +21,45 @@ from set_attention.features.geometry_only import GeometryOnlyFeatureBuilder
 from set_attention.features.hashed_counts import HashedCountFeatureBuilder
 from set_attention.features.kernel_features import KernelFeatureBuilder
 from set_attention.minhash import minhash_signatures
+
+
+class CausalPreEncoder(nn.Module):
+    """Shallow causal token pre-encoder used only for the anchor target."""
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        num_heads: int,
+        dim_feedforward: int,
+        num_layers: int,
+        dropout: float,
+    ) -> None:
+        super().__init__()
+        self.layers = nn.ModuleList(
+            [
+                nn.TransformerEncoderLayer(
+                    d_model=d_model,
+                    nhead=num_heads,
+                    dim_feedforward=dim_feedforward,
+                    dropout=dropout,
+                    activation="gelu",
+                    batch_first=True,
+                    norm_first=True,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        seq_len = x.shape[1]
+        causal_mask = torch.triu(
+            torch.ones(seq_len, seq_len, device=x.device, dtype=torch.bool),
+            diagonal=1,
+        )
+        for layer in self.layers:
+            x = layer(x, src_mask=causal_mask)
+        return x
 
 
 class SetOnlyLM(nn.Module):
@@ -68,10 +108,15 @@ class SetOnlyLM(nn.Module):
         causal: bool | None = None,
         set_causality_mode: str | None = None,
         output_residual_mode: str = "direct",
+        anchor: dict | None = None,
+        set_diversity: dict | None = None,
+        multivector_basis: dict | None = None,
+        candidate_fiber: str = "endpoint_window",
     ) -> None:
         super().__init__()
         self.token_emb = token_embedding or nn.Embedding(vocab_size, d_model)
         self.pos_emb = nn.Embedding(max_seq_len, d_model)
+        self.d_model = int(d_model)
         if isinstance(token_mlp, dict):
             token_mlp_enabled = bool(token_mlp.get("enabled", True))
         elif token_mlp is None:
@@ -130,11 +175,63 @@ class SetOnlyLM(nn.Module):
             )
         self.causal = self.set_causality_mode == "strict_past"
         output_residual_mode = str(output_residual_mode)
-        if output_residual_mode not in {"direct", "empty_only", "none"}:
+        if output_residual_mode not in {"direct", "empty_only", "none", "anchor_span"}:
             raise ValueError(
-                "output_residual_mode must be 'direct', 'empty_only', or 'none'"
+                "output_residual_mode must be 'direct', 'empty_only', 'none', or 'anchor_span'"
             )
         self.output_residual_mode = output_residual_mode
+        self.candidate_fiber = str(candidate_fiber)
+        if self.candidate_fiber != "endpoint_window":
+            raise ValueError("Only candidate_fiber='endpoint_window' is implemented")
+        self.set_diversity_cfg = {"lambda_div": 0.0, **(set_diversity or {})}
+        self.multivector_basis_cfg = {
+            "enabled": False,
+            "r": 1,
+            **(multivector_basis or {}),
+        }
+        if bool(self.multivector_basis_cfg.get("enabled", False)):
+            raise ValueError("multivector_basis is deferred; keep enabled=false")
+        if int(self.multivector_basis_cfg.get("r", 1)) != 1:
+            raise ValueError("multivector_basis.r must stay 1 unless enabled in a later gate")
+        anchor_cfg = anchor or {}
+        teacher_cfg = dict(anchor_cfg.get("teacher", {}) or {})
+        self.anchor_cfg = {
+            "enabled": False,
+            "target": "pre_encoder",
+            "pre_encoder_layers": 2,
+            "lambda_h": 0.1,
+            "detach_target": True,
+            "norm": "layernorm",
+            "teacher": {"enabled": False, **teacher_cfg},
+            **{k: v for k, v in anchor_cfg.items() if k != "teacher"},
+        }
+        if self.anchor_cfg["target"] != "pre_encoder":
+            raise ValueError("anchor.target must be 'pre_encoder'")
+        if bool(self.anchor_cfg["teacher"].get("enabled", False)):
+            raise ValueError("anchor.teacher.enabled is deferred and must stay false")
+        self.anchor_enabled = bool(self.anchor_cfg.get("enabled", False))
+        self.anchor_lambda_h = float(self.anchor_cfg.get("lambda_h", 0.1))
+        self.anchor_detach_target = bool(self.anchor_cfg.get("detach_target", True))
+        self.anchor_norm_mode = str(self.anchor_cfg.get("norm", "layernorm"))
+        if self.anchor_norm_mode != "layernorm":
+            raise ValueError("anchor.norm must be 'layernorm'")
+        self.anchor_pre_encoder_layers = int(self.anchor_cfg.get("pre_encoder_layers", 2))
+        if self.anchor_pre_encoder_layers not in {1, 2}:
+            raise ValueError("anchor.pre_encoder_layers must be 1 or 2")
+        self.anchor_norm = nn.LayerNorm(d_model, elementwise_affine=False)
+        self.anchor_pre_encoder = (
+            CausalPreEncoder(
+                d_model=d_model,
+                num_heads=num_heads,
+                dim_feedforward=dim_feedforward or d_model * 4,
+                num_layers=self.anchor_pre_encoder_layers,
+                dropout=dropout,
+            )
+            if self.anchor_enabled
+            else None
+        )
+        self._last_aux_losses: dict[str, torch.Tensor] = {}
+        self._last_aux_metrics: dict[str, float] = {}
         if isinstance(pooling, dict):
             self.pooling_mode = pooling.get("mode", "mean")
             self.pooling_params = {
@@ -294,6 +391,13 @@ class SetOnlyLM(nn.Module):
                 "token_mlp": {"enabled": self.token_mlp_enabled},
                 "set_causality_mode": self.set_causality_mode,
                 "output_residual_mode": self.output_residual_mode,
+                "anchor": {
+                    "enabled": self.anchor_enabled,
+                    "target": self.anchor_cfg["target"],
+                    "pre_encoder_layers": self.anchor_pre_encoder_layers,
+                    "lambda_h": self.anchor_lambda_h,
+                },
+                "candidate_fiber": self.candidate_fiber,
             }
         )
 
@@ -436,7 +540,71 @@ class SetOnlyLM(nn.Module):
                 else "NA"
             ),
             "output_residual_mode": self.output_residual_mode,
+            "anchor_enabled": self.anchor_enabled,
+            "anchor_target": self.anchor_cfg["target"],
+            "anchor_pre_encoder_layers": (
+                self.anchor_pre_encoder_layers if self.anchor_enabled else 0
+            ),
+            "anchor_lambda_h": self.anchor_lambda_h,
+            "anchor_detach_target": self.anchor_detach_target,
+            "anchor_norm": self.anchor_norm_mode,
+            "anchor_teacher_enabled": bool(
+                self.anchor_cfg["teacher"].get("enabled", False)
+            ),
+            "set_diversity_lambda_div": float(
+                self.set_diversity_cfg.get("lambda_div", 0.0)
+            ),
+            "multivector_basis_enabled": bool(
+                self.multivector_basis_cfg.get("enabled", False)
+            ),
+            "multivector_basis_r": int(self.multivector_basis_cfg.get("r", 1)),
+            "candidate_fiber": self.candidate_fiber,
         }
+
+    def _thin_anchor(self, input_ids: torch.Tensor) -> torch.Tensor:
+        batch, seq_len = input_ids.shape
+        pos_ids = torch.arange(seq_len, device=input_ids.device).unsqueeze(0)
+        pos_ids = pos_ids.expand(batch, seq_len)
+        return self.token_emb(input_ids) + self.pos_emb(pos_ids)
+
+    def compute_anchor_target(self, input_ids: torch.Tensor) -> torch.Tensor:
+        if self.anchor_pre_encoder is None:
+            raise RuntimeError("anchor pre-encoder is only constructed when anchor.enabled=true")
+        return self.anchor_pre_encoder(self._thin_anchor(input_ids))
+
+    def _update_anchor_loss(
+        self,
+        span_repr: torch.Tensor,
+        input_ids: torch.Tensor,
+    ) -> None:
+        self._last_aux_losses = {}
+        self._last_aux_metrics = {}
+        if not self.training or not self.anchor_enabled or self.anchor_pre_encoder is None:
+            return
+        target = self.compute_anchor_target(input_ids)
+        if self.anchor_detach_target:
+            target = target.detach()
+        span_norm = self.anchor_norm(span_repr)
+        target_norm = self.anchor_norm(target)
+        anchor_mse = F.mse_loss(span_norm, target_norm)
+        diff_norm = (span_norm - target_norm).norm()
+        target_norm_value = target_norm.norm().clamp_min(1e-12)
+        recon_error = diff_norm / target_norm_value
+        self._last_aux_losses = {
+            "anchor_loss": self.anchor_lambda_h * anchor_mse,
+            "anchor_mse": anchor_mse.detach(),
+        }
+        self._last_aux_metrics = {
+            "anchor/lambda_h": self.anchor_lambda_h,
+            "anchor/mse": float(anchor_mse.detach().item()),
+            "anchor/recon_error_norm": float(recon_error.detach().item()),
+        }
+
+    def get_auxiliary_losses(self) -> dict[str, torch.Tensor]:
+        return dict(self._last_aux_losses)
+
+    def get_auxiliary_metrics(self) -> dict[str, float]:
+        return dict(self._last_aux_metrics)
 
     def _encode_tokens(
         self,
@@ -451,11 +619,8 @@ class SetOnlyLM(nn.Module):
                 f"seq_len {seq_len} exceeds max_seq_len {self.max_seq_len}"
             )
 
-        pos_ids = torch.arange(seq_len, device=input_ids.device).unsqueeze(0)
-        pos_ids = pos_ids.expand(batch, seq_len)
-
-        token_states = self.token_emb(input_ids) + self.pos_emb(pos_ids)
-        token_states = self.token_mlp(token_states)
+        thin_anchor = self._thin_anchor(input_ids)
+        token_states = self.token_mlp(thin_anchor)
 
         bank = build_window_bank(
             seq_len=seq_len,
@@ -586,6 +751,7 @@ class SetOnlyLM(nn.Module):
                 desc_router = desc_router.unsqueeze(0).expand(batch, -1, -1)
             router_out = self.router(token_states, set_states, desc_router, bank.token_to_sets)
         routed_repr = self.set_output_proj(router_out.token_repr)
+        self._update_anchor_loss(routed_repr, input_ids)
         token_repr = routed_repr
         if self.set_causality_mode == "strict_past":
             if self.output_residual_mode == "direct":
@@ -599,6 +765,8 @@ class SetOnlyLM(nn.Module):
                 )
             elif self.output_residual_mode == "none":
                 token_repr = routed_repr
+            elif self.output_residual_mode == "anchor_span":
+                token_repr = thin_anchor + routed_repr
 
         if self.training:
             self.diagnostics.update_with_router_state(

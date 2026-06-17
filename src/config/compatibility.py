@@ -37,6 +37,15 @@ def _require_positive_float(value: Any, label: str) -> float:
     return parsed
 
 
+def _require_nonnegative_float(value: Any, label: str) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{label} must be numeric")
+    require(parsed >= 0.0, f"{label} must be >= 0")
+    return parsed
+
+
 def _require_positive_int(value: Any, label: str) -> int:
     if isinstance(value, bool):
         raise ConfigError(f"{label} must be an integer")
@@ -343,8 +352,85 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     )
     output_residual_mode = model.get("output_residual_mode", "direct")
     require(
-        output_residual_mode in {"direct", "empty_only", "none"},
-        "set_only: output_residual_mode must be 'direct', 'empty_only', or 'none'",
+        output_residual_mode in {"direct", "empty_only", "none", "anchor_span"},
+        "set_only: output_residual_mode must be 'direct', 'empty_only', 'none', or 'anchor_span'",
+    )
+    anchor_cfg = model.get("anchor", {})
+    if anchor_cfg and not isinstance(anchor_cfg, dict):
+        raise ConfigError("set_only: anchor must be a mapping")
+    if anchor_cfg:
+        _require_bool(anchor_cfg.get("enabled", False), "set_only: anchor.enabled")
+        require(
+            anchor_cfg.get("target", "pre_encoder") == "pre_encoder",
+            "set_only: anchor.target must be 'pre_encoder'",
+        )
+        pre_encoder_layers = _require_positive_int(
+            anchor_cfg.get("pre_encoder_layers", 2),
+            "set_only: anchor.pre_encoder_layers",
+        )
+        require(
+            pre_encoder_layers in {1, 2},
+            "set_only: anchor.pre_encoder_layers must be 1 or 2",
+        )
+        _require_nonnegative_float(
+            anchor_cfg.get("lambda_h", 0.1),
+            "set_only: anchor.lambda_h",
+        )
+        _require_bool(
+            anchor_cfg.get("detach_target", True),
+            "set_only: anchor.detach_target",
+        )
+        require(
+            anchor_cfg.get("norm", "layernorm") == "layernorm",
+            "set_only: anchor.norm must be 'layernorm'",
+        )
+        teacher_cfg = anchor_cfg.get("teacher", {})
+        if teacher_cfg and not isinstance(teacher_cfg, dict):
+            raise ConfigError("set_only: anchor.teacher must be a mapping")
+        require(
+            not bool((teacher_cfg or {}).get("enabled", False)),
+            "set_only: anchor.teacher.enabled is deferred and must stay false",
+        )
+    if output_residual_mode == "anchor_span":
+        require(
+            model.get("token_mlp", {}).get("enabled") is False,
+            "set_only: output_residual_mode=anchor_span requires token_mlp.enabled=false",
+        )
+    set_diversity_cfg = model.get("set_diversity", {})
+    if set_diversity_cfg and not isinstance(set_diversity_cfg, dict):
+        raise ConfigError("set_only: set_diversity must be a mapping")
+    _require_nonnegative_float(
+        (set_diversity_cfg or {}).get("lambda_div", 0.0),
+        "set_only: set_diversity.lambda_div",
+    )
+    multivector_cfg = model.get("multivector_basis", {})
+    if multivector_cfg and not isinstance(multivector_cfg, dict):
+        raise ConfigError("set_only: multivector_basis must be a mapping")
+    _require_bool(
+        (multivector_cfg or {}).get("enabled", False),
+        "set_only: multivector_basis.enabled",
+    )
+    multivec_r = _require_positive_int(
+        (multivector_cfg or {}).get("r", 1),
+        "set_only: multivector_basis.r",
+    )
+    require(1 <= multivec_r <= 4, "set_only: multivector_basis.r must be in [1, 4]")
+    require(
+        not bool((multivector_cfg or {}).get("enabled", False)),
+        "set_only: multivector_basis.enabled is deferred and must stay false",
+    )
+    require(
+        multivec_r == 1,
+        "set_only: multivector_basis.r must stay 1 while multivector_basis is disabled",
+    )
+    candidate_fiber = model.get("candidate_fiber", "endpoint_window")
+    require(
+        candidate_fiber in {"endpoint_window", "all_past", "window_plus_landmarks"},
+        "set_only: candidate_fiber must be endpoint_window, all_past, or window_plus_landmarks",
+    )
+    require(
+        candidate_fiber == "endpoint_window",
+        "set_only: only candidate_fiber=endpoint_window is implemented in SD-2",
     )
     if task == "lm" and impl in {"set_only", "hybrid_token_set"}:
         require(

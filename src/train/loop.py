@@ -45,6 +45,25 @@ def _maybe_add_set_diversity_loss(
     return loss
 
 
+def _maybe_add_model_auxiliary_losses(
+    model: nn.Module,
+    loss: torch.Tensor,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    if not hasattr(model, "get_auxiliary_losses"):
+        return loss, {}
+    aux_losses = model.get_auxiliary_losses()
+    aux_metrics: dict[str, float] = {}
+    for name, value in aux_losses.items():
+        if not torch.is_tensor(value):
+            continue
+        aux_metrics[name] = float(value.detach().item())
+        if name.endswith("_loss"):
+            loss = loss + value
+    if hasattr(model, "get_auxiliary_metrics"):
+        aux_metrics.update(model.get_auxiliary_metrics())
+    return loss, aux_metrics
+
+
 def _update_diagnostics(model: nn.Module) -> None:
     if hasattr(model, "collect_grad_diagnostics"):
         try:
@@ -107,6 +126,7 @@ def train_one_epoch(
         loss = torch.nn.functional.cross_entropy(
             logits.view(-1, logits.size(-1)), labels.view(-1)
         )
+        loss, aux_metrics = _maybe_add_model_auxiliary_losses(model, loss)
         loss = _maybe_add_set_diversity_loss(
             model,
             loss,
@@ -124,7 +144,10 @@ def train_one_epoch(
         total_tokens += labels.numel()
     loss_avg = total_loss / max(total_tokens, 1)
     grad_norm = grad_norm_sum / grad_norm_steps if grad_norm_steps else None
-    return {"loss": loss_avg, "grad_norm": grad_norm}
+    metrics = {"loss": loss_avg, "grad_norm": grad_norm}
+    if "aux_metrics" in locals():
+        metrics.update(aux_metrics)
+    return metrics
 
 
 @torch.no_grad()

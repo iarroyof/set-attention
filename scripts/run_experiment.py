@@ -154,6 +154,10 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
         allow_token_token=bool(model_cfg.get("allow_token_token", False)),
         set_causality_mode=model_cfg.get("set_causality_mode"),
         output_residual_mode=model_cfg.get("output_residual_mode", "direct"),
+        anchor=model_cfg.get("anchor"),
+        set_diversity=model_cfg.get("set_diversity"),
+        multivector_basis=model_cfg.get("multivector_basis"),
+        candidate_fiber=model_cfg.get("candidate_fiber", "endpoint_window"),
     )
 
 
@@ -175,6 +179,17 @@ def attach_resolved_metadata(cfg: dict, model: torch.nn.Module) -> None:
         "landmark_coverage": "NA",
         "landmark_count": "NA",
         "output_residual_mode": "NA",
+        "anchor_enabled": "NA",
+        "anchor_target": "NA",
+        "anchor_pre_encoder_layers": "NA",
+        "anchor_lambda_h": "NA",
+        "anchor_detach_target": "NA",
+        "anchor_norm": "NA",
+        "anchor_teacher_enabled": "NA",
+        "set_diversity_lambda_div": "NA",
+        "multivector_basis_enabled": "NA",
+        "multivector_basis_r": "NA",
+        "candidate_fiber": "NA",
     }
     resolved_defaults.update(resolved)
     cfg["resolved"] = resolved_defaults
@@ -347,7 +362,12 @@ def main() -> None:
     )
     logger.log_model_complexity(model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=float(cfg["training"]["lr"]))
-    set_diversity_weight = float(cfg["training"].get("set_diversity_weight", 0.0))
+    set_diversity_weight = float(
+        cfg["model"].get("set_diversity", {}).get(
+            "lambda_div",
+            cfg["training"].get("set_diversity_weight", 0.0),
+        )
+    )
     set_diversity_mode = str(cfg["training"].get("set_diversity_mode", "position_contrastive"))
 
     epochs = cfg["training"]["epochs"]

@@ -4,7 +4,17 @@ from typing import Dict
 
 
 TASK_METRICS = {
-    "lm": ["train/loss", "val/loss", "train/ppl", "val/ppl"],
+    "lm": [
+        "train/loss",
+        "val/loss",
+        "train/ppl",
+        "val/ppl",
+        "train/anchor_loss",
+        "train/anchor_mse",
+        "train/anchor/lambda_h",
+        "train/anchor/mse",
+        "train/anchor/recon_error_norm",
+    ],
     "seq2seq": ["train/loss", "val/loss", "val/bleu", "val/rougeL"],
     "textdiff": ["train/loss", "val/loss"],
     "vit": ["train/loss", "val/loss", "val/acc", "val/top5"],
