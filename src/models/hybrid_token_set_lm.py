@@ -60,7 +60,7 @@ class HybridSetLayer(nn.Module):
         adapter_hidden_multiplier: int,
         gamma: float,
         beta: float,
-        causal: bool,
+        causal: bool | None,
         set_causality_mode: str,
         output_residual_mode: str,
         token_embedding: nn.Embedding,
@@ -69,8 +69,17 @@ class HybridSetLayer(nn.Module):
         self.window_size = int(window_size)
         self.stride = int(stride)
         self.max_seq_len = int(max_seq_len)
-        self.causal = bool(causal)
+        if causal is not None:
+            warnings.warn(
+                "HybridSetLayer(causal=...) is deprecated; set_causality_mode is the "
+                "single source of truth and wins when both are supplied.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.set_causality_mode = set_causality_mode
+        if self.set_causality_mode not in {"strict_past", "noncausal"}:
+            raise ValueError("set_causality_mode must be strict_past or noncausal")
+        self.causal = self.set_causality_mode == "strict_past"
         self.output_residual_mode = output_residual_mode
         self.token_embedding = token_embedding
         self.feature_mode = feature_mode
@@ -401,7 +410,7 @@ class HybridTokenSetLM(nn.Module):
         adapter_hidden_multiplier: int = 2,
         gamma: float = 1.0,
         beta: float = 0.0,
-        causal: bool = True,
+        causal: bool | None = None,
         set_causality_mode: str = "strict_past",
         output_residual_mode: str = "empty_only",
     ) -> None:
@@ -409,7 +418,13 @@ class HybridTokenSetLM(nn.Module):
         self.token_emb = nn.Embedding(vocab_size, d_model)
         self.pos_emb = nn.Embedding(max_seq_len, d_model)
         self.max_seq_len = int(max_seq_len)
-        self.causal = bool(causal)
+        if causal is not None:
+            warnings.warn(
+                "HybridTokenSetLM(causal=...) is deprecated; set_causality_mode is the "
+                "single source of truth and wins when both are supplied.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.attention_family = attention_family
         self.backend = backend
         self.backend_params = dict(backend_params or {})
@@ -435,6 +450,7 @@ class HybridTokenSetLM(nn.Module):
         self.set_causality_mode = mode_aliases.get(set_causality_mode, set_causality_mode)
         if self.set_causality_mode not in {"strict_past", "noncausal"}:
             raise ValueError("set_causality_mode must be strict_past or noncausal")
+        self.causal = self.set_causality_mode == "strict_past"
         self.output_residual_mode = output_residual_mode
         if self.output_residual_mode not in {"direct", "empty_only", "none"}:
             raise ValueError("output_residual_mode must be direct, empty_only, or none")
@@ -458,7 +474,7 @@ class HybridTokenSetLM(nn.Module):
                         backend=backend,
                         backend_params=backend_params,
                         max_seq_len=max_seq_len,
-                        causal=causal,
+                        causal=self.causal,
                     )
                 )
                 self.layer_kinds.append("T")
@@ -496,7 +512,7 @@ class HybridTokenSetLM(nn.Module):
                     adapter_hidden_multiplier=adapter_hidden_multiplier,
                     gamma=gamma,
                     beta=beta,
-                    causal=causal,
+                    causal=None,
                     set_causality_mode=self.set_causality_mode,
                     output_residual_mode=self.output_residual_mode,
                     token_embedding=self.token_emb,

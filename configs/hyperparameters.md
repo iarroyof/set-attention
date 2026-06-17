@@ -57,7 +57,7 @@ This table uses the **canonical naming**:
 | `model.pooling.mode` | Pooling mode | `mean` | `mean`, `soft_trimmed_boltzmann` |
 | `model.pooling.alpha` | Soft-trimmed Boltzmann trim sharpness | `10.0` | `> 0` |
 | `model.pooling.learnable_alpha` | Learn trim sharpness | `false` | `true`, `false` |
-| `model.set_causality_mode` | Set-bank/routing causality mode | LM causal default: `strict_past`; noncausal default: `noncausal` | `strict_past`, `noncausal` |
+| `model.set_causality_mode` | Single source of truth for set-bank/routing causality mode | LM causal default: `strict_past`; noncausal default: `noncausal` | `strict_past`, `noncausal`; legacy `model.causal` is deprecated for set-only models and cannot override this value |
 | `model.output_residual_mode` | Strict-past output residual policy before the LM head | `direct` | `direct`, `empty_only`, `none` |
 | `model.hybrid.pattern` | Layer pattern for `hybrid_token_set` LM; `T` means token-attention layer and `S` means set layer | Required for `hybrid_token_set` | String of `T`/`S` with length `model.num_layers` |
 | `model.hybrid.set_topologies` | Per-set-layer topology list for `hybrid_token_set`; one entry per `S` in `model.hybrid.pattern` | Required for `hybrid_token_set` | List of `{window_size, stride}` mappings |
@@ -86,7 +86,7 @@ This table uses the **canonical naming**:
 | `head_dim >= 8` | All transformer models | `d_model / num_heads >= 8` |
 | `window_size <= seq_len` | Set‑only models | Must hold |
 | `stride <= window_size` | Set‑only models | Must hold |
-| `set_causality_mode=strict_past` | Autoregressive set-only LM | Drops partial trailing windows; candidates are endpoint sets `{m: t-window_size < endpoint_m <= t}` |
+| `set_causality_mode=strict_past` | Autoregressive set-only LM | Drops partial trailing windows; candidates are endpoint sets `{m: t-window_size < endpoint_m <= t}`; set self-attention masking is derived from this mode |
 | `output_residual_mode` | Strict-past set-only LM | `direct` uses `h_t^(0)+r_t`; `empty_only` uses `h_t^(0)` only for `C_t=0` and otherwise `r_t`; `none` uses only `r_t` |
 | `hybrid_token_set` topology | Hybrid LM | `model.hybrid.pattern` length must equal `model.num_layers`; `model.hybrid.set_topologies` length must equal the number of `S` layers; every topology requires positive `window_size` and `stride`, with `stride <= window_size <= data.seq_len` |
 | `router_topk` required | `router_type=learned` | `1 <= router_topk <= max_sets` |

@@ -65,7 +65,7 @@ class SetOnlyLM(nn.Module):
         beta: float = 0.0,
         token_embedding: nn.Embedding | None = None,
         allow_token_token: bool = False,
-        causal: bool = False,
+        causal: bool | None = None,
         set_causality_mode: str | None = None,
         output_residual_mode: str = "direct",
     ) -> None:
@@ -107,8 +107,16 @@ class SetOnlyLM(nn.Module):
         self.router_score_mode = router_score_mode
         self.pooling_multihead = bool(pooling_multihead)
         self.allow_token_token = bool(allow_token_token)
-        self.causal = bool(causal)
-        mode = set_causality_mode or ("strict_past" if self.causal else "noncausal")
+        if causal is not None:
+            warnings.warn(
+                "SetOnlyLM(causal=...) is deprecated; set_causality_mode is the "
+                "single source of truth and wins when both are supplied.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        mode = set_causality_mode
+        if mode is None:
+            mode = "strict_past" if (causal is None or bool(causal)) else "noncausal"
         mode_aliases = {
             "option1": "strict_past",
             "end_aligned": "strict_past",
@@ -120,6 +128,7 @@ class SetOnlyLM(nn.Module):
             raise ValueError(
                 "set_causality_mode must be 'strict_past' or 'noncausal'"
             )
+        self.causal = self.set_causality_mode == "strict_past"
         output_residual_mode = str(output_residual_mode)
         if output_residual_mode not in {"direct", "empty_only", "none"}:
             raise ValueError(

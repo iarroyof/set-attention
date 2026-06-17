@@ -146,7 +146,15 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     seq_len = cfg.get("data", {}).get("seq_len") or model.get("max_seq_len") or 0
     window_size = model.get("window_size", 32) or 32
     stride = model.get("stride", 16) or 16
-    set_causality_mode = model.get("set_causality_mode", "strict_past" if model.get("causal", True) else "noncausal")
+    if impl in {"set_only", "hybrid_token_set"} and "causal" in model:
+        _warn(
+            "model.causal is deprecated for set-only models; "
+            "model.set_causality_mode is the single source of truth."
+        )
+    set_causality_mode = model.get(
+        "set_causality_mode",
+        "strict_past" if task == "lm" and impl in {"set_only", "hybrid_token_set"} else "noncausal",
+    )
     max_sets = _max_sets(
         int(seq_len),
         int(window_size),
@@ -338,7 +346,7 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
         output_residual_mode in {"direct", "empty_only", "none"},
         "set_only: output_residual_mode must be 'direct', 'empty_only', or 'none'",
     )
-    if task == "lm" and impl in {"set_only", "hybrid_token_set"} and model.get("causal", True):
+    if task == "lm" and impl in {"set_only", "hybrid_token_set"}:
         require(
             set_causality_mode == "strict_past",
             "set/hybrid causal LM requires set_causality_mode=strict_past",

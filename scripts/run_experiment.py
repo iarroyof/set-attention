@@ -109,7 +109,6 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
             adapter_hidden_multiplier=model_cfg.get("adapter_hidden_multiplier", 2),
             gamma=model_cfg.get("gamma", 1.0),
             beta=model_cfg.get("beta", 0.0),
-            causal=bool(model_cfg.get("causal", True)),
             set_causality_mode=model_cfg.get("set_causality_mode", "strict_past"),
             output_residual_mode=model_cfg.get("output_residual_mode", "empty_only"),
         )
@@ -153,7 +152,6 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
         gamma=model_cfg.get("gamma", 1.0),
         beta=model_cfg.get("beta", 0.0),
         allow_token_token=bool(model_cfg.get("allow_token_token", False)),
-        causal=bool(model_cfg.get("causal", True)),
         set_causality_mode=model_cfg.get("set_causality_mode"),
         output_residual_mode=model_cfg.get("output_residual_mode", "direct"),
     )

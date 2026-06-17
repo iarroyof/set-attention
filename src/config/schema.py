@@ -73,7 +73,6 @@ SET_ONLY_KEYS = {
     "set_causality_mode",
     "output_residual_mode",
     "seq2seq",
-    "causal",
     "hybrid",
 }
 
@@ -111,6 +110,10 @@ def validate_config(cfg: dict) -> None:
     unexpected = set(model_cfg.keys()) - allowed_keys
     if unexpected:
         raise ConfigError(f"Unexpected model keys: {sorted(unexpected)}")
+    if impl in {"set_only", "hybrid_token_set"} and "causal" in model_cfg:
+        raise ConfigError(
+            "model.causal is deprecated for set-only models; use model.set_causality_mode"
+        )
 
     if model_cfg.get("architecture") is not None:
         if model_cfg.get("architecture") not in {"transformer_lm", "transformer_seq2seq"}:

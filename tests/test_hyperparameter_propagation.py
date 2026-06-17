@@ -74,6 +74,8 @@ def test_a1_4_normalize_preserves_canonical_defaults():
     assert model["set_state_dim"] is None
     assert model["adapter_type"] == "auto"
     assert model["output_residual_mode"] == "direct"
+    assert model["set_causality_mode"] == "strict_past"
+    assert "causal" not in model
 
 
 def test_a1_4_config_values_reach_set_only_submodules():

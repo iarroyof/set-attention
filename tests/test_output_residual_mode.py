@@ -173,6 +173,32 @@ def test_geometry_only_learned_router_batches_descriptors():
     assert logits.shape == (1, 8, 31)
 
 
+def test_set_causality_mode_overrides_legacy_causal_false():
+    model = SetOnlyLM(
+        vocab_size=31,
+        d_model=8,
+        num_layers=0,
+        num_heads=2,
+        window_size=4,
+        stride=2,
+        dropout=0.0,
+        max_seq_len=8,
+        dim_feedforward=16,
+        pooling="mean",
+        router_type="uniform",
+        router_topk=0,
+        backend="exact",
+        feature_mode="geometry_only",
+        token_mlp=False,
+        causal=False,
+        set_causality_mode="strict_past",
+        output_residual_mode="empty_only",
+    )
+
+    assert model.set_causality_mode == "strict_past"
+    assert model.causal is True
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

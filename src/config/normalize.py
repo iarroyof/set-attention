@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import Any, Dict
 
 
@@ -139,12 +140,19 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
                 task = "seq2seq"
             elif data_cfg.get("dataset"):
                 task = "lm"
-        default_causality_mode = (
-            "strict_past"
-            if task == "lm" and bool(model.get("causal", True))
-            else "noncausal"
-        )
-        model.setdefault("set_causality_mode", default_causality_mode)
+        legacy_causal = model.pop("causal", None)
+        if legacy_causal is not None:
+            message = (
+                "model.causal is deprecated for set-only models; "
+                "use model.set_causality_mode. set_causality_mode wins when both are set."
+            )
+            cfg.setdefault("_warnings", []).append(message)
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
+        if "set_causality_mode" not in model:
+            default_causality_mode = "strict_past" if task == "lm" else "noncausal"
+            if legacy_causal is not None:
+                default_causality_mode = "strict_past" if bool(legacy_causal) else "noncausal"
+            model["set_causality_mode"] = default_causality_mode
         token_mlp = model.get("token_mlp")
         if token_mlp is None:
             model["token_mlp"] = {"enabled": True}
