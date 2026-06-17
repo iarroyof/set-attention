@@ -36,6 +36,7 @@ class SetOnlyCrossAttention(nn.Module):
         gamma: float,
         beta: float,
         router_temperature: float = 1.0,
+        router_min_temp: float = 0.5,
     ) -> None:
         super().__init__()
         self.window_size = window_size
@@ -48,6 +49,7 @@ class SetOnlyCrossAttention(nn.Module):
         self.router_type = router_type
         self.router_topk = router_topk
         self.router_temperature = float(router_temperature)
+        self.router_min_temp = float(router_min_temp)
 
         if isinstance(pooling, dict):
             self.pooling_mode = pooling.get("mode", "mean")
@@ -87,6 +89,8 @@ class SetOnlyCrossAttention(nn.Module):
             num_bins = int(self.feature_params.get("num_bins", 128))
             fusion = self.feature_params.get("fusion", "mlp")
             include_geom = self.feature_params.get("include_geom_in_attn", True)
+            normalize = bool(self.feature_params.get("normalize", True))
+            hash_seed = int(self.feature_params.get("hash_seed", 13))
             self.feature_builder = HashedCountFeatureBuilder(
                 d_model=d_model,
                 d_phi=d_phi,
@@ -94,6 +98,8 @@ class SetOnlyCrossAttention(nn.Module):
                 num_bins=num_bins,
                 gamma=gamma,
                 beta=beta,
+                normalize=normalize,
+                hash_seed=hash_seed,
                 fusion=fusion,
                 include_geom_in_attn=include_geom,
             )
@@ -113,6 +119,7 @@ class SetOnlyCrossAttention(nn.Module):
                 d_model=d_model,
                 topk=router_topk,
                 restrict_to_sets=False,
+                min_temp=self.router_min_temp,
             )
             self.router.temperature.fill_(self.router_temperature)
         else:

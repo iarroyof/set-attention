@@ -1,0 +1,483 @@
+{
+  "artifacts": {
+    "baseline_dense_exact": {
+      "csv_path": "out/a2_0_smoke/a2_0_baseline_dense_exact_seed0_lr1e-4_rerun.csv",
+      "final": {
+        "train_loss": 5.540649072648523,
+        "train_ppl": 254.84332275390625,
+        "val_loss": 6.661970641687334,
+        "val_ppl": 782.0906372070312
+      },
+      "json_path": "out/a2_0_smoke/a2_0_baseline_dense_exact_seed0_lr1e-4_rerun.json",
+      "last_row_subset": {
+        "ausa/candidate_count_max": "NA",
+        "ausa/candidate_count_mean": "NA",
+        "model.feature_params.hash_seed": null,
+        "model.feature_params.normalize": null,
+        "model.feature_params.num_bins": "NA",
+        "model.pooling.alpha": "NA",
+        "model.pooling.learnable_alpha": "NA",
+        "model.router.min_temp": null,
+        "model.set_causality_mode": "NA",
+        "resolved.adapter_type": "NA",
+        "resolved.d_phi": "NA",
+        "resolved.hash_normalize": "NA",
+        "resolved.hash_num_bins": "NA",
+        "resolved.hash_seed": "NA",
+        "resolved.landmark_count": "NA",
+        "resolved.landmark_coverage": "NA",
+        "resolved.pooling_alpha": "NA",
+        "resolved.router_min_temp": "NA"
+      },
+      "log_path": "logs/a2_0_smoke/a2_0_baseline_dense_exact_seed0_lr1e-4_rerun.log",
+      "per_epoch_wall_clock_s": [
+        31.328474760055542,
+        31.11601996421814,
+        31.10339641571045,
+        31.205565452575684,
+        31.21923065185547,
+        31.194204568862915,
+        31.23271107673645,
+        31.127681970596313,
+        31.14233708381653,
+        31.186395168304443
+      ],
+      "runtime_s": 317
+    },
+    "set_dense_exact": {
+      "csv_path": "out/a2_0_smoke/a2_0_set_dense_exact_seed0_lr1e-4.csv",
+      "final": {
+        "train_loss": 5.961071950228457,
+        "train_ppl": 388.0258483886719,
+        "val_loss": 7.288349929187509,
+        "val_ppl": 1463.1546630859375
+      },
+      "json_path": "out/a2_0_smoke/a2_0_set_dense_exact_seed0_lr1e-4.json",
+      "last_row_subset": {
+        "ausa/candidate_count_max": "2.0",
+        "ausa/candidate_count_mean": "1.9257812504749374",
+        "model.feature_params.hash_seed": "13",
+        "model.feature_params.normalize": "True",
+        "model.feature_params.num_bins": "128",
+        "model.pooling.alpha": "10.0",
+        "model.pooling.learnable_alpha": "False",
+        "model.router.min_temp": "0.5",
+        "model.set_causality_mode": "strict_past",
+        "resolved.adapter_type": "linear",
+        "resolved.d_phi": "384",
+        "resolved.hash_normalize": "True",
+        "resolved.hash_num_bins": "128",
+        "resolved.hash_seed": "13",
+        "resolved.landmark_count": "NA",
+        "resolved.landmark_coverage": "NA",
+        "resolved.pooling_alpha": "10.0",
+        "resolved.router_min_temp": "0.5"
+      },
+      "log_path": "logs/a2_0_smoke/a2_0_set_dense_exact_seed0_lr1e-4.log",
+      "per_epoch_wall_clock_s": [
+        41.42644000053406,
+        41.225892543792725,
+        41.36128115653992,
+        41.359944581985474,
+        41.14122486114502,
+        41.28140902519226,
+        41.955259561538696,
+        42.00124740600586,
+        41.84273552894592,
+        43.32498645782471
+      ],
+      "runtime_s": 445
+    }
+  },
+  "checks": [
+    {
+      "details": {
+        "a1_9_overall_pass": true,
+        "failed_checks": []
+      },
+      "method": "read audit/A1_9_gate.json on blue-demon",
+      "name": "blue_demon_a1_present",
+      "pass": true
+    },
+    {
+      "details": {
+        "branch": "paper/final-results-bundle",
+        "dirty": true,
+        "dirty_policy": "continued because dirty files are known A1 changes plus the A2.0 baseline diagnostics fix and audit artifacts",
+        "head": "1174947643b001647c4fb92cc48e88c75f044be4",
+        "status_short": [
+          " M \"Context For Revision Agent after NeurIPS2026 LLM feedback.md\"",
+          " M configs/hyperparameters.md",
+          " M configs/paper_complements/family_linear_landmark.yaml",
+          " M configs/paper_lr_norm/set_linear_landmark.yaml",
+          " M configs/set_only/wikitext2_landmark.yaml",
+          " D configs/set_only/wikitext2_nystrom.yaml",
+          " M scripts/create_paper_complements_yamls.sh",
+          " M scripts/export_main_results_provenance.sh",
+          " M scripts/postrun_collect_family_complements.sh",
+          " M scripts/run_experiment.py",
+          " M scripts/summarize_paper_family_complements.py",
+          " M src/config/compatibility.py",
+          " M src/config/normalize.py",
+          " M src/config/schema.py",
+          " M src/models/baseline_token/attention.py",
+          " M src/models/baseline_token/diagnostics.py",
+          " M src/models/seq2seq/seq2seq_model.py",
+          " M src/models/seq2seq/set_only_cross_attention.py",
+          " M src/models/set_only/banks.py",
+          " M src/models/set_only/diagnostics.py",
+          " M src/models/set_only/router.py",
+          " M src/models/set_only/set_only_lm.py",
+          " M src/set_attention/backends/landmark.py",
+          " M src/set_attention/backends/nystrom.py",
+          " M src/train/experiment_logger.py",
+          " M src/train/metrics_schema.py",
+          "?? audit/",
+          "?? configs/_deprecated/",
+          "?? docs/revision_source_of_truth_definitions.md",
+          "?? tests/test_banks_option1.py",
+          "?? tests/test_causality.py",
+          "?? tests/test_diagnostics_option1.py",
+          "?? tests/test_hyperparameter_propagation.py",
+          "?? tests/test_landmark_backend.py",
+          "?? tests/test_nystrom_deprecation.py"
+        ]
+      },
+      "method": "git rev-parse and git status --short",
+      "name": "repo_state_recorded",
+      "pass": true
+    },
+    {
+      "details": {
+        "cuda_available": true,
+        "device0": "NVIDIA GeForce RTX 4090",
+        "device1": "NVIDIA GeForce RTX 4090",
+        "device_count_unmasked": 2,
+        "device_count_with_CUDA_VISIBLE_DEVICES_0": 1,
+        "torch": "2.5.1+cu124"
+      },
+      "method": "docker compose exec torch CUDA probes",
+      "name": "environment_sanity",
+      "pass": true
+    },
+    {
+      "details": {
+        "csv": "out/a2_0_smoke/a2_0_baseline_dense_exact_seed0_lr1e-4_rerun.csv",
+        "final": {
+          "train_loss": 5.540649072648523,
+          "train_ppl": 254.84332275390625,
+          "val_loss": 6.661970641687334,
+          "val_ppl": 782.0906372070312
+        },
+        "json": "out/a2_0_smoke/a2_0_baseline_dense_exact_seed0_lr1e-4_rerun.json",
+        "log": "logs/a2_0_smoke/a2_0_baseline_dense_exact_seed0_lr1e-4_rerun.log",
+        "runtime_s": 317
+      },
+      "method": "10-epoch Docker run with W&B offline",
+      "name": "baseline_run_complete",
+      "pass": true
+    },
+    {
+      "details": {
+        "csv": "out/a2_0_smoke/a2_0_set_dense_exact_seed0_lr1e-4.csv",
+        "final": {
+          "train_loss": 5.961071950228457,
+          "train_ppl": 388.0258483886719,
+          "val_loss": 7.288349929187509,
+          "val_ppl": 1463.1546630859375
+        },
+        "json": "out/a2_0_smoke/a2_0_set_dense_exact_seed0_lr1e-4.json",
+        "log": "logs/a2_0_smoke/a2_0_set_dense_exact_seed0_lr1e-4.log",
+        "runtime_s": 445
+      },
+      "method": "10-epoch Docker run with W&B offline",
+      "name": "set_dense_run_complete",
+      "pass": true
+    },
+    {
+      "details": {
+        "baseline_val_ppl": 782.0906372070312,
+        "set_dense_val_ppl": 1463.1546630859375
+      },
+      "method": "final CSV rows",
+      "name": "plausible_validation_ppl",
+      "pass": true
+    },
+    {
+      "details": {
+        "baseline_dense_exact": {
+          "bad_values": [],
+          "json_path": "out/a2_0_smoke/a2_0_baseline_dense_exact_seed0_lr1e-4_rerun.json",
+          "rows": 10
+        },
+        "set_dense_exact": {
+          "bad_values": [],
+          "json_path": "out/a2_0_smoke/a2_0_set_dense_exact_seed0_lr1e-4.json",
+          "rows": 10
+        }
+      },
+      "method": "csv.DictReader plus json.loads",
+      "name": "csv_json_well_formed",
+      "pass": true
+    },
+    {
+      "details": {
+        "baseline_dense_exact": {
+          "epochs": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "wandb_nonmonotonic_warning": false
+        },
+        "set_dense_exact": {
+          "epochs": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "wandb_nonmonotonic_warning": false
+        }
+      },
+      "method": "CSV epoch sequence plus W&B offline log scan; ExperimentLogger logs with step=epoch",
+      "name": "wandb_logged_steps_monotonic",
+      "pass": true
+    },
+    {
+      "details": {
+        "landmark_behavior": "dense/exact run logs resolved.landmark_coverage and resolved.landmark_count as NA because landmark backend is not used",
+        "missing": [],
+        "values": {
+          "model.feature_params.hash_seed": 13,
+          "model.feature_params.normalize": true,
+          "model.feature_params.num_bins": 128,
+          "model.pooling.alpha": 10.0,
+          "model.pooling.learnable_alpha": false,
+          "model.router.min_temp": 0.5,
+          "model.set_causality_mode": "strict_past",
+          "resolved.adapter_type": "linear",
+          "resolved.d_phi": 384,
+          "resolved.hash_normalize": true,
+          "resolved.hash_num_bins": 128,
+          "resolved.hash_seed": 13,
+          "resolved.pooling_alpha": 10.0,
+          "resolved.router_min_temp": 0.5
+        }
+      },
+      "method": "set dense JSON metadata",
+      "name": "set_resolved_config_keys",
+      "pass": true
+    },
+    {
+      "details": {
+        "behavior": "baseline_token does not construct set-only pooling/router/hash modules; resolved set-only fields are present as NA and raw model.* set-only keys are absent/not applicable",
+        "resolved_subset": {
+          "resolved.adapter_type": "NA",
+          "resolved.d_phi": "NA",
+          "resolved.hash_normalize": "NA",
+          "resolved.hash_num_bins": "NA",
+          "resolved.hash_seed": "NA",
+          "resolved.landmark_count": "NA",
+          "resolved.landmark_coverage": "NA",
+          "resolved.pooling_alpha": "NA",
+          "resolved.router_min_temp": "NA"
+        }
+      },
+      "method": "baseline JSON metadata",
+      "name": "baseline_resolved_config_behavior",
+      "pass": true
+    },
+    {
+      "details": {
+        "L": 512,
+        "M": 63,
+        "M_formula": "floor((L-w)/s)+1",
+        "candidate_count_max_final": "2.0",
+        "candidate_count_mean_final": "1.9257812504749374",
+        "s": 8,
+        "set_causality_mode": "strict_past",
+        "w": 16
+      },
+      "method": "resolved config plus T1 formula",
+      "name": "strict_past_topology",
+      "pass": true
+    },
+    {
+      "details": {
+        "baseline_dense_exact": {
+          "max_s": 31.328474760055542,
+          "mean_s": 31.185601711273193,
+          "per_epoch_s": [
+            31.328474760055542,
+            31.11601996421814,
+            31.10339641571045,
+            31.205565452575684,
+            31.21923065185547,
+            31.194204568862915,
+            31.23271107673645,
+            31.127681970596313,
+            31.14233708381653,
+            31.186395168304443
+          ]
+        },
+        "set_dense_exact": {
+          "max_s": 43.32498645782471,
+          "mean_s": 41.692042112350464,
+          "per_epoch_s": [
+            41.42644000053406,
+            41.225892543792725,
+            41.36128115653992,
+            41.359944581985474,
+            41.14122486114502,
+            41.28140902519226,
+            41.955259561538696,
+            42.00124740600586,
+            41.84273552894592,
+            43.32498645782471
+          ]
+        }
+      },
+      "method": "train/time_per_epoch_s CSV column",
+      "name": "per_epoch_wall_clock_recorded",
+      "pass": true
+    },
+    {
+      "details": {
+        "baseline_smoke_runtime_s": 317,
+        "basis": "scripts/gpu0_run_lrnorm_headline_pairs.sh plus scripts/gpu1_run_lrnorm_family_anchor.sh",
+        "conservative_size_multiplier": 1.8,
+        "critical_path_days": 0.219075,
+        "critical_path_hours": 5.2578,
+        "critical_path_s": 18928.079999999998,
+        "exceeds_5_days": false,
+        "gpu0_headline_runs": 24,
+        "gpu0_projected_s": 18928.079999999998,
+        "gpu1_family_anchor_runs": 6,
+        "gpu1_projected_s": 3070.4999999999995,
+        "overhead_multiplier": 1.15,
+        "set_dense_smoke_runtime_s": 445
+      },
+      "method": "current LR-norm helper scripts and measured A2.0 runtimes",
+      "name": "projection_under_5_days",
+      "pass": true
+    },
+    {
+      "details": {
+        "fix": "baseline first-observation delta diagnostics now emit 0.0 instead of NaN",
+        "incident": "audit/incident_A2_0_baseline_diagnostics_nan_20260509.md",
+        "verification": "baseline rerun CSV has zero nan/inf strings and W&B offline summary reports finite baseline/delta_*"
+      },
+      "method": "minimal code fix plus rerun",
+      "name": "blocking_bug_fixed",
+      "pass": true
+    },
+    {
+      "details": {
+        "blue_demon": "git diff --check passed",
+        "local": "git diff --check passed"
+      },
+      "method": "git diff --check",
+      "name": "git_diff_check",
+      "pass": true
+    },
+    {
+      "details": {
+        "file": "src/models/baseline_token/diagnostics.py"
+      },
+      "method": "docker compose exec python -m py_compile",
+      "name": "py_compile_fix",
+      "pass": true
+    }
+  ],
+  "commands": {
+    "baseline_failed_first_attempt": "CUDA_VISIBLE_DEVICES=0 WANDB_MODE=offline python scripts/run_experiment.py --config configs/paper_lr_norm/baseline_dense_exact.yaml --wandb --csv-path out/a2_0_smoke/a2_0_baseline_dense_exact_seed0_lr1e-4.csv ...",
+    "baseline_final_rerun": "CUDA_VISIBLE_DEVICES=0 WANDB_MODE=offline python scripts/run_experiment.py --config configs/paper_lr_norm/baseline_dense_exact.yaml --wandb --csv-path out/a2_0_smoke/a2_0_baseline_dense_exact_seed0_lr1e-4_rerun.csv --override training.epochs=10 training.lr=0.0001 model.d_model=384 model.dim_feedforward=1536 model.num_layers=6 model.num_heads=8 ...",
+    "set_dense_exact": "CUDA_VISIBLE_DEVICES=0 WANDB_MODE=offline python scripts/run_experiment.py --config configs/paper_lr_norm/set_dense_exact.yaml --wandb --csv-path out/a2_0_smoke/a2_0_set_dense_exact_seed0_lr1e-4.csv --override training.epochs=10 training.lr=0.0001 model.d_model=384 model.dim_feedforward=1536 model.num_layers=6 model.num_heads=8 model.window_size=16 model.stride=8 model.set_causality_mode=strict_past ..."
+  },
+  "configs_used": {
+    "baseline_dense_exact": "configs/paper_lr_norm/baseline_dense_exact.yaml",
+    "set_dense_exact": "configs/paper_lr_norm/set_dense_exact.yaml"
+  },
+  "created_at_utc": "2026-05-09T17:53:42.903984+00:00",
+  "do_not_start_A2_1_to_A2_3_enforced": true,
+  "notes": [
+    "W&B was enabled in offline mode to exercise the logging branch without network dependency.",
+    "No checkpoints are configured by scripts/run_experiment.py for these smoke runs; no checkpoint corruption was observed or applicable.",
+    "Set-only dense/exact is not a landmark backend, so landmark_coverage/count are logged as NA.",
+    "The first baseline attempt is retained only as incident evidence; the final gate uses the clean rerun artifacts."
+  ],
+  "overall_pass": true,
+  "phase": "A2.0 pre-launch smoke gate",
+  "phase_A2_1_to_A2_3_cleared": true,
+  "projection": {
+    "baseline_smoke_runtime_s": 317,
+    "basis": "scripts/gpu0_run_lrnorm_headline_pairs.sh plus scripts/gpu1_run_lrnorm_family_anchor.sh",
+    "conservative_size_multiplier": 1.8,
+    "critical_path_days": 0.219075,
+    "critical_path_hours": 5.2578,
+    "critical_path_s": 18928.079999999998,
+    "exceeds_5_days": false,
+    "gpu0_headline_runs": 24,
+    "gpu0_projected_s": 18928.079999999998,
+    "gpu1_family_anchor_runs": 6,
+    "gpu1_projected_s": 3070.4999999999995,
+    "overhead_multiplier": 1.15,
+    "set_dense_smoke_runtime_s": 445
+  },
+  "repo": {
+    "branch": "paper/final-results-bundle",
+    "dirty": true,
+    "head": "1174947643b001647c4fb92cc48e88c75f044be4",
+    "status_short": [
+      " M \"Context For Revision Agent after NeurIPS2026 LLM feedback.md\"",
+      " M configs/hyperparameters.md",
+      " M configs/paper_complements/family_linear_landmark.yaml",
+      " M configs/paper_lr_norm/set_linear_landmark.yaml",
+      " M configs/set_only/wikitext2_landmark.yaml",
+      " D configs/set_only/wikitext2_nystrom.yaml",
+      " M scripts/create_paper_complements_yamls.sh",
+      " M scripts/export_main_results_provenance.sh",
+      " M scripts/postrun_collect_family_complements.sh",
+      " M scripts/run_experiment.py",
+      " M scripts/summarize_paper_family_complements.py",
+      " M src/config/compatibility.py",
+      " M src/config/normalize.py",
+      " M src/config/schema.py",
+      " M src/models/baseline_token/attention.py",
+      " M src/models/baseline_token/diagnostics.py",
+      " M src/models/seq2seq/seq2seq_model.py",
+      " M src/models/seq2seq/set_only_cross_attention.py",
+      " M src/models/set_only/banks.py",
+      " M src/models/set_only/diagnostics.py",
+      " M src/models/set_only/router.py",
+      " M src/models/set_only/set_only_lm.py",
+      " M src/set_attention/backends/landmark.py",
+      " M src/set_attention/backends/nystrom.py",
+      " M src/train/experiment_logger.py",
+      " M src/train/metrics_schema.py",
+      "?? audit/",
+      "?? configs/_deprecated/",
+      "?? docs/revision_source_of_truth_definitions.md",
+      "?? tests/test_banks_option1.py",
+      "?? tests/test_causality.py",
+      "?? tests/test_diagnostics_option1.py",
+      "?? tests/test_hyperparameter_propagation.py",
+      "?? tests/test_landmark_backend.py",
+      "?? tests/test_nystrom_deprecation.py"
+    ]
+  }
+}

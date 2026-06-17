@@ -1,0 +1,3 @@
+@echo off
+wsl -d Ubuntu-24.04 -u iarroyof -e bash -lc "sshpass -f $HOME/.ssh/.sshpass ssh iarroyof@192.168.241.149 'nvidia-smi; echo; echo === PROCS ===; ps aux | grep run_a41 | grep -v grep; echo; echo === NOHUP LOG ===; cat ~/set-attention/logs/a41_smoke/nohup_a41.log 2>/dev/null || echo MISSING; echo; echo === WORKER GPU0 ===; cat ~/set-attention/logs/a41_smoke/worker_gpu0.log 2>/dev/null || echo MISSING; echo; echo === WORKER GPU1 ===; cat ~/set-attention/logs/a41_smoke/worker_gpu1.log 2>/dev/null || echo MISSING; echo; echo === PRELAUNCH JSON ===; cat ~/set-attention/audit/A4_1_smoke_prelaunch.json 2>/dev/null || echo MISSING' | tee /mnt/d/UserFolders/Documents/GitHub/set-attention/a41_status.txt"
+pause

@@ -1,0 +1,244 @@
+{
+  "audit": "A1.9 consolidated audit and smoke gate",
+  "bug_fixes_made_during_gate": [
+    {
+      "files": [
+        "src/models/set_only/diagnostics.py",
+        "tests/test_diagnostics_option1.py"
+      ],
+      "incident": "audit/incident_A1_9_diagnostics_nan_20260509.md",
+      "summary": "SetDiagnostics first-epoch delta metrics now emit 0.0 instead of NaN when no previous finite epoch baseline exists."
+    }
+  ],
+  "checks": [
+    {
+      "command_or_method": "docker compose exec -T set-attention env PYTHONPATH=. python -",
+      "details": {
+        "branch": "paper/final-results-bundle",
+        "cuda_available": true,
+        "device_count": 2,
+        "device_names": [
+          "NVIDIA GeForce RTX 4090",
+          "NVIDIA GeForce RTX 4090"
+        ],
+        "head": "1174947643b001647c4fb92cc48e88c75f044be4",
+        "python": "3.11.0rc1",
+        "status_short_tail": "M \"Context For Revision Agent after NeurIPS2026 LLM feedback.md\"\n M configs/hyperparameters.md\n M configs/paper_complements/family_linear_landmark.yaml\n M configs/paper_lr_norm/set_linear_landmark.yaml\n M configs/set_only/wikitext2_landmark.yaml\n D configs/set_only/wikitext2_nystrom.yaml\n M scripts/create_paper_complements_yamls.sh\n M scripts/export_main_results_provenance.sh\n M scripts/postrun_collect_family_complements.sh\n M scripts/run_experiment.py\n M scripts/summarize_paper_family_complements.py\n M src/config/compatibility.py\n M src/config/normalize.py\n M src/config/schema.py\n M src/models/baseline_token/attention.py\n M src/models/seq2seq/seq2seq_model.py\n M src/models/seq2seq/set_only_cross_attention.py\n M src/models/set_only/banks.py\n M src/models/set_only/diagnostics.py\n M src/models/set_only/router.py\n M src/models/set_only/set_only_lm.py\n M src/set_attention/backends/landmark.py\n M src/set_attention/backends/nystrom.py\n M src/train/experiment_logger.py\n M src/train/metrics_schema.py\n?? audit/\n?? configs/_deprecated/\n?? docs/revision_source_of_truth_definitions.md\n?? tests/test_banks_option1.py\n?? tests/test_causality.py\n?? tests/test_diagnostics_option1.py\n?? tests/test_hyperparameter_propagation.py\n?? tests/test_landmark_backend.py\n?? tests/test_nystrom_deprecation.py",
+        "torch_version": "2.5.1+cu124"
+      },
+      "name": "environment_sanity_blue_demon_docker",
+      "pass": true
+    },
+    {
+      "command_or_method": "PYTHONPATH=. python tests/test_banks_option1.py",
+      "details": {
+        "output_tail": "",
+        "returncode": 0
+      },
+      "name": "A1.1_tests_test_banks_option1",
+      "pass": true
+    },
+    {
+      "command_or_method": "PYTHONPATH=. python tests/test_causality.py",
+      "details": {
+        "output_tail": "",
+        "returncode": 0
+      },
+      "name": "A1.2_tests_test_causality",
+      "pass": true
+    },
+    {
+      "command_or_method": "PYTHONPATH=. python tests/test_hyperparameter_propagation.py",
+      "details": {
+        "output_tail": "/workspace/src/config/validators.py:19: RuntimeWarning: Config fingerprint cd37fd41ca6a already seen; run may be redundant.\n  warnings.warn(message, RuntimeWarning)\n/workspace/src/models/set_only/set_only_lm.py:154: RuntimeWarning: multiscale disabled; using single-scale bank\n  warnings.warn(\n{'pooling': {'mode': 'soft_trimmed_boltzmann', 'tau': 0.2, 'q': 0.75, 'alpha': 7.5, 'learnable_alpha': True, 'tiny_set_n': 3, 'isotropy_eps': 0.0001}, 'pooling_multihead': False, 'sig_gating': {}, 'd_phi': 128, 'geometry': {'enabled': True, 'apply_as_bias': True, 'apply_in_phi_attn': True}, 'router_multihead': True, 'router_temperature': 1.0, 'router_min_temp': 0.25, 'token_mlp': {'enabled': False}, 'set_causality_mode': 'strict_past'}\nPASS test_hyperparameter_propagation.py:test_a1_4_config_values_reach_set_only_submodules\n/workspace/src/models/set_only/set_only_lm.py:154: RuntimeWarning: multiscale disabled; using single-scale bank\n  warnings.warn(\n{'pooling': {'mode': 'mean', 'alpha': 10.0, 'learnable_alpha': False}, 'pooling_multihead': False, 'sig_gating': {}, 'd_phi': 32, 'geometry': {'enabled': True, 'apply_as_bias': True, 'apply_in_phi_attn': True}, 'router_multihead': True, 'router_temperature': 1.0, 'router_min_temp': 0.5, 'token_mlp': {'enabled': False}, 'set_causality_mode': 'strict_past'}\n{'pooling': {'mode': 'mean', 'tau': 0.1, 'q': 0.8, 'alpha': 10.0, 'learnable_alpha': False, 'tiny_set_n': 3, 'isotropy_eps': 0.0001}, 'pooling_multihead': False, 'sig_gating': {}, 'd_phi': 32, 'geometry': {'enabled': True, 'apply_as_bias': True, 'apply_in_phi_attn': True}, 'router_multihead': True, 'router_temperature': 1.0, 'router_min_temp': 0.5, 'token_mlp': {'enabled': False}, 'set_causality_mode': 'strict_past'}\nPASS test_hyperparameter_propagation.py:test_a1_4_explicit_defaults_preserve_eval_forward_fingerprint\n/workspace/src/config/validators.py:19: RuntimeWarning: Config fingerprint f1f95d18e61e already seen; run may be redundant.\n  warnings.warn(message, RuntimeWarning)\nPASS test_hyperparameter_propagation.py:test_a1_4_normalize_preserves_canonical_defaults\n{'pooling': {'mode': 'mean', 'tau': 0.1, 'q': 0.8, 'alpha': 10.0, 'learnable_alpha': False, 'tiny_set_n': 3, 'isotropy_eps': 0.0001}, 'pooling_multihead': False, 'sig_gating': {}, 'd_phi': 128, 'geometry': {'enabled': True, 'apply_as_bias': True, 'apply_in_phi_attn': True}, 'router_multihead': True, 'router_temperature': 1.0, 'router_min_temp': 0.75, 'token_mlp': {'enabled': False}, 'set_causality_mode': 'strict_past'}\n[task] detected lm (cfg.data.dataset)\nPASS test_hyperparameter_propagation.py:test_a1_4_resolved_metadata_reaches_json_and_csv\n",
+        "returncode": 0
+      },
+      "name": "A1.4_tests_test_hyperparameter_propagation",
+      "pass": true
+    },
+    {
+      "command_or_method": "PYTHONPATH=. python tests/test_landmark_backend.py",
+      "details": {
+        "output_tail": "PASS test_landmark_backend.py:test_active_config_text_has_no_num_landmarks_outside_deprecated\nPASS test_landmark_backend.py:test_active_landmark_configs_parse_with_coverage_and_no_num_landmarks\nPASS test_landmark_backend.py:test_landmark_grid_count_and_anchors\nPASS test_landmark_backend.py:test_landmark_historical_indices_m64_rho025\nPASS test_landmark_backend.py:test_landmark_reference_indices_m63_rho025\n/workspace/src/config/validators.py:19: RuntimeWarning: Auto adapter switched to nonlinear due to low effective rank\n  warnings.warn(message, RuntimeWarning)\n/workspace/src/models/set_only/set_only_lm.py:154: RuntimeWarning: multiscale disabled; using single-scale bank\n  warnings.warn(\n{'pooling': {'mode': 'soft_trimmed_boltzmann', 'tau': 0.1, 'q': 0.85, 'alpha': 10.0, 'learnable_alpha': False, 'tiny_set_n': 3, 'isotropy_eps': 0.0001}, 'pooling_multihead': False, 'sig_gating': {}, 'd_phi': 32, 'geometry': {'enabled': True, 'apply_as_bias': True, 'apply_in_phi_attn': True}, 'router_multihead': True, 'router_temperature': 1.0, 'router_min_temp': 0.5, 'token_mlp': {'enabled': False}, 'set_causality_mode': 'strict_past'}\nPASS test_landmark_backend.py:test_landmark_resolved_metadata_reaches_model_and_config\n",
+        "returncode": 0
+      },
+      "name": "A1.6_tests_test_landmark_backend",
+      "pass": true
+    },
+    {
+      "command_or_method": "PYTHONPATH=. python tests/test_diagnostics_option1.py",
+      "details": {
+        "output_tail": "PASS test_diagnostics_option1.py:test_candidate_counts_match_strict_past_bank_fiber\nPASS test_diagnostics_option1.py:test_diagnostics_follow_supplied_fiber_not_legacy_membership\n/workspace/src/models/set_only/diagnostics.py:632: RuntimeWarning: Routing appears near-hard top-1; sparse gate may be overconfident (router_top1_weight=1.0000).\n  warnings.warn(\nPASS test_diagnostics_option1.py:test_sharp_candidate_probs_have_top1_and_gap_one\nPASS test_diagnostics_option1.py:test_uniform_candidate_probs_have_normalized_entropy_one\nPASS test_diagnostics_option1.py:test_zero_and_single_candidate_rows_are_finite\n",
+        "returncode": 0
+      },
+      "name": "A1.7_tests_test_diagnostics_option1",
+      "pass": true
+    },
+    {
+      "command_or_method": "PYTHONPATH=. python tests/test_nystrom_deprecation.py",
+      "details": {
+        "output_tail": "PASS test_nystrom_deprecation.py:test_active_configs_do_not_use_backend_nystrom\nPASS test_nystrom_deprecation.py:test_nystrom_backend_constructor_hard_fails\nPASS test_nystrom_deprecation.py:test_nystrom_config_validation_rejects_active_config\n",
+        "returncode": 0
+      },
+      "name": "A1.10_tests_test_nystrom_deprecation",
+      "pass": true
+    },
+    {
+      "command_or_method": "load_config() over active paper_lr_norm, paper_complements, and set_only configs",
+      "details": {
+        "landmark_config_violations": [],
+        "nystrom_offenders": [],
+        "parsed": {
+          "paper_complements": [
+            "configs/paper_complements/family_dense_exact.yaml",
+            "configs/paper_complements/family_linear_landmark.yaml",
+            "configs/paper_complements/family_sparse_local_band.yaml"
+          ],
+          "paper_lr_norm": [
+            "configs/paper_lr_norm/baseline_dense_exact.yaml",
+            "configs/paper_lr_norm/set_dense_exact.yaml",
+            "configs/paper_lr_norm/set_linear_landmark.yaml",
+            "configs/paper_lr_norm/set_sparse_local_band.yaml"
+          ],
+          "set_only": [
+            "configs/set_only/wikitext2_dense_exact.yaml",
+            "configs/set_only/wikitext2_landmark.yaml",
+            "configs/set_only/wikitext2_local_band.yaml"
+          ]
+        }
+      },
+      "name": "config_parse_validation",
+      "pass": true
+    },
+    {
+      "command_or_method": "load configs/paper_lr_norm/set_dense_exact.yaml; build_model(); attach_resolved_metadata(); build_window_bank()",
+      "details": {
+        "M": 63,
+        "M_formula": 63,
+        "captured_output_tail": "{'pooling': {'mode': 'soft_trimmed_boltzmann', 'tau': 0.1, 'q': 0.85, 'alpha': 10.0, 'learnable_alpha': False, 'tiny_set_n': 3, 'isotropy_eps': 0.0001}, 'pooling_multihead': False, 'sig_gating': {}, 'd_phi': 384, 'geometry': {'enabled': True, 'apply_as_bias': True, 'apply_in_phi_attn': True}, 'router_multihead': True, 'router_temperature': 1.0, 'router_min_temp': 0.5, 'token_mlp': {'enabled': False}, 'set_causality_mode': 'strict_past'}\n/workspace/src/models/set_only/set_only_lm.py:154: RuntimeWarning: multiscale disabled; using single-scale bank\n  warnings.warn(\n/usr/local/lib/python3.11/dist-packages/torch/nn/init.py:511: UserWarning: Initializing zero-element tensors is a no-op\n  warnings.warn(\"Initializing zero-element tensors is a no-op\")\n",
+        "feature_params.hash_seed": 13,
+        "feature_params.normalize": true,
+        "feature_params.num_bins": 128,
+        "pooling.alpha": 10.0,
+        "pooling.learnable_alpha": false,
+        "resolved.adapter_type": "linear",
+        "resolved.d_phi": 384,
+        "resolved.hash_normalize": true,
+        "resolved.hash_num_bins": 128,
+        "resolved.hash_seed": 13,
+        "resolved.pooling_alpha": 10.0,
+        "resolved.router_min_temp": 0.5,
+        "router.min_temp": 0.5,
+        "set_causality_mode": "strict_past"
+      },
+      "name": "resolved_config_snapshot_lrnorm_headline",
+      "pass": true
+    },
+    {
+      "command_or_method": "forward-only eval SetOnlyLM smokes for LR-norm dense/sparse/landmark with small width and L=512",
+      "details": {
+        "captured_output_tail": "{'pooling': {'mode': 'soft_trimmed_boltzmann', 'tau': 0.1, 'q': 0.85, 'alpha': 10.0, 'learnable_alpha': False, 'tiny_set_n': 3, 'isotropy_eps': 0.0001}, 'pooling_multihead': False, 'sig_gating': {}, 'd_phi': 32, 'geometry': {'enabled': True, 'apply_as_bias': True, 'apply_in_phi_attn': True}, 'router_multihead': True, 'router_temperature': 1.0, 'router_min_temp': 0.5, 'token_mlp': {'enabled': False}, 'set_causality_mode': 'strict_past'}\n{'pooling': {'mode': 'soft_trimmed_boltzmann', 'tau': 0.1, 'q': 0.85, 'alpha': 10.0, 'learnable_alpha': False, 'tiny_set_n': 3, 'isotropy_eps': 0.0001}, 'pooling_multihead': False, 'sig_gating': {}, 'd_phi': 32, 'geometry': {'enabled': True, 'apply_as_bias': True, 'apply_in_phi_attn': True}, 'router_multihead': True, 'router_temperature': 1.0, 'router_min_temp': 0.5, 'token_mlp': {'enabled': False}, 'set_causality_mode': 'strict_past'}\n{'pooling': {'mode': 'soft_trimmed_boltzmann', 'tau': 0.1, 'q': 0.85, 'alpha': 10.0, 'learnable_alpha': False, 'tiny_set_n': 3, 'isotropy_eps': 0.0001}, 'pooling_multihead': False, 'sig_gating': {}, 'd_phi': 32, 'geometry': {'enabled': True, 'apply_as_bias': True, 'apply_in_phi_attn': True}, 'router_multihead': True, 'router_temperature': 1.0, 'router_min_temp': 0.5, 'token_mlp': {'enabled': False}, 'set_causality_mode': 'strict_past'}\n/workspace/src/config/validators.py:19: RuntimeWarning: Auto adapter switched to nonlinear due to low effective rank\n  warnings.warn(message, RuntimeWarning)\n",
+        "dense_exact": {
+          "logits_finite": true,
+          "logits_shape": [
+            1,
+            512,
+            101
+          ],
+          "set_causality_mode": "strict_past"
+        },
+        "linear_landmark": {
+          "M": 63,
+          "landmark_count": 16,
+          "landmark_coverage": 0.25,
+          "landmark_indices": [
+            0,
+            4,
+            8,
+            12,
+            17,
+            21,
+            25,
+            29,
+            33,
+            37,
+            41,
+            45,
+            50,
+            54,
+            58,
+            62
+          ],
+          "logits_finite": true,
+          "logits_shape": [
+            1,
+            512,
+            101
+          ],
+          "set_causality_mode": "strict_past"
+        },
+        "sparse_local_band": {
+          "logits_finite": true,
+          "logits_shape": [
+            1,
+            512,
+            101
+          ],
+          "set_causality_mode": "strict_past"
+        }
+      },
+      "name": "tiny_forward_smokes",
+      "pass": true
+    },
+    {
+      "command_or_method": "forward-only train-mode dense strict_past smoke, inspect model.diagnostics epoch stats",
+      "details": {
+        "candidate_count_max": 2.0,
+        "candidate_count_mean": 1.92578125,
+        "captured_output_tail": "{'pooling': {'mode': 'soft_trimmed_boltzmann', 'tau': 0.1, 'q': 0.85, 'alpha': 10.0, 'learnable_alpha': False, 'tiny_set_n': 3, 'isotropy_eps': 0.0001}, 'pooling_multihead': False, 'sig_gating': {}, 'd_phi': 32, 'geometry': {'enabled': True, 'apply_as_bias': True, 'apply_in_phi_attn': True}, 'router_multihead': True, 'router_temperature': 1.0, 'router_min_temp': 0.5, 'token_mlp': {'enabled': False}, 'set_causality_mode': 'strict_past'}\n/workspace/src/models/set_only/diagnostics.py:621: RuntimeWarning: Pooling effective support is low; potential pooling collapse (pooling_neff_ratio=0.1453).\n  warnings.warn(\n",
+        "mode": "train_forward_only_dropout_zero_no_backward",
+        "num_numeric_metrics": 57,
+        "range_checks": {
+          "ausa/router_entropy_norm": {
+            "in_0_1": true,
+            "value": 0.9914159774780273
+          },
+          "ausa/router_top1_gap_norm": {
+            "in_0_1": true,
+            "value": 0.07927305996417999
+          },
+          "ausa/router_top1_weight": {
+            "in_0_1": true,
+            "value": 0.5310200452804565
+          },
+          "ausa/routing_entropy_norm": {
+            "in_0_1": true,
+            "value": 0.9914159774780273
+          }
+        }
+      },
+      "name": "diagnostics_sanity_tiny_strict_past",
+      "pass": true
+    },
+    {
+      "command_or_method": "Python pathlib scan of active docs/configs/tests/scripts",
+      "details": {
+        "active_paths_scanned": [
+          "Context For Revision Agent after NeurIPS2026 LLM feedback.md",
+          "README.md",
+          "configs/hyperparameters.md",
+          "docs/revision_source_of_truth_definitions.md"
+        ],
+        "lrnorm_m64_hits": [],
+        "nystrom_tested_bad_hits": [],
+        "old_landmark_example_hits": [],
+        "pydantic_bad_hits": []
+      },
+      "name": "documentation_config_grep_checks",
+      "pass": true
+    }
+  ],
+  "generated_at": "2026-05-09",
+  "overall_pass": true,
+  "repo": "/workspace"
+}

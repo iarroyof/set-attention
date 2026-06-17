@@ -72,7 +72,7 @@ class BaselineAttention(nn.Module):
                 self.backend_impl = LandmarkAttentionBackend(
                     d_model=d_model,
                     num_heads=num_heads,
-                    num_landmarks=self.backend_params.get("num_landmarks", 32),
+                    landmark_coverage=self.backend_params.get("landmark_coverage", 0.25),
                     dropout=dropout,
                     allow_token_token=True,
                 )

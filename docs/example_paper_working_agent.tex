@@ -2542,43 +2542,150 @@ The theory in this section supports the following precise claims.
 \section{Results}
 \label{sec:results}
 
-\subsection{Tier C Results}
-\label{sec:results-tier-c}
+\paragraph{Protocol.}
+All language-modeling results use WikiText-2 with the LR-normalized reference
+width $D=384$, $d_{\mathrm{ff}}=1536$, window size $w=16$, stride $s=8$,
+and learning rate $10^{-4}$ unless otherwise stated.  For set-only models,
+the autoregressive setting uses strict-past endpoint routing, drops partial
+trailing windows, and therefore has $M=63$ sets at $L=512$ and $M=255$ sets at
+$L=2048$.  Linear-family rows use the landmark backend with coverage $0.25$.
+All reported means are over three seeds unless explicitly marked otherwise;
+artifact hashes and per-run metadata are recorded in
+\texttt{audit/A5\_4\_handoff.md}.
 
-\subsubsection{Anchor stability at the reference operating point}
-\label{sec:results-tier-c-anchor}
+\subsection{Matched Backend Controls at the LR-Normalized Reference}
+\label{sec:results-matched-controls}
 
-We use the post-parity March summary layer and report the anchor seed sweep at the fixed reference operating point $(w,s,\tau_r,\tau_{\mathrm{pool}},q,\mathrm{lr},\mathrm{epochs})=(16,4,1.0,0.1,0.85,10^{-4},10)$. Table~\ref{tab:anchor-stability} lists one row per seed directly from \texttt{out/final\_paper\_bundle/tables/summary/paper\_action0\_anchor\_seed\_sweep.tsv}, with displayed values rounded and exact values preserved in \texttt{out/final\_paper\_bundle/checks/audit\_section\_B.json}.
+Table~\ref{tab:matched-headline} compares each SKA family against the matched
+token-attention backend at the $L=512$ LR-normalized headline setting.  The
+matched controls are essential: comparing all SKA variants only to a dense
+token baseline would conflate the effect of set routing with the effect of the
+underlying dense, sparse, or landmark backend.
+
+\begin{table}[t]
+\centering
+\caption{Matched backend controls at $L=512$, $w=16$, $s=8$, $M=63$.  Values
+are mean validation perplexity over three seeds; lower is better.  Source
+artifacts: \texttt{a6\_set\_state\_width\_summary.tsv} and
+\texttt{a2\_baseline\_controls\_summary.tsv}.}
+\label{tab:matched-headline}
+\scriptsize
+\begin{tabular}{llcc}
+\toprule
+Family & Backend & Token PPL $\downarrow$ & SKA PPL $\downarrow$ \\
+\midrule
+Dense & exact & $781.1 \pm 37.1$ & $1422.8 \pm 45.8$ \\
+Sparse & local band & $740.2 \pm 3.8$ & $1527.5 \pm 47.1$ \\
+Linear & landmark & $973.9 \pm 13.7$ & $1515.9 \pm 135.3$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The matched comparison is unfavorable to SKA at this budget: all three token
+baselines achieve lower perplexity than their set-routed counterparts.  This
+does not invalidate the structural claims, but it narrows the empirical claim:
+the present implementation is a controlled diagnostic model rather than a
+drop-in perplexity improvement over matched token attention.
+
+\subsection{Long-Context Memory and Quality}
+\label{sec:results-long-context}
+
+At $L=2048$, strict-past set-only models use $M=255$ sealed sets.  The long
+context slice in Table~\ref{tab:long-context} shows the main empirical
+tradeoff.  SKA variants have substantially lower peak VRAM than the dense
+token baseline, but they still have worse validation perplexity.  The matched
+sparse token baseline is both memory-heavier and much stronger in perplexity
+than the corresponding sparse SKA row.
+
+\begin{table}[t]
+\centering
+\caption{Long-context slice at $L=2048$, $w=16$, $s=8$, $M=255$.  Values are
+mean validation perplexity and mean peak VRAM over three seeds.  Source
+artifacts: \texttt{a42\_slice\_all\_runs.tsv} and
+\texttt{a4\_long\_context\_baseline\_controls\_summary.tsv}.}
+\label{tab:long-context}
+\scriptsize
+\begin{tabular}{llcc}
+\toprule
+Family & Backend & Val. PPL $\downarrow$ & Peak VRAM MiB $\downarrow$ \\
+\midrule
+Token dense & exact & $928.2 \pm 41.0$ & 18620 \\
+Token sparse & local band & $814.2 \pm 18.7$ & 18644 \\
+Token linear & landmark & $984.7 \pm 19.4$ & 15207 \\
+SKA dense & exact & $1511.5 \pm 90.5$ & 11043 \\
+SKA sparse & local band & $1429.4 \pm 27.3$ & 11043 \\
+SKA linear & landmark & $1434.7 \pm 30.9$ & 10996 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Convergence Check}
+\label{sec:results-convergence}
+
+The 30-epoch convergence panel confirms that the 10-epoch gap is not simply a
+short-training artifact.  At seed 0 and the best available learning rate from
+the LR-normalized summaries, token baselines remain ahead after 30 epochs:
+dense token, sparse token, and linear token reach validation perplexities
+1140.9, 1116.2, and 1331.9, respectively, while the dense, sparse, and linear
+SKA rows reach 2439.7, 2251.1, and 2138.7.  These runs are intentionally
+diagnostic and should not be written as convergence wins for SKA.
+
+\subsection{Capacity Diagnostics}
+\label{sec:results-capacity}
+
+The A6 ablations test whether the quality gap is explained by obvious capacity
+bottlenecks.  Table~\ref{tab:capacity-diagnostics} summarizes the result.  The
+main conclusion is negative: moderate interface widening helps some rows, but
+neither wider set states nor deeper set stacks provide a broad remedy.
 
 \begin{table*}[t]
 \centering
-\caption{Anchor stability at the reference operating point. One row per seed from \texttt{out/final\_paper\_bundle/tables/summary/paper\_action0\_anchor\_seed\_sweep.tsv}. Display values are rounded; exact values are recorded in \texttt{out/final\_paper\_bundle/checks/audit\_section\_B.json}.}
-\label{tab:anchor-stability}
+\caption{Capacity diagnostics at $L=512$, $w=16$, $s=8$, and LR $10^{-4}$.
+Entries are mean validation perplexity over three seeds.  Source artifacts:
+\texttt{a6\_dphi\_capacity\_summary.tsv},
+\texttt{a6\_set\_state\_width\_summary.tsv},
+\texttt{a6\_interface\_bottleneck\_summary.tsv}, and
+\texttt{a64\_depth\_sweep\_summary.tsv}.}
+\label{tab:capacity-diagnostics}
 \scriptsize
 \resizebox{\textwidth}{!}{%
-\begin{tabular}{rcccccccccc}
+\begin{tabular}{llcccc}
 \toprule
-Seed & Val. PPL $\downarrow$ & Candidate count & Routing entropy & Router top-1 & Pooling $n_{\mathrm{eff}}$ ratio & $\rho_p$ & $\rho_a$ & $\rho_{pa}$ & Time / epoch (s) $\downarrow$ & Peak VRAM (MiB) $\downarrow$ \\
+Test & Family & Setting A & PPL A $\downarrow$ & Setting B & PPL B $\downarrow$ \\
 \midrule
-0 & 580.6 & 3.953 & 0.264 & 0.395 & 0.411 & 0.829 & 0.128 & 0.106 & 73.4 & 11206.7 \\
-1 & 653.3 & 3.953 & 0.263 & 0.399 & 0.413 & 0.812 & 0.137 & 0.112 & 99.8 & 11206.7 \\
-2 & 581.2 & 3.953 & 0.263 & 0.402 & 0.412 & 0.827 & 0.130 & 0.108 & 81.9 & 11206.7 \\
+$d_\phi$ sweep & Set Dense & $d_\phi=384$ & 1422.8 & $d_\phi=768$ & 1541.0 \\
+$d_\phi$ sweep & Set Sparse & $d_\phi=384$ & 1527.5 & $d_\phi=512$ & 1447.3 \\
+$d_\phi$ sweep & Set Linear & $d_\phi=384$ & 1515.9 & $d_\phi=512$ & 1484.1 \\
+set-state width & Set Dense & $d_s=384$ & 1422.8 & $d_s=768$ & 1520.8 \\
+set-state width & Set Sparse & $d_s=384$ & 1527.5 & $d_s=512$ & 1407.6 \\
+set-state width & Set Linear & $d_s=384$ & 1515.9 & $d_s=768$ & 1554.8 \\
+interface match & Set Dense & $(d_s,d_\phi)=(768,384)$ & 1520.8 & $(768,768)$ & 1556.8 \\
+interface match & Set Sparse & $(d_s,d_\phi)=(512,384)$ & 1407.6 & $(512,512)$ & 1421.9 \\
+interface match & Set Linear & $(d_s,d_\phi)=(768,384)$ & 1554.8 & $(768,512)$ & 1427.5 \\
+depth sweep & Set Dense & 6 layers & 1422.8 & 10 layers & 1568.8 \\
+depth sweep & Set Sparse & 6 layers & 1527.5 & 10 layers & 1594.3 \\
+depth sweep & Set Linear & 6 layers & 1515.9 & 10 layers & 1582.2 \\
 \bottomrule
 \end{tabular}%
 }
 \end{table*}
 
-\subsubsection{Feasible operating region over topology and temperature}
-\label{sec:results-tier-c-feasible-region}
+These results support a more nuanced diagnosis.  The routing interface width
+$d_\phi$ can be a bottleneck in some cases, especially for the landmark family,
+where $(d_s,d_\phi)=(768,512)$ improves over $(768,384)$.  However, matching
+$d_\phi$ to the full set-state width often worsens perplexity, and increasing
+set-stack depth from 6 to 8 or 10 layers consistently hurts validation
+perplexity.  The current SKA gap is therefore not explained by a single missing
+capacity knob; it is more likely a combination of routing optimization,
+generalization, and interface conditioning.
 
-\subsubsection{Boundary transition under stride / candidate-count change}
-\label{sec:results-tier-c-boundary}
-
-\subsubsection{Pooling concentration and gradient transport}
-\label{sec:results-tier-c-pooling}
-
-\subsubsection{Matched quality / efficiency comparison against baseline}
-\label{sec:results-tier-c-baseline}
+\paragraph{Summary.}
+The revised experiments establish a conservative empirical picture.  The
+strict-past SKA implementation is causal, configurable, and memory-efficient at
+long context, but matched token-attention controls remain stronger on
+perplexity.  The capacity ablations rule out the simplest explanations that
+the gap is merely due to too-small $d_\phi$, too-small set-state width, or too
+shallow set processing.
 \bibliography{example_paper}
 \bibliographystyle{icml2026}
 

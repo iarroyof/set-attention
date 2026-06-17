@@ -44,12 +44,15 @@ class SetOnlyLM(nn.Module):
         multiscale: bool = False,
         sig_gating: dict | None = None,
         d_phi: int | None = None,
+        set_state_dim: int | None = None,
         geometry: dict | None = None,
         features: dict | None = None,
         router_type: str = "uniform",
         router_topk: int = 0,
         router_multihead: bool = False,
         router_temperature: float = 1.0,
+        router_min_temp: float = 0.5,
+        router_score_mode: str = "candidate_gather",
         backend: str = "exact",
         backend_params: dict | None = None,
         feature_mode: str = "geometry_only",
@@ -63,6 +66,8 @@ class SetOnlyLM(nn.Module):
         token_embedding: nn.Embedding | None = None,
         allow_token_token: bool = False,
         causal: bool = False,
+        set_causality_mode: str | None = None,
+        output_residual_mode: str = "direct",
     ) -> None:
         super().__init__()
         self.token_emb = token_embedding or nn.Embedding(vocab_size, d_model)
@@ -96,9 +101,31 @@ class SetOnlyLM(nn.Module):
         self.ffn_dropout = ffn_dropout if ffn_dropout is not None else dropout
         self.router_multihead = bool(router_multihead)
         self.router_temperature = float(router_temperature)
+        self.router_min_temp = float(router_min_temp)
+        if router_score_mode not in {"candidate_gather", "dense"}:
+            raise ValueError("router_score_mode must be 'candidate_gather' or 'dense'")
+        self.router_score_mode = router_score_mode
         self.pooling_multihead = bool(pooling_multihead)
         self.allow_token_token = bool(allow_token_token)
         self.causal = bool(causal)
+        mode = set_causality_mode or ("strict_past" if self.causal else "noncausal")
+        mode_aliases = {
+            "option1": "strict_past",
+            "end_aligned": "strict_past",
+            "causal": "strict_past",
+            "bidirectional": "noncausal",
+        }
+        self.set_causality_mode = mode_aliases.get(mode, mode)
+        if self.set_causality_mode not in {"strict_past", "noncausal"}:
+            raise ValueError(
+                "set_causality_mode must be 'strict_past' or 'noncausal'"
+            )
+        output_residual_mode = str(output_residual_mode)
+        if output_residual_mode not in {"direct", "empty_only", "none"}:
+            raise ValueError(
+                "output_residual_mode must be 'direct', 'empty_only', or 'none'"
+            )
+        self.output_residual_mode = output_residual_mode
         if isinstance(pooling, dict):
             self.pooling_mode = pooling.get("mode", "mean")
             self.pooling_params = {
@@ -111,7 +138,14 @@ class SetOnlyLM(nn.Module):
             }
         else:
             self.pooling_mode = pooling
-            self.pooling_params = {}
+            self.pooling_params = {
+                "alpha": 10.0,
+                "learnable_alpha": False,
+            }
+        self.resolved_pooling_alpha = float(self.pooling_params.get("alpha", 10.0))
+        self.resolved_pooling_learnable_alpha = bool(
+            self.pooling_params.get("learnable_alpha", False)
+        )
         self.pooling_module = None
         if self.pooling_mode == "soft_trimmed_boltzmann":
             from .banks import InformativeBoltzmannPooling
@@ -151,16 +185,47 @@ class SetOnlyLM(nn.Module):
                 RuntimeWarning,
             )
 
-        max_sets = num_sets_for_length(max_seq_len, window_size, stride)
+        max_sets = num_sets_for_length(
+            max_seq_len,
+            window_size,
+            stride,
+            causality_mode=self.set_causality_mode,
+        )
         if d_phi is None:
             d_phi = d_model
         self.d_phi = d_phi
+        if set_state_dim is None:
+            set_state_dim = d_model
+        self.set_state_dim = int(set_state_dim)
+        if self.set_state_dim <= 0:
+            raise ValueError("set_state_dim must be > 0")
+        if self.set_state_dim % num_heads != 0:
+            raise ValueError("set_state_dim must be divisible by num_heads")
+        self.set_input_proj = (
+            nn.Identity()
+            if self.set_state_dim == d_model
+            else nn.Linear(d_model, self.set_state_dim)
+        )
+        self.set_output_proj = (
+            nn.Identity()
+            if self.set_state_dim == d_model
+            else nn.Linear(self.set_state_dim, d_model)
+        )
         feature_params = feature_params or {}
         features_cfg = features or {}
         if isinstance(features_cfg, dict) and feature_mode in features_cfg:
             mode_cfg = features_cfg.get(feature_mode, {})
             if isinstance(mode_cfg, dict):
                 feature_params = {**feature_params, **mode_cfg}
+        feature_params = {
+            "num_bins": 128,
+            "hash_seed": 13,
+            "normalize": True,
+            **feature_params,
+        }
+        self.resolved_hash_num_bins = int(feature_params.get("num_bins", 128))
+        self.resolved_hash_seed = int(feature_params.get("hash_seed", 13))
+        self.resolved_hash_normalize = bool(feature_params.get("normalize", True))
         geometry_cfg = geometry or {}
         geom_enabled = bool(geometry_cfg.get("enabled", True))
         geom_apply_bias = bool(geometry_cfg.get("apply_as_bias", True))
@@ -174,22 +239,24 @@ class SetOnlyLM(nn.Module):
 
         if feature_mode == "geometry_only":
             self.feature_builder = GeometryOnlyFeatureBuilder(
-                d_model=d_model, max_sets=max_sets, gamma=gamma, beta=beta
+                d_model=self.set_state_dim, max_sets=max_sets, gamma=gamma, beta=beta
             )
         elif feature_mode == "hashed_counts":
             self.feature_builder = HashedCountFeatureBuilder(
-                d_model=d_model,
+                d_model=self.set_state_dim,
                 d_phi=d_phi,
                 max_sets=max_sets,
-                num_bins=feature_params.get("num_bins", 128),
+                num_bins=self.resolved_hash_num_bins,
                 gamma=gamma,
                 beta=beta,
+                normalize=self.resolved_hash_normalize,
+                hash_seed=self.resolved_hash_seed,
                 fusion=feature_params.get("fusion", "mlp"),
                 include_geom_in_attn=geom_apply_in_phi,
             )
         elif feature_mode == "kernel":
             self.feature_builder = KernelFeatureBuilder(
-                d_model=d_model, d_phi=d_phi, max_sets=max_sets, gamma=gamma, beta=beta
+                d_model=self.set_state_dim, d_phi=d_phi, max_sets=max_sets, gamma=gamma, beta=beta
             )
         else:
             raise ValueError(f"Unknown feature_mode: {feature_mode}")
@@ -205,6 +272,7 @@ class SetOnlyLM(nn.Module):
                 "pooling_multihead": self.pooling_multihead,
                 "sig_gating": self.sig_gating,
                 "d_phi": self.d_phi,
+                "set_state_dim": self.set_state_dim,
                 "geometry": {
                     "enabled": self.geom_enabled,
                     "apply_as_bias": self.geom_apply_bias,
@@ -212,22 +280,39 @@ class SetOnlyLM(nn.Module):
                 },
                 "router_multihead": self.router_multihead,
                 "router_temperature": self.router_temperature,
+                "router_min_temp": self.router_min_temp,
+                "router_score_mode": self.router_score_mode,
                 "token_mlp": {"enabled": self.token_mlp_enabled},
+                "set_causality_mode": self.set_causality_mode,
+                "output_residual_mode": self.output_residual_mode,
             }
         )
 
         backend_params = backend_params or {}
+        self.backend = backend
+        self.backend_params = dict(backend_params)
+        self.resolved_landmark_coverage = None
+        self.resolved_landmark_count = None
+        if backend == "landmark":
+            self.resolved_landmark_coverage = float(
+                backend_params.get("landmark_coverage", 0.25)
+            )
+            self.resolved_landmark_count = min(
+                max(round(self.resolved_landmark_coverage * max_sets), 2),
+                max_sets,
+            )
+
         def make_backend() -> nn.Module:
             if backend in {"exact", "dense_exact"}:
                 return DenseExactBackend(
-                    d_model=d_model,
+                    d_model=self.set_state_dim,
                     num_heads=num_heads,
                     dropout=self.attn_dropout,
                     allow_token_token=self.allow_token_token,
                 )
             if backend == "local_band":
                 return LocalBandBackend(
-                    d_model=d_model,
+                    d_model=self.set_state_dim,
                     num_heads=num_heads,
                     radius=backend_params.get("radius", 4),
                     dropout=self.attn_dropout,
@@ -236,7 +321,7 @@ class SetOnlyLM(nn.Module):
                 )
             if backend == "nystrom":
                 return NystromBackend(
-                    d_model=d_model,
+                    d_model=self.set_state_dim,
                     num_heads=num_heads,
                     num_landmarks=backend_params.get("num_landmarks", 32),
                     dropout=self.attn_dropout,
@@ -245,15 +330,15 @@ class SetOnlyLM(nn.Module):
                 )
             if backend == "landmark":
                 return LandmarkAttentionBackend(
-                    d_model=d_model,
+                    d_model=self.set_state_dim,
                     num_heads=num_heads,
-                    num_landmarks=backend_params.get("num_landmarks", 32),
+                    landmark_coverage=backend_params.get("landmark_coverage", 0.25),
                     dropout=self.attn_dropout,
                     allow_token_token=self.allow_token_token,
                 )
             if backend == "sparse_topk":
                 return SparseTopKBackend(
-                    d_model=d_model,
+                    d_model=self.set_state_dim,
                     num_heads=num_heads,
                     k_s=backend_params.get("k_s", 16),
                     dropout=self.attn_dropout,
@@ -261,7 +346,7 @@ class SetOnlyLM(nn.Module):
                 )
             if backend == "linformer":
                 return LinformerBackend(
-                    d_model=d_model,
+                    d_model=self.set_state_dim,
                     num_heads=num_heads,
                     max_sets=max_sets,
                     k=backend_params.get("k", 32),
@@ -273,7 +358,7 @@ class SetOnlyLM(nn.Module):
         self.blocks = nn.ModuleList(
             [
                 SetAttentionBlock(
-                    d_model=d_model,
+                    d_model=self.set_state_dim,
                     backend=make_backend(),
                     dim_feedforward=dim_feedforward,
                     resid_dropout=self.resid_dropout,
@@ -288,10 +373,14 @@ class SetOnlyLM(nn.Module):
         elif router_type == "learned":
             self.router = LearnedRouter(
                 d_model=d_model,
+                set_dim=self.set_state_dim,
+                desc_dim=self.set_state_dim,
                 num_heads=num_heads,
                 d_phi=self.d_phi,
                 topk=router_topk,
                 multihead=self.router_multihead,
+                min_temp=self.router_min_temp,
+                score_mode=self.router_score_mode,
             )
             self.router.temperature.fill_(self.router_temperature)
         else:
@@ -299,12 +388,15 @@ class SetOnlyLM(nn.Module):
 
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         self.adapter = None
+        self.adapter_type_requested = adapter_type
+        self.resolved_adapter_type = "none"
         self.diagnostics = SetDiagnostics()
         if feature_mode != "geometry_only":
             phi_dim = d_phi
-            d_head = d_model // num_heads
+            d_head = self.set_state_dim // num_heads
             if adapter_type == "auto":
                 adapter_type = select_adapter_type(phi_dim, d_head)
+            self.resolved_adapter_type = adapter_type
             self.adapter = create_adapter(
                 adapter_type=adapter_type,
                 num_heads=num_heads,
@@ -312,6 +404,30 @@ class SetOnlyLM(nn.Module):
                 phi_dim=phi_dim,
                 hidden_multiplier=adapter_hidden_multiplier,
             )
+
+    def get_resolved_metadata(self) -> dict[str, object]:
+        return {
+            "d_phi": self.d_phi,
+            "set_state_dim": self.set_state_dim,
+            "adapter_type": self.resolved_adapter_type,
+            "router_min_temp": self.router_min_temp,
+            "router_score_mode": self.router_score_mode,
+            "pooling_alpha": self.resolved_pooling_alpha,
+            "hash_seed": self.resolved_hash_seed,
+            "hash_normalize": self.resolved_hash_normalize,
+            "hash_num_bins": self.resolved_hash_num_bins,
+            "landmark_coverage": (
+                self.resolved_landmark_coverage
+                if self.resolved_landmark_coverage is not None
+                else "NA"
+            ),
+            "landmark_count": (
+                self.resolved_landmark_count
+                if self.resolved_landmark_count is not None
+                else "NA"
+            ),
+            "output_residual_mode": self.output_residual_mode,
+        }
 
     def _encode_tokens(
         self,
@@ -337,6 +453,7 @@ class SetOnlyLM(nn.Module):
             window_size=self.window_size,
             stride=self.stride,
             device=input_ids.device,
+            causality_mode=self.set_causality_mode,
         )
         set_states = bank.pool(
             token_embeddings=token_states,
@@ -344,6 +461,7 @@ class SetOnlyLM(nn.Module):
             params=self.pooling_params,
             pooling_module=self.pooling_module,
         )
+        set_states = self.set_input_proj(set_states)
         self._grad_probe_active = bool(
             self.training
             and self.grad_probe_interval > 0
@@ -455,19 +573,36 @@ class SetOnlyLM(nn.Module):
             router_out: RouterOutput = self.router(set_states, bank.token_to_sets)
         else:
             desc_router = features.desc_router
+            if desc_router is not None and desc_router.dim() == 2:
+                desc_router = desc_router.unsqueeze(0).expand(batch, -1, -1)
             router_out = self.router(token_states, set_states, desc_router, bank.token_to_sets)
+        routed_repr = self.set_output_proj(router_out.token_repr)
+        token_repr = routed_repr
+        if self.set_causality_mode == "strict_past":
+            if self.output_residual_mode == "direct":
+                token_repr = token_states + routed_repr
+            elif self.output_residual_mode == "empty_only":
+                has_candidates = (bank.token_to_sets >= 0).any(dim=-1)
+                token_repr = torch.where(
+                    has_candidates.view(1, seq_len, 1),
+                    routed_repr,
+                    token_states,
+                )
+            elif self.output_residual_mode == "none":
+                token_repr = routed_repr
 
         if self.training:
             self.diagnostics.update_with_router_state(
                 bank_indices=router_out.bank_indices,
                 num_sets=router_out.num_sets,
                 router_probs=router_out.probs,
+                router_prob_indices=router_out.prob_indices,
                 set_embeddings=set_states,
                 set_attention_weights=None,
                 token_to_sets=bank.token_to_sets,
             )
 
-        return router_out.token_repr, router_out
+        return token_repr, router_out
 
     def encode(self, input_ids: torch.Tensor) -> torch.Tensor:
         token_repr, _ = self._encode_tokens(input_ids)

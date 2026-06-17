@@ -124,7 +124,7 @@ def build_row(csv_path, json_path):
         "model.num_heads": s(get_cfg(obj, "model.num_heads")),
         "model.dim_feedforward": s(get_cfg(obj, "model.dim_feedforward")),
         "model.backend_params.radius": s(get_cfg(obj, "model.backend_params.radius")),
-        "model.backend_params.num_landmarks": s(get_cfg(obj, "model.backend_params.num_landmarks")),
+        "model.backend_params.landmark_coverage": s(get_cfg(obj, "model.backend_params.landmark_coverage")),
 
         "epoch": last.get("epoch", "NA"),
         "val/loss": last.get("val/loss", "NA"),
@@ -179,7 +179,7 @@ def dedup_key(r):
         r["model.router_type"],
         r["model.pooling_multihead"],
         r["model.backend_params.radius"],
-        r["model.backend_params.num_landmarks"],
+        r["model.backend_params.landmark_coverage"],
     )
 
 grouped = defaultdict(list)
@@ -229,7 +229,7 @@ FULL_FIELDS = [
     "model.window_size","model.stride","model.router_temperature",
     "model.pooling.tau","model.pooling.q",
     "model.d_model","model.num_layers","model.num_heads","model.dim_feedforward",
-    "model.backend_params.radius","model.backend_params.num_landmarks",
+    "model.backend_params.radius","model.backend_params.landmark_coverage",
     "epoch","val/loss","val/ppl","train/loss","train/ppl",
     "train/time_per_epoch_s","train/peak_vram_mib",
     "ausa/router_candidate_count_struct_mean","ausa/routing_entropy_norm",

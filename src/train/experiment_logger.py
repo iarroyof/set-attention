@@ -317,6 +317,9 @@ class ExperimentLogger:
             "model.router_topk",
             "model.router_multihead",
             "model.router_temperature",
+            "model.router.score_mode",
+            "model.set_causality_mode",
+            "model.output_residual_mode",
             "model.pooling_multihead",
             "model.d_model",
             "model.dim_feedforward",
@@ -348,11 +351,13 @@ class ExperimentLogger:
             "model.sig_gating.symmetric",
             "model.sig_gating.include_self",
             "model.d_phi",
+            "model.set_state_dim",
             "model.geometry.enabled",
             "model.geometry.apply_as_bias",
             "model.geometry.apply_in_phi_attn",
             "model.allow_token_token",
             "model.backend_params.radius",
+            "model.backend_params.landmark_coverage",
             "model.backend_params.k_s",
             "model.backend_params.num_landmarks",
             "model.backend_params.k",
@@ -360,6 +365,7 @@ class ExperimentLogger:
             "model.backend_params.global_set_indices",
             "model.backend_params.bias_scale",
             "model.encoder_backend_params.radius",
+            "model.encoder_backend_params.landmark_coverage",
             "model.encoder_backend_params.k_s",
             "model.encoder_backend_params.num_landmarks",
             "model.encoder_backend_params.k",
@@ -367,6 +373,7 @@ class ExperimentLogger:
             "model.encoder_backend_params.global_set_indices",
             "model.encoder_backend_params.bias_scale",
             "model.decoder_backend_params.radius",
+            "model.decoder_backend_params.landmark_coverage",
             "model.decoder_backend_params.k_s",
             "model.decoder_backend_params.num_landmarks",
             "model.decoder_backend_params.k",
@@ -374,12 +381,25 @@ class ExperimentLogger:
             "model.decoder_backend_params.global_set_indices",
             "model.decoder_backend_params.bias_scale",
             "model.cross_backend_params.radius",
+            "model.cross_backend_params.landmark_coverage",
             "model.cross_backend_params.k_s",
             "model.cross_backend_params.num_landmarks",
             "model.cross_backend_params.k",
             "model.cross_backend_params.global_indices",
             "model.cross_backend_params.global_set_indices",
             "model.cross_backend_params.bias_scale",
+            "resolved.d_phi",
+            "resolved.set_state_dim",
+            "resolved.adapter_type",
+            "resolved.router_min_temp",
+            "resolved.router_score_mode",
+            "resolved.pooling_alpha",
+            "resolved.hash_seed",
+            "resolved.hash_normalize",
+            "resolved.hash_num_bins",
+            "resolved.landmark_coverage",
+            "resolved.landmark_count",
+            "resolved.output_residual_mode",
         ]
         # Keep the legacy core fields first for readability, then append any
         # additional flattened config keys so new hyperparameters are always
@@ -396,6 +416,7 @@ class ExperimentLogger:
                 or k.startswith("data.")
                 or k.startswith("training.")
                 or k.startswith("logging.")
+                or k.startswith("resolved.")
                 or k == "stage"
             )
         )

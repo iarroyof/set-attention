@@ -52,10 +52,12 @@ SET_ONLY_KEYS = {
     "multiscale",
     "sig_gating",
     "d_phi",
+    "set_state_dim",
     "geometry",
     "features",
     "router_type",
     "router_topk",
+    "router",
     "router_multihead",
     "router_temperature",
     "backend_params",
@@ -68,8 +70,11 @@ SET_ONLY_KEYS = {
     "adapter_budget_fraction",
     "allow_token_token",
     "token_mlp",
+    "set_causality_mode",
+    "output_residual_mode",
     "seq2seq",
     "causal",
+    "hybrid",
 }
 
 LOGGING_KEYS = {"wandb", "csv"}
@@ -89,6 +94,7 @@ def validate_config(cfg: dict) -> None:
     impl = model_cfg.get("implementation")
     if impl not in {
         "baseline_token",
+        "hybrid_token_set",
         "set_only",
         "encoder_set_only",
         "decoder_set_only",
@@ -122,6 +128,18 @@ def validate_config(cfg: dict) -> None:
         raise ConfigError("backend must be a supported backend")
     if model_cfg.get("router_type") is not None and model_cfg.get("router_type") not in {"uniform", "learned"}:
         raise ConfigError("router_type must be 'uniform' or 'learned'")
+    router_cfg = model_cfg.get("router")
+    if router_cfg is not None:
+        if not isinstance(router_cfg, dict):
+            raise ConfigError("model.router must be a mapping")
+        unexpected_router = set(router_cfg.keys()) - {"min_temp", "score_mode"}
+        if unexpected_router:
+            raise ConfigError(f"Unexpected model.router keys: {sorted(unexpected_router)}")
+        if router_cfg.get("score_mode") is not None and router_cfg.get("score_mode") not in {
+            "candidate_gather",
+            "dense",
+        }:
+            raise ConfigError("model.router.score_mode must be 'candidate_gather' or 'dense'")
     if model_cfg.get("router_temperature") is not None:
         try:
             router_temperature = float(model_cfg.get("router_temperature"))
@@ -135,6 +153,24 @@ def validate_config(cfg: dict) -> None:
         "kernel",
     }:
         raise ConfigError("feature_mode must be geometry_only, hashed_counts, or kernel")
+    if model_cfg.get("adapter_type") is not None and model_cfg.get("adapter_type") not in {
+        "auto",
+        "linear",
+        "nonlinear",
+        "hybrid",
+    }:
+        raise ConfigError("adapter_type must be auto, linear, nonlinear, or hybrid")
+    if model_cfg.get("set_causality_mode") is not None and model_cfg.get("set_causality_mode") not in {
+        "strict_past",
+        "noncausal",
+    }:
+        raise ConfigError("set_causality_mode must be 'strict_past' or 'noncausal'")
+    if model_cfg.get("output_residual_mode") is not None and model_cfg.get("output_residual_mode") not in {
+        "direct",
+        "empty_only",
+        "none",
+    }:
+        raise ConfigError("output_residual_mode must be 'direct', 'empty_only', or 'none'")
 
     if "family" in cfg.get("data", {}):
         raise ConfigError("data.family is not allowed; use model.implementation only")

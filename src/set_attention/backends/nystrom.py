@@ -1,3 +1,10 @@
+"""Deprecated Nyström backend.
+
+Nyström attention is excluded from this revision cycle. The file is retained
+only for historical reference and import compatibility; constructing the
+backend hard-fails so active runs cannot accidentally use it.
+"""
+
 from __future__ import annotations
 
 import math
@@ -20,6 +27,9 @@ class NystromBackend(SetAttentionBackend):
         allow_token_token: bool = False,
         bias_scale: float = 0.1,
     ) -> None:
+        raise RuntimeError(
+            "NystromBackend is deprecated for this revision cycle; use landmark backend."
+        )
         super().__init__()
         if d_model % num_heads != 0:
             raise ValueError("d_model must be divisible by num_heads")

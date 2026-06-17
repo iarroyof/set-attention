@@ -33,9 +33,7 @@ model:
     enabled: false
 
   backend_params:
-    num_landmarks: 24
-    # If you want to avoid any "wasteful approximation" warnings robustly:
-    # num_landmarks: 16
+    landmark_coverage: 0.25
 
 data:
   dataset: wikitext2

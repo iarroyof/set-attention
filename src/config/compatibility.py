@@ -24,9 +24,61 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def _max_sets(seq_len: int, stride: int) -> int:
-    if seq_len <= 0 or stride <= 0:
+def _require_bool(value: Any, label: str) -> None:
+    require(isinstance(value, bool), f"{label} must be a boolean")
+
+
+def _require_positive_float(value: Any, label: str) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{label} must be numeric")
+    require(parsed > 0.0, f"{label} must be > 0")
+    return parsed
+
+
+def _require_positive_int(value: Any, label: str) -> int:
+    if isinstance(value, bool):
+        raise ConfigError(f"{label} must be an integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{label} must be an integer")
+    if isinstance(value, float) and not value.is_integer():
+        raise ConfigError(f"{label} must be an integer")
+    if isinstance(value, str) and str(parsed) != value.strip():
+        raise ConfigError(f"{label} must be an integer")
+    require(parsed > 0, f"{label} must be > 0")
+    return parsed
+
+
+def _require_int(value: Any, label: str) -> int:
+    if isinstance(value, bool):
+        raise ConfigError(f"{label} must be an integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{label} must be an integer")
+    if isinstance(value, float) and not value.is_integer():
+        raise ConfigError(f"{label} must be an integer")
+    if isinstance(value, str) and str(parsed) != value.strip():
+        raise ConfigError(f"{label} must be an integer")
+    return parsed
+
+
+NYSTROM_DEPRECATION_MESSAGE = (
+    "backend=nystrom is deprecated for this revision cycle; use backend=landmark "
+    "with model.backend_params.landmark_coverage."
+)
+
+
+def _max_sets(seq_len: int, window_size: int, stride: int, set_causality_mode: str) -> int:
+    if seq_len <= 0 or window_size <= 0 or stride <= 0:
         return 0
+    if set_causality_mode == "strict_past":
+        if seq_len < window_size:
+            return 0
+        return ((seq_len - window_size) // stride) + 1
     return (seq_len + stride - 1) // stride
 
 
@@ -94,7 +146,13 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     seq_len = cfg.get("data", {}).get("seq_len") or model.get("max_seq_len") or 0
     window_size = model.get("window_size", 32) or 32
     stride = model.get("stride", 16) or 16
-    max_sets = _max_sets(int(seq_len), int(stride))
+    set_causality_mode = model.get("set_causality_mode", "strict_past" if model.get("causal", True) else "noncausal")
+    max_sets = _max_sets(
+        int(seq_len),
+        int(window_size),
+        int(stride),
+        str(set_causality_mode),
+    )
 
     min_head_dim = _env_int("SET_ATTENTION_MIN_HEAD_DIM", 8)
     kernel_max_sets = _env_int("SET_ATTENTION_KERNEL_MAX_SETS", 500)
@@ -103,8 +161,10 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     warn_landmark_min = _env_int("SET_ATTENTION_WARN_MIN_LANDMARKS", 10)
     warn_landmark_ratio = _env_float("SET_ATTENTION_WARN_LANDMARK_RATIO", 0.5)
 
-    if task == "lm" and impl not in {"baseline_token", "set_only"}:
-        raise ConfigError("LM only supports implementation=baseline_token or set_only")
+    if task == "lm" and impl not in {"baseline_token", "set_only", "hybrid_token_set"}:
+        raise ConfigError(
+            "LM only supports implementation=baseline_token, set_only, or hybrid_token_set"
+        )
 
     if task == "seq2seq" and impl not in {
         "baseline_token",
@@ -126,7 +186,7 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
         encoder = "baseline"
         decoder = "baseline"
         cross = "baseline"
-        if impl == "set_only":
+        if impl in {"set_only", "hybrid_token_set"}:
             encoder = decoder = cross = "set_only"
         elif impl in {"encoder_set_only", "encoder_set_decoder_baseline"}:
             encoder = "set_only"
@@ -134,7 +194,7 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
             decoder = "set_only"
         elif impl == "cross_attention_set_only":
             cross = "set_only"
-        elif impl == "baseline_token":
+        elif impl in {"baseline_token", "hybrid_token_set"}:
             pass
         if model.get("cross_attention") == "set_only":
             cross = "set_only"
@@ -152,16 +212,69 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
         elif family == "sparse":
             require(backend in {"local_band", "sparse_topk"}, f"{scope}: sparse backend mismatch")
         elif family == "linear":
+            if backend == "nystrom":
+                raise ConfigError(f"{scope}: {NYSTROM_DEPRECATION_MESSAGE}")
             require(backend in {"landmark", "nystrom", "linformer"}, f"{scope}: linear backend mismatch")
         else:
             raise ConfigError(f"{scope}: attention_family must be dense, sparse, or linear")
 
+    _validate_family_backend(model.get("attention_family"), model.get("backend"), "model")
     _validate_family_backend(model.get("encoder_attention_family"), model.get("encoder_backend"), "encoder")
     _validate_family_backend(model.get("decoder_attention_family"), model.get("decoder_backend"), "decoder")
     _validate_family_backend(model.get("cross_attention_family"), model.get("cross_backend"), "cross")
 
-    uses_set_only = encoder_impl == "set_only" or decoder_impl == "set_only" or cross_impl == "set_only"
+    uses_set_only = (
+        encoder_impl == "set_only"
+        or decoder_impl == "set_only"
+        or cross_impl == "set_only"
+        or impl == "hybrid_token_set"
+    )
     if not uses_set_only:
+        backend = model.get("backend")
+        raw_backend_params = model.get("backend_params")
+        backend_params = raw_backend_params or {}
+        if raw_backend_params is not None and not isinstance(raw_backend_params, dict):
+            raise ConfigError("backend_params must be a mapping")
+        if backend == "local_band":
+            require("radius" in backend_params, "local_band backend requires backend_params.radius")
+            require(backend_params["radius"] >= 1, "local_band radius must be >= 1")
+            global_indices = backend_params.get("global_indices", [])
+            if global_indices and not isinstance(global_indices, list):
+                raise ConfigError("local_band backend_params.global_indices must be a list")
+        elif backend == "sparse_topk":
+            _warn("backend sparse_topk is deprecated; use local_band (Longformer-style) instead.")
+        elif backend == "nystrom":
+            raise ConfigError(f"baseline_token: {NYSTROM_DEPRECATION_MESSAGE}")
+        elif backend == "landmark":
+            if "num_landmarks" in backend_params:
+                raise ConfigError(
+                    "landmark backend uses backend_params.landmark_coverage; "
+                    "num_landmarks is reserved for deprecated nystrom paths"
+                )
+            landmark_coverage = _require_positive_float(
+                backend_params.get("landmark_coverage", 0.25),
+                "landmark backend_params.landmark_coverage",
+            )
+            backend_params["landmark_coverage"] = landmark_coverage
+            landmark_count = min(
+                max(round(landmark_coverage * int(seq_len)), min_landmarks),
+                int(seq_len),
+            )
+            if landmark_count < warn_landmark_min:
+                _warn("landmark_count is very small; approximation may be ineffective.")
+            if landmark_count > int(int(seq_len) * warn_landmark_ratio):
+                _warn("landmark_count is large relative to sequence length; approximation may be wasteful.")
+        elif backend == "linformer":
+            require("k" in backend_params, "linformer backend requires backend_params.k")
+            require(backend_params["k"] >= min_landmarks, "linformer k too small")
+            require(backend_params["k"] <= int(seq_len), "linformer k must be <= seq_len")
+        elif backend == "exact":
+            forbid(bool(backend_params), "exact backend forbids backend_params")
+        if backend_params:
+            model["backend_params"] = backend_params
+        fingerprint = _fingerprint(cfg)
+        cfg["_fingerprint"] = fingerprint
+        _record_fingerprint(cfg, fingerprint)
         return cfg
 
     pooling_cfg = model.get("pooling", "mean")
@@ -175,10 +288,26 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     )
     if model.get("multiscale"):
         raise ConfigError("set_only: multiscale is not implemented in this runner")
+    if isinstance(pooling_cfg, dict):
+        if "alpha" in pooling_cfg:
+            _require_positive_float(pooling_cfg["alpha"], "set_only: pooling.alpha")
+        if "learnable_alpha" in pooling_cfg:
+            _require_bool(
+                pooling_cfg["learnable_alpha"],
+                "set_only: pooling.learnable_alpha",
+            )
+        if "tau" in pooling_cfg:
+            _require_positive_float(pooling_cfg["tau"], "set_only: pooling.tau")
+        if "q" in pooling_cfg:
+            q = float(pooling_cfg["q"])
+            require(0.0 < q <= 1.0, "set_only: pooling.q must be in (0, 1]")
 
     d_phi = model.get("d_phi")
     if d_phi is not None:
-        require(int(d_phi) > 0, "set_only: d_phi must be positive")
+        _require_positive_int(d_phi, "set_only: d_phi")
+    set_state_dim = model.get("set_state_dim")
+    if set_state_dim is not None:
+        _require_positive_int(set_state_dim, "set_only: set_state_dim")
     router_multihead = model.get("router_multihead", False)
     require(isinstance(router_multihead, bool), "set_only: router_multihead must be a boolean")
     pooling_multihead = model.get("pooling_multihead", False)
@@ -200,17 +329,81 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     require(window_size <= seq_len, "set_only: window_size must be <= max_seq_len")
     require(stride <= window_size, "set_only: stride must be <= window_size")
     require(max_sets >= 1, "set_only: max_sets must be >= 1")
+    require(
+        set_causality_mode in {"strict_past", "noncausal"},
+        "set_only: set_causality_mode must be 'strict_past' or 'noncausal'",
+    )
+    output_residual_mode = model.get("output_residual_mode", "direct")
+    require(
+        output_residual_mode in {"direct", "empty_only", "none"},
+        "set_only: output_residual_mode must be 'direct', 'empty_only', or 'none'",
+    )
+    if task == "lm" and impl in {"set_only", "hybrid_token_set"} and model.get("causal", True):
+        require(
+            set_causality_mode == "strict_past",
+            "set/hybrid causal LM requires set_causality_mode=strict_past",
+        )
+
+    if impl == "hybrid_token_set":
+        hybrid = model.get("hybrid")
+        require(isinstance(hybrid, dict), "hybrid_token_set requires model.hybrid mapping")
+        pattern = str(hybrid.get("pattern", ""))
+        require(pattern, "hybrid_token_set requires model.hybrid.pattern")
+        require(
+            len(pattern) == int(model.get("num_layers", 0)),
+            "hybrid.pattern length must equal model.num_layers",
+        )
+        require(
+            all(ch in {"T", "S", "t", "s"} for ch in pattern),
+            "hybrid.pattern may contain only T and S",
+        )
+        set_topologies = hybrid.get("set_topologies")
+        require(isinstance(set_topologies, list), "hybrid.set_topologies must be a list")
+        require(
+            len(set_topologies) == pattern.upper().count("S"),
+            "hybrid.set_topologies length must equal number of S layers",
+        )
+        for idx, topo in enumerate(set_topologies):
+            require(isinstance(topo, dict), f"hybrid.set_topologies[{idx}] must be a mapping")
+            w = _require_positive_int(
+                topo.get("window_size", topo.get("w")),
+                f"hybrid.set_topologies[{idx}].window_size",
+            )
+            s = _require_positive_int(
+                topo.get("stride", topo.get("s")),
+                f"hybrid.set_topologies[{idx}].stride",
+            )
+            require(
+                w <= int(seq_len),
+                f"hybrid.set_topologies[{idx}].window_size must be <= seq_len",
+            )
+            require(
+                s <= w,
+                f"hybrid.set_topologies[{idx}].stride must be <= window_size",
+            )
 
     d_model = model.get("d_model", 0)
     num_heads = model.get("num_heads", 1)
     require(d_model % num_heads == 0, "set_only: d_model must be divisible by num_heads")
     d_head = d_model // num_heads
     require(d_head >= min_head_dim, "set_only: head dimension too small")
+    set_state_dim_for_heads = int(set_state_dim) if set_state_dim is not None else int(d_model)
+    require(
+        set_state_dim_for_heads % num_heads == 0,
+        "set_only: set_state_dim must be divisible by num_heads",
+    )
+    set_d_head = set_state_dim_for_heads // num_heads
+    require(set_d_head >= min_head_dim, "set_only: set_state_dim head dimension too small")
     if pooling_multihead:
         require(d_model % num_heads == 0, "set_only: pooling_multihead requires d_model divisible by num_heads")
 
     backend = model.get("backend")
-    backend_params = model.get("backend_params") or {}
+    raw_backend_params = model.get("backend_params")
+    backend_params = raw_backend_params or {}
+    if raw_backend_params is not None and not isinstance(raw_backend_params, dict):
+        raise ConfigError("backend_params must be a mapping")
+    if backend_params:
+        model["backend_params"] = backend_params
     if backend == "local_band":
         require("radius" in backend_params, "local_band backend requires backend_params.radius")
         require(backend_params["radius"] >= 1, "local_band radius must be >= 1")
@@ -223,13 +416,18 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     elif backend == "sparse_topk":
         _warn("backend sparse_topk is deprecated; use local_band (Longformer-style) instead.")
     elif backend == "nystrom":
-        require("num_landmarks" in backend_params, "nystrom backend requires backend_params.num_landmarks")
-        require(backend_params["num_landmarks"] >= min_landmarks, "nystrom num_landmarks too small")
-        require(backend_params["num_landmarks"] < max_sets, "nystrom num_landmarks must be < max_sets")
+        raise ConfigError(f"set_only: {NYSTROM_DEPRECATION_MESSAGE}")
     elif backend == "landmark":
-        require("num_landmarks" in backend_params, "landmark backend requires backend_params.num_landmarks")
-        require(backend_params["num_landmarks"] >= min_landmarks, "landmark num_landmarks too small")
-        require(backend_params["num_landmarks"] < max_sets, "landmark num_landmarks must be < max_sets")
+        if "num_landmarks" in backend_params:
+            raise ConfigError(
+                "landmark backend uses backend_params.landmark_coverage; "
+                "num_landmarks is reserved for deprecated nystrom paths"
+            )
+        landmark_coverage = _require_positive_float(
+            backend_params.get("landmark_coverage", 0.25),
+            "landmark backend_params.landmark_coverage",
+        )
+        backend_params["landmark_coverage"] = landmark_coverage
     elif backend == "linformer":
         require("k" in backend_params, "linformer backend requires backend_params.k")
         require(backend_params["k"] >= min_landmarks, "linformer k too small")
@@ -237,12 +435,24 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     elif backend == "exact":
         forbid(bool(backend_params), "exact backend forbids backend_params")
 
-    if backend in {"nystrom", "landmark"}:
+    if backend_params:
+        model["backend_params"] = backend_params
+
+    if backend == "nystrom":
         num_landmarks = backend_params.get("num_landmarks", 0)
         if num_landmarks and num_landmarks < warn_landmark_min:
             _warn("num_landmarks is very small; approximation may be ineffective.")
         if num_landmarks and num_landmarks > int(max_sets * warn_landmark_ratio):
             _warn("num_landmarks is large relative to max_sets; approximation may be wasteful.")
+    if backend == "landmark":
+        landmark_count = min(
+            max(round(float(backend_params.get("landmark_coverage", 0.25)) * max_sets), min_landmarks),
+            max_sets,
+        )
+        if landmark_count < warn_landmark_min:
+            _warn("landmark_count is very small; approximation may be ineffective.")
+        if landmark_count > int(max_sets * warn_landmark_ratio):
+            _warn("landmark_count is large relative to max_sets; approximation may be wasteful.")
 
     router_type = model.get("router_type", "uniform")
     router_topk = model.get("router_topk", None)
@@ -252,6 +462,18 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "set_only: router_temperature must be numeric",
     )
     require(float(router_temperature) > 0.0, "set_only: router_temperature must be > 0")
+    router_cfg = model.get("router", {})
+    if router_cfg is None:
+        router_cfg = {}
+    if not isinstance(router_cfg, dict):
+        raise ConfigError("set_only: router must be a mapping")
+    router_min_temp = router_cfg.get("min_temp", 0.5)
+    _require_positive_float(router_min_temp, "set_only: router.min_temp")
+    router_score_mode = router_cfg.get("score_mode", "candidate_gather")
+    require(
+        router_score_mode in {"candidate_gather", "dense"},
+        "set_only: router.score_mode must be 'candidate_gather' or 'dense'",
+    )
     if router_type == "learned":
         require(router_topk is not None, "learned router requires router_topk")
         require(router_topk >= 1, "learned router_topk must be >= 1")
@@ -302,6 +524,23 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     feature_mode = model.get("feature_mode", "geometry_only")
     feature_params = model.get("feature_params") or {}
+    if feature_params and not isinstance(feature_params, dict):
+        raise ConfigError("set_only: feature_params must be a mapping")
+    if "num_bins" in feature_params:
+        _require_positive_int(
+            feature_params["num_bins"],
+            "set_only: feature_params.num_bins",
+        )
+    if "hash_seed" in feature_params:
+        _require_int(
+            feature_params["hash_seed"],
+            "set_only: feature_params.hash_seed",
+        )
+    if "normalize" in feature_params:
+        _require_bool(
+            feature_params["normalize"],
+            "set_only: feature_params.normalize",
+        )
     allow_unsafe = bool(feature_params.get("allow_unsafe") or os.environ.get("SET_ATTENTION_KERNEL_ALLOW_UNSAFE") == "1")
     if feature_mode == "kernel":
         if max_sets > kernel_max_sets and not allow_unsafe:
@@ -312,14 +551,20 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
             _warn("Kernel features with local_band backend may be redundant.")
 
     adapter_type = model.get("adapter_type", "auto")
+    require(
+        adapter_type in {"auto", "linear", "nonlinear", "hybrid"},
+        "adapter_type must be auto, linear, nonlinear, or hybrid",
+    )
     adapter_hidden_multiplier = model.get("adapter_hidden_multiplier", 2)
     require(adapter_hidden_multiplier > 0, "adapter_hidden_multiplier must be > 0")
-    effective_rank = min(max_sets, d_head)
+    d_phi_for_adapter = model.get("d_phi")
+    if d_phi_for_adapter is None:
+        d_phi_for_adapter = d_model
+    effective_rank = min(int(d_phi_for_adapter), set_d_head)
     if adapter_type == "linear" and max_sets < 2:
         raise ConfigError("Linear adapter requires at least 2 sets")
     if adapter_type == "auto" and effective_rank < adapter_min_rank:
         _warn("Auto adapter switched to nonlinear due to low effective rank")
-        model["adapter_type"] = "nonlinear"
     elif adapter_type == "linear" and effective_rank < adapter_min_rank:
         _warn("Linear adapter rank-limited; consider nonlinear")
 

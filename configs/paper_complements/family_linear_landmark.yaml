@@ -48,7 +48,7 @@ model:
   router_temperature: 1.0
 
   backend_params:
-    num_landmarks: 24
+    landmark_coverage: 0.25
 
   pooling:
     mode: soft_trimmed_boltzmann

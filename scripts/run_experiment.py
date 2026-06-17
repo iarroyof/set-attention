@@ -13,6 +13,7 @@ sys.path.append(str(ROOT / "src"))
 from config.load import load_config  # noqa: E402
 from data.wikitext2 import Wikitext2Dataset, Wikitext2IterableDataset  # noqa: E402
 from models.baseline_token import TransformerLM  # noqa: E402
+from models.hybrid_token_set_lm import HybridTokenSetLM  # noqa: E402
 from models.seq2seq import Seq2SeqTransformer  # noqa: E402
 from models.set_only import SetOnlyLM  # noqa: E402
 from set_attention.training.seq_loaders import get_seq2seq_datasets  # noqa: E402
@@ -74,6 +75,44 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
             backend_params=model_cfg.get("backend_params"),
             causal=bool(model_cfg.get("causal", True)),
         )
+    if impl == "hybrid_token_set":
+        return HybridTokenSetLM(
+            vocab_size=model_cfg["vocab_size"],
+            d_model=model_cfg["d_model"],
+            num_layers=model_cfg["num_layers"],
+            num_heads=model_cfg.get("num_heads", model_cfg.get("nhead", 8)),
+            dim_feedforward=model_cfg["dim_feedforward"],
+            dropout=model_cfg["dropout"],
+            attn_dropout=model_cfg.get("attn_dropout"),
+            resid_dropout=model_cfg.get("resid_dropout"),
+            ffn_dropout=model_cfg.get("ffn_dropout"),
+            max_seq_len=model_cfg["max_seq_len"],
+            attention_family=model_cfg.get("attention_family", "sparse"),
+            backend=model_cfg.get("backend", "local_band"),
+            backend_params=model_cfg.get("backend_params"),
+            hybrid=model_cfg.get("hybrid"),
+            pooling=model_cfg.get("pooling", "mean"),
+            pooling_multihead=bool(model_cfg.get("pooling_multihead", False)),
+            d_phi=model_cfg.get("d_phi"),
+            set_state_dim=model_cfg.get("set_state_dim"),
+            feature_mode=model_cfg.get("feature_mode", "geometry_only"),
+            feature_params=model_cfg.get("feature_params"),
+            router_type=model_cfg["router_type"],
+            router_topk=model_cfg["router_topk"],
+            router_multihead=bool(model_cfg.get("router_multihead", False)),
+            router_temperature=float(model_cfg.get("router_temperature", 1.0)),
+            router_min_temp=float(model_cfg.get("router", {}).get("min_temp", 0.5)),
+            router_score_mode=str(
+                model_cfg.get("router", {}).get("score_mode", "candidate_gather")
+            ),
+            adapter_type=model_cfg.get("adapter_type", "auto"),
+            adapter_hidden_multiplier=model_cfg.get("adapter_hidden_multiplier", 2),
+            gamma=model_cfg.get("gamma", 1.0),
+            beta=model_cfg.get("beta", 0.0),
+            causal=bool(model_cfg.get("causal", True)),
+            set_causality_mode=model_cfg.get("set_causality_mode", "strict_past"),
+            output_residual_mode=model_cfg.get("output_residual_mode", "empty_only"),
+        )
     return SetOnlyLM(
         vocab_size=model_cfg["vocab_size"],
         d_model=model_cfg["d_model"],
@@ -92,12 +131,17 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
         multiscale=model_cfg.get("multiscale", False),
         sig_gating=model_cfg.get("sig_gating"),
         d_phi=model_cfg.get("d_phi"),
+        set_state_dim=model_cfg.get("set_state_dim"),
         geometry=model_cfg.get("geometry"),
         features=model_cfg.get("features"),
         router_type=model_cfg["router_type"],
         router_topk=model_cfg["router_topk"],
         router_multihead=bool(model_cfg.get("router_multihead", False)),
         router_temperature=float(model_cfg.get("router_temperature", 1.0)),
+        router_min_temp=float(model_cfg.get("router", {}).get("min_temp", 0.5)),
+        router_score_mode=str(
+            model_cfg.get("router", {}).get("score_mode", "candidate_gather")
+        ),
         backend=model_cfg["backend"],
         backend_params=model_cfg.get("backend_params"),
         feature_mode=model_cfg.get("feature_mode", "geometry_only"),
@@ -110,7 +154,32 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
         beta=model_cfg.get("beta", 0.0),
         allow_token_token=bool(model_cfg.get("allow_token_token", False)),
         causal=bool(model_cfg.get("causal", True)),
+        set_causality_mode=model_cfg.get("set_causality_mode"),
+        output_residual_mode=model_cfg.get("output_residual_mode", "direct"),
     )
+
+
+def attach_resolved_metadata(cfg: dict, model: torch.nn.Module) -> None:
+    if hasattr(model, "get_resolved_metadata"):
+        resolved = dict(model.get_resolved_metadata())
+    else:
+        resolved = {}
+    resolved_defaults = {
+        "d_phi": "NA",
+        "set_state_dim": "NA",
+        "adapter_type": "NA",
+        "router_min_temp": "NA",
+        "router_score_mode": "NA",
+        "pooling_alpha": "NA",
+        "hash_seed": "NA",
+        "hash_normalize": "NA",
+        "hash_num_bins": "NA",
+        "landmark_coverage": "NA",
+        "landmark_count": "NA",
+        "output_residual_mode": "NA",
+    }
+    resolved_defaults.update(resolved)
+    cfg["resolved"] = resolved_defaults
 
 
 def _make_loader(ds, batch_size: int, shuffle: bool):
@@ -263,11 +332,13 @@ def main() -> None:
             decoder_backend_params=cfg["model"].get("decoder_backend_params", cfg["model"].get("backend_params")),
             cross_backend_params=cfg["model"].get("cross_backend_params", cfg["model"].get("backend_params")),
         ).to(device)
+        attach_resolved_metadata(cfg, model)
     else:
         train_loader, val_loader, vocab_size = build_dataloaders(cfg["data"])
         if cfg["model"].get("vocab_size", 0) in (0, None):
             cfg["model"]["vocab_size"] = vocab_size
         model = build_model(cfg["model"]).to(device)
+        attach_resolved_metadata(cfg, model)
     wandb_tags = [t for t in args.wandb_tags.split(",") if t]
     logger = ExperimentLogger(
         config=cfg,

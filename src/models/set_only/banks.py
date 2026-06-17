@@ -14,6 +14,9 @@ class Bank:
     set_sizes: torch.Tensor  # [m]
     token_to_sets: torch.Tensor  # [seq, max_sets_per_token] with -1 padding
     set_positions: torch.Tensor  # [m]
+    set_starts: torch.Tensor  # [m]
+    set_endpoints: torch.Tensor  # [m]
+    causality_mode: str = "noncausal"
     neighbor_mask: torch.Tensor | None = None
 
     def compute_neighbor_mask(
@@ -102,11 +105,36 @@ class Bank:
         raise ValueError(f"Unknown pooling mode: {mode}")
 
 
-def num_sets_for_length(seq_len: int, window_size: int, stride: int) -> int:
+def _normalize_causality_mode(mode: str | None) -> str:
+    mode = mode or "noncausal"
+    aliases = {
+        "option1": "strict_past",
+        "end_aligned": "strict_past",
+        "causal": "strict_past",
+        "bidirectional": "noncausal",
+    }
+    return aliases.get(mode, mode)
+
+
+def num_sets_for_length(
+    seq_len: int,
+    window_size: int,
+    stride: int,
+    causality_mode: str = "noncausal",
+) -> int:
     """Calculate number of sets created by build_window_bank."""
     if seq_len <= 0:
         return 0
-    # Number of window starting positions: range(0, seq_len, stride)
+    if window_size <= 0 or stride <= 0:
+        raise ValueError("window_size and stride must be positive")
+    mode = _normalize_causality_mode(causality_mode)
+    if mode == "strict_past":
+        if seq_len < window_size:
+            return 0
+        return ((seq_len - window_size) // stride) + 1
+    if mode != "noncausal":
+        raise ValueError(f"Unknown set causality mode: {causality_mode}")
+    # Historical noncausal mode uses clipped trailing windows.
     return math.ceil(seq_len / stride)
 
 
@@ -115,14 +143,21 @@ def build_window_bank(
     window_size: int,
     stride: int,
     device: torch.device,
+    causality_mode: str = "noncausal",
 ) -> Bank:
     if window_size <= 0 or stride <= 0:
         raise ValueError("window_size and stride must be positive")
+    mode = _normalize_causality_mode(causality_mode)
 
-    starts = list(range(0, seq_len, stride))
+    if mode == "strict_past":
+        starts = list(range(0, seq_len - window_size + 1, stride))
+    elif mode == "noncausal":
+        starts = list(range(0, seq_len, stride))
+    else:
+        raise ValueError(f"Unknown set causality mode: {causality_mode}")
     set_indices_list: list[list[int]] = []
     for start in starts:
-        end = min(start + window_size, seq_len)
+        end = start + window_size if mode == "strict_past" else min(start + window_size, seq_len)
         set_indices_list.append(list(range(start, end)))
 
     m = len(set_indices_list)
@@ -136,10 +171,16 @@ def build_window_bank(
         set_sizes[j] = len(indices)
         set_indices[j, : len(indices)] = torch.tensor(indices, device=device)
 
+    endpoints = [indices[-1] for indices in set_indices_list if indices]
     token_sets: list[list[int]] = [[] for _ in range(seq_len)]
-    for j, indices in enumerate(set_indices_list):
-        for idx in indices:
-            token_sets[idx].append(j)
+    if mode == "strict_past":
+        for t in range(seq_len):
+            lower = t - window_size
+            token_sets[t] = [j for j, endpoint in enumerate(endpoints) if lower < endpoint <= t]
+    else:
+        for j, indices in enumerate(set_indices_list):
+            for idx in indices:
+                token_sets[idx].append(j)
 
     max_sets_per_token = max((len(s) for s in token_sets), default=0)
     token_to_sets = torch.full(
@@ -150,11 +191,16 @@ def build_window_bank(
             token_to_sets[t, : len(sets)] = torch.tensor(sets, device=device)
 
     set_positions = torch.arange(m, device=device, dtype=torch.long)
+    set_starts = torch.tensor(starts, dtype=torch.long, device=device)
+    set_endpoints = torch.tensor(endpoints, dtype=torch.long, device=device)
     return Bank(
         set_indices=set_indices,
         set_sizes=set_sizes,
         token_to_sets=token_to_sets,
         set_positions=set_positions,
+        set_starts=set_starts,
+        set_endpoints=set_endpoints,
+        causality_mode=mode,
     )
 
 

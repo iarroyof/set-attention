@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Dict, Optional
 
 import torch
@@ -84,11 +85,18 @@ class BaselineAttentionDiagnostics:
             ):
                 prev = self._prev_epoch_stats.get(base_key)
                 cur = stats.get(base_key)
-                if prev is not None and cur is not None:
+                if (
+                    prev is not None
+                    and cur is not None
+                    and math.isfinite(float(prev))
+                    and math.isfinite(float(cur))
+                ):
                     stats[delta_key] = cur - prev
+                else:
+                    stats[delta_key] = 0.0
         else:
-            stats["baseline/delta_attention_entropy"] = float("nan")
-            stats["baseline/delta_attention_confidence"] = float("nan")
+            stats["baseline/delta_attention_entropy"] = 0.0
+            stats["baseline/delta_attention_confidence"] = 0.0
 
         self._prev_epoch_stats = stats.copy()
         return stats

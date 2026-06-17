@@ -60,6 +60,14 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     attention_family = model.get("attention_family") or _infer_attention_family(backend) or "dense"
     model["attention_family"] = attention_family
 
+    if backend == "landmark":
+        backend_params = model.get("backend_params")
+        if backend_params is None:
+            backend_params = {}
+        if isinstance(backend_params, dict):
+            backend_params.setdefault("landmark_coverage", 0.25)
+        model["backend_params"] = backend_params
+
     # Per-component defaults (seq2seq only; harmless for LM).
     for prefix in ("encoder", "decoder", "cross"):
         comp_backend = _normalize_backend(model.get(f"{prefix}_backend")) or backend
@@ -84,6 +92,7 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     impl = model.get("implementation")
     uses_set_only = impl in {
         "set_only",
+        "hybrid_token_set",
         "encoder_set_only",
         "decoder_set_only",
         "cross_attention_set_only",
@@ -94,7 +103,48 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
         # Set-only parity/ablation defaults.
         model.setdefault("router_multihead", False)
         model.setdefault("router_temperature", 1.0)
+        router_cfg = model.get("router")
+        if router_cfg is None:
+            router_cfg = {}
+        elif not isinstance(router_cfg, dict):
+            router_cfg = {"min_temp": router_cfg}
+        router_cfg.setdefault("min_temp", 0.5)
+        router_cfg.setdefault("score_mode", "candidate_gather")
+        model["router"] = router_cfg
         model.setdefault("pooling_multihead", False)
+        pooling_cfg = model.get("pooling", "mean")
+        if isinstance(pooling_cfg, dict):
+            pooling_cfg.setdefault("mode", "mean")
+        else:
+            pooling_cfg = {"mode": pooling_cfg}
+        pooling_cfg.setdefault("alpha", 10.0)
+        pooling_cfg.setdefault("learnable_alpha", False)
+        model["pooling"] = pooling_cfg
+        feature_params = model.get("feature_params")
+        if feature_params is None:
+            feature_params = {}
+        if isinstance(feature_params, dict):
+            feature_params.setdefault("num_bins", 128)
+            feature_params.setdefault("hash_seed", 13)
+            feature_params.setdefault("normalize", True)
+        model["feature_params"] = feature_params
+        model.setdefault("d_phi", None)
+        model.setdefault("set_state_dim", None)
+        model.setdefault("adapter_type", "auto")
+        model.setdefault("output_residual_mode", "direct")
+        data_cfg = cfg.get("data", {})
+        task = cfg.get("task")
+        if task is None:
+            if data_cfg.get("seq_dataset"):
+                task = "seq2seq"
+            elif data_cfg.get("dataset"):
+                task = "lm"
+        default_causality_mode = (
+            "strict_past"
+            if task == "lm" and bool(model.get("causal", True))
+            else "noncausal"
+        )
+        model.setdefault("set_causality_mode", default_causality_mode)
         token_mlp = model.get("token_mlp")
         if token_mlp is None:
             model["token_mlp"] = {"enabled": True}

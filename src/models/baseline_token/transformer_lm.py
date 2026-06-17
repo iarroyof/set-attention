@@ -111,6 +111,9 @@ class TransformerLM(nn.Module):
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         self.max_seq_len = max_seq_len
         self.causal = causal
+        self.attention_family = attention_family
+        self.backend = backend
+        self.backend_params = backend_params or {}
         self.diagnostics = BaselineAttentionDiagnostics()
 
     def forward(
@@ -154,6 +157,18 @@ class TransformerLM(nn.Module):
         stats = self.diagnostics.get_epoch_stats()
         self.diagnostics.reset()
         return stats
+
+    def get_resolved_metadata(self) -> dict[str, object]:
+        resolved: dict[str, object] = {
+            "landmark_coverage": "NA",
+            "landmark_count": "NA",
+        }
+        if self.backend == "landmark":
+            coverage = float(self.backend_params.get("landmark_coverage", 0.25))
+            count = min(max(round(coverage * self.max_seq_len), 2), self.max_seq_len)
+            resolved["landmark_coverage"] = coverage
+            resolved["landmark_count"] = count
+        return resolved
 
     def attention_params(self) -> dict[str, torch.Tensor]:
         params: dict[str, torch.Tensor] = {}

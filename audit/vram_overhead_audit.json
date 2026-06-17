@@ -1,0 +1,441 @@
+{
+  "purpose": "Separate A7 reported VRAM overhead into architecture, implementation, and diagnostic components.",
+  "environment": {
+    "torch": "2.5.1+cu124",
+    "cuda_available": true,
+    "device_name": "NVIDIA GeForce RTX 4090",
+    "cuda_visible_devices": "0",
+    "branch": {
+      "cmd": "git branch --show-current",
+      "returncode": 0,
+      "stdout": [
+        "paper/final-results-bundle"
+      ],
+      "stderr": []
+    },
+    "head": {
+      "cmd": "git rev-parse HEAD",
+      "returncode": 0,
+      "stdout": [
+        "1174947643b001647c4fb92cc48e88c75f044be4"
+      ],
+      "stderr": []
+    },
+    "status_short": {
+      "cmd": "git status --short",
+      "returncode": 0,
+      "stdout": [
+        "M \"Context For Revision Agent after NeurIPS2026 LLM feedback.md\"",
+        " M configs/hyperparameters.md",
+        " M configs/paper_complements/family_linear_landmark.yaml",
+        " M configs/paper_lr_norm/set_linear_landmark.yaml",
+        " M configs/set_only/wikitext2_landmark.yaml",
+        " D configs/set_only/wikitext2_nystrom.yaml",
+        " M docs/example_paper_working_agent.tex",
+        " M scripts/create_paper_complements_yamls.sh",
+        " M scripts/export_main_results_provenance.sh",
+        " M scripts/gpu0_run_lrnorm_headline_pairs.sh",
+        " M scripts/gpu1_run_lrnorm_family_anchor.sh",
+        " M scripts/postrun_collect_family_complements.sh",
+        " M scripts/run_experiment.py",
+        " M scripts/run_lrnorm_both_gpus_commands.sh",
+        " M scripts/summarize_paper_family_complements.py",
+        " M src/config/compatibility.py",
+        " M src/config/normalize.py",
+        " M src/config/schema.py",
+        " M src/models/baseline_token/attention.py",
+        " M src/models/baseline_token/diagnostics.py",
+        " M src/models/baseline_token/transformer_lm.py",
+        " M src/models/seq2seq/seq2seq_model.py",
+        " M src/models/seq2seq/set_only_cross_attention.py",
+        " M src/models/set_only/banks.py",
+        " M src/models/set_only/diagnostics.py",
+        " M src/models/set_only/router.py",
+        " M src/models/set_only/set_only_lm.py",
+        " M src/set_attention/backends/landmark.py",
+        " M src/set_attention/backends/nystrom.py",
+        " M src/train/experiment_logger.py",
+        " M src/train/metrics_schema.py",
+        "?? audit/",
+        "?? baseline_linear_landmark.yaml",
+        "?? baseline_sparse_local_band.yaml",
+        "?? compatibility.py",
+        "?? configs/_deprecated/",
+        "?? configs/a4_long_context/",
+        "?? configs/paper_complements/baseline_linear_landmark.yaml",
+        "?? configs/paper_complements/baseline_sparse_local_band.yaml",
+        "?? configs/paper_lr_norm/baseline_linear_landmark.yaml",
+        "?? configs/paper_lr_norm/baseline_sparse_local_band.yaml",
+        "?? docs/revision_source_of_truth_definitions.md",
+        "?? normalize.py",
+        "?? scripts/_build_paper.sh",
+        "?? scripts/audit_vram_overhead.py",
+        "?? scripts/build_causal_experiment_report.py",
+        "?? scripts/plot_a7_backend_family_empty_only.py",
+        "?? scripts/plot_a7_empty_only_calibration.py",
+        "?? scripts/plot_a7_seed_extension_fine_grained.py",
+        "?? scripts/plot_causal_diagnostics.py",
+        "?? scripts/run_a2_baseline_controls.sh",
+        "?? scripts/run_a3_pooltau_high_tau_extension.sh",
+        "?? scripts/run_a3_pooltau_sweep.sh",
+        "?? scripts/run_a3_stride_sweep.sh",
+        "?? scripts/run_a3_window_baseline_controls.sh",
+        "?? scripts/run_a3_window_sweep.sh",
+        "?? scripts/run_a41_smoke.sh",
+        "?? scripts/run_a42_baseline_controls.sh",
+        "?? scripts/run_a42_slice.sh",
+        "?? scripts/run_a43_convergence.sh",
+        "?? scripts/run_a64_depth_sweep_detached.sh",
+        "?? scripts/run_a64_depth_sweep_worker_inside_container.sh",
+        "?? scripts/run_a6_dphi_capacity.sh",
+        "?? scripts/run_a6_interface_bottleneck.sh",
+        "?? scripts/run_a6_interface_bottleneck_detached.sh",
+        "?? scripts/run_a6_interface_bottleneck_worker_inside_container.sh",
+        "?? scripts/run_a6_set_state_dim.sh",
+        "?? scripts/run_a6_set_state_width.sh",
+        "?? scripts/run_a7_backend_family_empty_only.sh",
+        "?? scripts/run_a7_candidate2_extension.sh",
+        "?? scripts/run_a7_empty_only_calibration.sh",
+        "?? scripts/run_a7_seed_extension.sh",
+        "?? scripts/summarize_a2_grid.py",
+        "?? scripts/summarize_a3_pooltau_sweep.py",
+        "?? scripts/summarize_a3_stride_sweep.py",
+        "?? scripts/summarize_a3_window_sweep.py",
+        "?? scripts/summarize_a41_smoke.py",
+        "?? scripts/summarize_a42_slice.py",
+        "?? scripts/summarize_a43_convergence.py",
+        "?? scripts/summarize_a64_depth_sweep.py",
+        "?? scripts/summarize_a6_dphi_capacity.py",
+        "?? scripts/summarize_a6_interface_bottleneck.py",
+        "?? scripts/summarize_a6_set_state_dim.py",
+        "?? scripts/summarize_a6_set_state_width.py",
+        "?? scripts/summarize_a7_backend_family_empty_only.py",
+        "?? scripts/summarize_a7_empty_only_calibration.py",
+        "?? scripts/summarize_a7_seed_extension.py",
+        "?? scripts/summarize_baseline_controls.py",
+        "?? scripts/validate_a5_handoff.py",
+        "?? test_baseline_backend_controls.py",
+        "?? tests/test_banks_option1.py",
+        "?? tests/test_baseline_backend_controls.py",
+        "?? tests/test_causality.py",
+        "?? tests/test_diagnostics_option1.py",
+        "?? tests/test_hyperparameter_propagation.py",
+        "?? tests/test_landmark_backend.py",
+        "?? tests/test_nystrom_deprecation.py",
+        "?? tests/test_output_residual_mode.py",
+        "?? transformer_lm.py"
+      ],
+      "stderr": []
+    }
+  },
+  "fixed_shape": {
+    "vocab_size": 76618,
+    "batch": 16,
+    "seq_len": 512,
+    "d_model": 384,
+    "d_ff": 1536,
+    "num_layers": 6,
+    "num_heads": 8,
+    "dtype_bytes": 4
+  },
+  "baseline": {
+    "dense": {
+      "param_mib": 265.8310546875,
+      "adamw_state_mib_estimate": 531.662109375,
+      "probe": {
+        "cold_first_step": {
+          "allocated_before_step_mib": 265.9560546875,
+          "allocated_after_forward_mib": 5670.9599609375,
+          "allocated_after_loss_mib": 8065.2734375,
+          "allocated_after_backward_mib": 2942.66259765625,
+          "allocated_after_optimizer_step_mib": 3474.32470703125,
+          "peak_mib": 12853.8984375
+        },
+        "warm_optimizer_resident_step": {
+          "allocated_before_step_mib": 1080.01171875,
+          "allocated_after_forward_mib": 6210.7470703125,
+          "allocated_after_loss_mib": 8605.060546875,
+          "allocated_after_backward_mib": 3474.32470703125,
+          "allocated_after_optimizer_step_mib": 3474.32470703125,
+          "peak_mib": 13393.685546875
+        }
+      }
+    },
+    "sparse": {
+      "param_mib": 265.8310546875,
+      "adamw_state_mib_estimate": 531.662109375,
+      "probe": {
+        "cold_first_step": {
+          "allocated_before_step_mib": 282.2060546875,
+          "allocated_after_forward_mib": 5680.5849609375,
+          "allocated_after_loss_mib": 8074.8984375,
+          "allocated_after_backward_mib": 2942.66259765625,
+          "allocated_after_optimizer_step_mib": 3474.32470703125,
+          "peak_mib": 12863.5234375
+        },
+        "warm_optimizer_resident_step": {
+          "allocated_before_step_mib": 1080.01171875,
+          "allocated_after_forward_mib": 6212.2470703125,
+          "allocated_after_loss_mib": 8606.560546875,
+          "allocated_after_backward_mib": 3474.32470703125,
+          "allocated_after_optimizer_step_mib": 3474.32470703125,
+          "peak_mib": 13395.185546875
+        }
+      }
+    },
+    "linear": {
+      "param_mib": 265.8310546875,
+      "adamw_state_mib_estimate": 531.662109375,
+      "probe": {
+        "cold_first_step": {
+          "allocated_before_step_mib": 282.2060546875,
+          "allocated_after_forward_mib": 4868.3408203125,
+          "allocated_after_loss_mib": 7262.654296875,
+          "allocated_after_backward_mib": 2942.66259765625,
+          "allocated_after_optimizer_step_mib": 3474.32470703125,
+          "peak_mib": 12051.279296875
+        },
+        "warm_optimizer_resident_step": {
+          "allocated_before_step_mib": 1080.01171875,
+          "allocated_after_forward_mib": 5400.0029296875,
+          "allocated_after_loss_mib": 7794.31640625,
+          "allocated_after_backward_mib": 3474.32470703125,
+          "allocated_after_optimizer_step_mib": 3474.32470703125,
+          "peak_mib": 12582.94140625
+        }
+      }
+    }
+  },
+  "set_only": {
+    "dense": {
+      "w1_s1": {
+        "param_mib": 275.6044921875,
+        "adamw_state_mib_estimate": 551.208984375,
+        "with_grad_probe": {
+          "allocated_before_step_mib": 1191.3564453125,
+          "allocated_after_forward_mib": 6732.64404296875,
+          "allocated_after_loss_mib": 9126.95751953125,
+          "allocated_after_backward_mib": 3525.66943359375,
+          "allocated_after_optimizer_step_mib": 3525.66943359375,
+          "peak_mib": 13915.58251953125
+        },
+        "without_grad_probe": {
+          "allocated_before_step_mib": 1131.3564453125,
+          "allocated_after_forward_mib": 6732.64404296875,
+          "allocated_after_loss_mib": 9126.95751953125,
+          "allocated_after_backward_mib": 3525.66943359375,
+          "allocated_after_optimizer_step_mib": 3525.66943359375,
+          "peak_mib": 13915.58251953125
+        },
+        "measured_grad_probe_delta_mib": 0.0
+      },
+      "w4_s2": {
+        "param_mib": 275.22802734375,
+        "adamw_state_mib_estimate": 550.4560546875,
+        "with_grad_probe": {
+          "allocated_before_step_mib": 1165.7568359375,
+          "allocated_after_forward_mib": 4609.328125,
+          "allocated_after_loss_mib": 7003.6416015625,
+          "allocated_after_backward_mib": 3518.14013671875,
+          "allocated_after_optimizer_step_mib": 3518.14013671875,
+          "peak_mib": 11792.2666015625
+        },
+        "without_grad_probe": {
+          "allocated_before_step_mib": 1123.8271484375,
+          "allocated_after_forward_mib": 4609.328125,
+          "allocated_after_loss_mib": 7003.6416015625,
+          "allocated_after_backward_mib": 3518.14013671875,
+          "allocated_after_optimizer_step_mib": 3518.14013671875,
+          "peak_mib": 11792.2666015625
+        },
+        "measured_grad_probe_delta_mib": 0.0
+      },
+      "w16_s8": {
+        "param_mib": 274.94677734375,
+        "adamw_state_mib_estimate": 549.8935546875,
+        "with_grad_probe": {
+          "allocated_before_step_mib": 1146.6318359375,
+          "allocated_after_forward_mib": 3591.7861328125,
+          "allocated_after_loss_mib": 5986.099609375,
+          "allocated_after_backward_mib": 3512.51513671875,
+          "allocated_after_optimizer_step_mib": 3512.51513671875,
+          "peak_mib": 10774.724609375
+        },
+        "without_grad_probe": {
+          "allocated_before_step_mib": 1118.2021484375,
+          "allocated_after_forward_mib": 3591.7861328125,
+          "allocated_after_loss_mib": 5986.099609375,
+          "allocated_after_backward_mib": 3512.51513671875,
+          "allocated_after_optimizer_step_mib": 3512.51513671875,
+          "peak_mib": 10774.724609375
+        },
+        "measured_grad_probe_delta_mib": 0.0
+      }
+    },
+    "sparse": {
+      "w1_s1": {
+        "param_mib": 275.6044921875,
+        "adamw_state_mib_estimate": 551.208984375,
+        "with_grad_probe": {
+          "allocated_before_step_mib": 1191.3564453125,
+          "allocated_after_forward_mib": 6732.64404296875,
+          "allocated_after_loss_mib": 9126.95751953125,
+          "allocated_after_backward_mib": 3525.66943359375,
+          "allocated_after_optimizer_step_mib": 3525.66943359375,
+          "peak_mib": 13915.58251953125
+        },
+        "without_grad_probe": {
+          "allocated_before_step_mib": 1131.3564453125,
+          "allocated_after_forward_mib": 6732.64404296875,
+          "allocated_after_loss_mib": 9126.95751953125,
+          "allocated_after_backward_mib": 3525.66943359375,
+          "allocated_after_optimizer_step_mib": 3525.66943359375,
+          "peak_mib": 13915.58251953125
+        },
+        "measured_grad_probe_delta_mib": 0.0
+      },
+      "w4_s2": {
+        "param_mib": 275.22802734375,
+        "adamw_state_mib_estimate": 550.4560546875,
+        "with_grad_probe": {
+          "allocated_before_step_mib": 1165.7568359375,
+          "allocated_after_forward_mib": 4609.328125,
+          "allocated_after_loss_mib": 7003.6416015625,
+          "allocated_after_backward_mib": 3518.14013671875,
+          "allocated_after_optimizer_step_mib": 3518.14013671875,
+          "peak_mib": 11792.2666015625
+        },
+        "without_grad_probe": {
+          "allocated_before_step_mib": 1123.8271484375,
+          "allocated_after_forward_mib": 4609.328125,
+          "allocated_after_loss_mib": 7003.6416015625,
+          "allocated_after_backward_mib": 3518.14013671875,
+          "allocated_after_optimizer_step_mib": 3518.14013671875,
+          "peak_mib": 11792.2666015625
+        },
+        "measured_grad_probe_delta_mib": 0.0
+      },
+      "w16_s8": {
+        "param_mib": 274.94677734375,
+        "adamw_state_mib_estimate": 549.8935546875,
+        "with_grad_probe": {
+          "allocated_before_step_mib": 1146.6318359375,
+          "allocated_after_forward_mib": 3591.7861328125,
+          "allocated_after_loss_mib": 5986.099609375,
+          "allocated_after_backward_mib": 3512.51513671875,
+          "allocated_after_optimizer_step_mib": 3512.51513671875,
+          "peak_mib": 10774.724609375
+        },
+        "without_grad_probe": {
+          "allocated_before_step_mib": 1118.2021484375,
+          "allocated_after_forward_mib": 3591.7861328125,
+          "allocated_after_loss_mib": 5986.099609375,
+          "allocated_after_backward_mib": 3512.51513671875,
+          "allocated_after_optimizer_step_mib": 3512.51513671875,
+          "peak_mib": 10774.724609375
+        },
+        "measured_grad_probe_delta_mib": 0.0
+      }
+    },
+    "linear": {
+      "w1_s1": {
+        "param_mib": 275.6044921875,
+        "adamw_state_mib_estimate": 551.208984375,
+        "with_grad_probe": {
+          "allocated_before_step_mib": 1191.3564453125,
+          "allocated_after_forward_mib": 5921.89990234375,
+          "allocated_after_loss_mib": 8316.21337890625,
+          "allocated_after_backward_mib": 3525.66943359375,
+          "allocated_after_optimizer_step_mib": 3525.66943359375,
+          "peak_mib": 13104.83837890625
+        },
+        "without_grad_probe": {
+          "allocated_before_step_mib": 1131.3564453125,
+          "allocated_after_forward_mib": 5921.89990234375,
+          "allocated_after_loss_mib": 8316.21337890625,
+          "allocated_after_backward_mib": 3525.66943359375,
+          "allocated_after_optimizer_step_mib": 3525.66943359375,
+          "peak_mib": 13104.83837890625
+        },
+        "measured_grad_probe_delta_mib": 0.0
+      },
+      "w4_s2": {
+        "param_mib": 275.22802734375,
+        "adamw_state_mib_estimate": 550.4560546875,
+        "with_grad_probe": {
+          "allocated_before_step_mib": 1165.7568359375,
+          "allocated_after_forward_mib": 4422.666015625,
+          "allocated_after_loss_mib": 6816.9794921875,
+          "allocated_after_backward_mib": 3518.14013671875,
+          "allocated_after_optimizer_step_mib": 3518.14013671875,
+          "peak_mib": 11605.6044921875
+        },
+        "without_grad_probe": {
+          "allocated_before_step_mib": 1123.8271484375,
+          "allocated_after_forward_mib": 4422.666015625,
+          "allocated_after_loss_mib": 6816.9794921875,
+          "allocated_after_backward_mib": 3518.14013671875,
+          "allocated_after_optimizer_step_mib": 3518.14013671875,
+          "peak_mib": 11605.6044921875
+        },
+        "measured_grad_probe_delta_mib": 0.0
+      },
+      "w16_s8": {
+        "param_mib": 274.94677734375,
+        "adamw_state_mib_estimate": 549.8935546875,
+        "with_grad_probe": {
+          "allocated_before_step_mib": 1146.6318359375,
+          "allocated_after_forward_mib": 3585.6513671875,
+          "allocated_after_loss_mib": 5979.96484375,
+          "allocated_after_backward_mib": 3512.51513671875,
+          "allocated_after_optimizer_step_mib": 3512.51513671875,
+          "peak_mib": 10768.58984375
+        },
+        "without_grad_probe": {
+          "allocated_before_step_mib": 1118.2021484375,
+          "allocated_after_forward_mib": 3585.6513671875,
+          "allocated_after_loss_mib": 5979.96484375,
+          "allocated_after_backward_mib": 3512.51513671875,
+          "allocated_after_optimizer_step_mib": 3512.51513671875,
+          "peak_mib": 10768.58984375
+        },
+        "measured_grad_probe_delta_mib": 0.0
+      }
+    }
+  },
+  "static_estimates": {
+    "w1_s1": {
+      "M": 512,
+      "token_state_mib": 12.0,
+      "one_set_state_mib": 12.0,
+      "pool_gather_mib": 12.0,
+      "router_scores_or_probs_mib": 128.0,
+      "set_self_attention_scores_or_probs_mib": 128.0,
+      "set_grad_probe_extra_mib_formula": 36.0
+    },
+    "w4_s2": {
+      "M": 255,
+      "token_state_mib": 12.0,
+      "one_set_state_mib": 5.9765625,
+      "pool_gather_mib": 23.90625,
+      "router_scores_or_probs_mib": 63.75,
+      "set_self_attention_scores_or_probs_mib": 31.75048828125,
+      "set_grad_probe_extra_mib_formula": 23.953125
+    },
+    "w16_s8": {
+      "M": 63,
+      "token_state_mib": 12.0,
+      "one_set_state_mib": 1.4765625,
+      "pool_gather_mib": 23.625,
+      "router_scores_or_probs_mib": 15.75,
+      "set_self_attention_scores_or_probs_mib": 1.93798828125,
+      "set_grad_probe_extra_mib_formula": 14.953125
+    }
+  },
+  "conclusion": {
+    "max_measured_set_grad_probe_delta_mib": 0.0,
+    "min_measured_set_grad_probe_delta_mib": 0.0,
+    "subtract_from_reported_vram": false,
+    "reason": "The measurable diagnostic-only component is small relative to the reported A7 set-token overhead and is topology/model specific. The dominant contributors are architectural/implementation tensors: the simultaneous token and set streams plus dense token-to-set router score/probability tensors and set self-attention tensors. These should be reported, not subtracted."
+  }
+}

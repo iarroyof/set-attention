@@ -13,17 +13,29 @@ class LandmarkAttentionBackend(SetAttentionBackend):
         self,
         d_model: int,
         num_heads: int,
-        num_landmarks: int,
+        landmark_coverage: float | None = None,
+        coverage: float | None = None,
+        num_landmarks: int | None = None,
         dropout: float = 0.0,
         allow_token_token: bool = False,
     ) -> None:
         super().__init__()
         if d_model % num_heads != 0:
             raise ValueError("d_model must be divisible by num_heads")
+        if landmark_coverage is not None and coverage is not None:
+            raise ValueError("Use only one of landmark_coverage or coverage")
+        resolved_coverage = landmark_coverage if landmark_coverage is not None else coverage
+        if resolved_coverage is None:
+            resolved_coverage = 0.25
+        resolved_coverage = float(resolved_coverage)
+        if resolved_coverage <= 0.0:
+            raise ValueError("landmark_coverage must be > 0")
         self.d_model = d_model
         self.num_heads = num_heads
         self.d_head = d_model // num_heads
+        self.landmark_coverage = resolved_coverage
         self.num_landmarks = num_landmarks
+        self.last_landmark_count: int | None = None
         self.q_proj = nn.Linear(d_model, d_model)
         self.k_proj = nn.Linear(d_model, d_model)
         self.v_proj = nn.Linear(d_model, d_model)
@@ -31,12 +43,24 @@ class LandmarkAttentionBackend(SetAttentionBackend):
         self.dropout = nn.Dropout(dropout)
         self.allow_token_token = allow_token_token
 
+    def _landmark_count(self, m: int) -> int:
+        if m <= 0:
+            return 0
+        if self.num_landmarks is not None:
+            floor = 2 if m > 1 else 1
+            return min(max(int(self.num_landmarks), floor), m)
+        return min(max(round(self.landmark_coverage * m), 2), m)
+
     def _select_landmarks(self, m: int, device: torch.device) -> torch.Tensor:
-        if self.num_landmarks >= m:
+        k = self._landmark_count(m)
+        self.last_landmark_count = k
+        if k >= m:
             return torch.arange(m, device=device)
-        stride = max(m // self.num_landmarks, 1)
-        idx = torch.arange(0, m, stride, device=device)[: self.num_landmarks]
-        return idx
+        return torch.tensor(
+            [round(i * (m - 1) / (k - 1)) for i in range(k)],
+            device=device,
+            dtype=torch.long,
+        )
 
     def forward(
         self,

@@ -1,0 +1,94 @@
+{
+  "branch": {
+    "cmd": "git branch --show-current",
+    "returncode": 0,
+    "stdout": [
+      "paper/final-results-bundle"
+    ],
+    "stderr": []
+  },
+  "head": {
+    "cmd": "git rev-parse HEAD",
+    "returncode": 0,
+    "stdout": [
+      "1174947643b001647c4fb92cc48e88c75f044be4"
+    ],
+    "stderr": []
+  },
+  "status_short": {
+    "cmd": "git status --short",
+    "returncode": 0,
+    "stdout": [
+      "M \"Context For Revision Agent after NeurIPS2026 LLM feedback.md\"",
+      " M configs/hyperparameters.md",
+      " M configs/paper_complements/family_linear_landmark.yaml",
+      " M configs/paper_lr_norm/set_linear_landmark.yaml",
+      " M configs/set_only/wikitext2_landmark.yaml",
+      " D configs/set_only/wikitext2_nystrom.yaml",
+      " M scripts/create_paper_complements_yamls.sh",
+      " M scripts/export_main_results_provenance.sh",
+      " M scripts/gpu0_run_lrnorm_headline_pairs.sh",
+      " M scripts/gpu1_run_lrnorm_family_anchor.sh",
+      " M scripts/postrun_collect_family_complements.sh",
+      " M scripts/run_experiment.py",
+      " M scripts/run_lrnorm_both_gpus_commands.sh",
+      " M scripts/summarize_paper_family_complements.py",
+      " M src/config/compatibility.py",
+      " M src/config/normalize.py",
+      " M src/config/schema.py",
+      " M src/models/baseline_token/attention.py",
+      " M src/models/baseline_token/diagnostics.py",
+      " M src/models/seq2seq/seq2seq_model.py",
+      " M src/models/seq2seq/set_only_cross_attention.py",
+      " M src/models/set_only/banks.py",
+      " M src/models/set_only/diagnostics.py",
+      " M src/models/set_only/router.py",
+      " M src/models/set_only/set_only_lm.py",
+      " M src/set_attention/backends/landmark.py",
+      " M src/set_attention/backends/nystrom.py",
+      " M src/train/experiment_logger.py",
+      " M src/train/metrics_schema.py",
+      "?? audit/",
+      "?? configs/_deprecated/",
+      "?? docs/revision_source_of_truth_definitions.md",
+      "?? scripts/run_a3_window_sweep.sh",
+      "?? scripts/summarize_a2_grid.py",
+      "?? scripts/summarize_a3_window_sweep.py",
+      "?? tests/test_banks_option1.py",
+      "?? tests/test_causality.py",
+      "?? tests/test_diagnostics_option1.py",
+      "?? tests/test_hyperparameter_propagation.py",
+      "?? tests/test_landmark_backend.py",
+      "?? tests/test_nystrom_deprecation.py"
+    ],
+    "stderr": []
+  },
+  "a2_manifest_exists": true,
+  "a2_manifest_status": "pass",
+  "a2_manifest_expected_runs": 153,
+  "a2_manifest_validated_runs": 153,
+  "a2_handoff_status_line": "Status: PASS",
+  "stale_assumption_check": {
+    "cmd": "grep -RInE M=64|M = 64|ceil\\(512 / 8\\)|num_landmarks|backend:[[:space:]]*nystrom|noncausal|all-A2|override all A2|s=4 scripts configs/paper_complements configs/paper_lr_norm configs/set_only configs/_deprecated README.md docs/revision_source_of_truth_definitions.md",
+    "returncode": 0,
+    "stdout": [
+      "scripts/summarize_paper_family_complements.py:326:    lines.append(r\"\\caption{Expanded pooling-temperature family complement sweep at fixed $s=4$, $w=16$, $\\tau_r=1.0$, $q=0.85$, and the same post-parity set-only architecture/training recipe used in the Tier C anchor family. Rows are deduplicated by full control-key; if multiple source files share the same key, the newest completed run is retained and all candidates are recorded in the audit JSON.}\")",
+      "scripts/run_a3_window_sweep.sh:56:    r\"M=64|M = 64|ceil\\(512 / 8\\)|num_landmarks|backend:[[:space:]]*nystrom|noncausal|all-A2|override all A2|s=4\",",
+      "scripts/run_a3_window_sweep.sh:71:        \"A3.1 fixed-stride mechanism sweep uses s=4; A2.2/A2.3 LR-normalized \"",
+      "scripts/make_fig_sw_family_time_vs_ppl_with_baseline_labeled.py:33:    (\"out/metrics/action0_tempSweep_s4_w16_T1_lr1e4_seed0.csv\", \"s=4, w=16\"),",
+      "scripts/summarize_lrnorm_headline.py:186:            s=46,",
+      "scripts/export_main_results_provenance.sh:318:- sparse/local_band: radius=4",
+      "scripts/summarize_a3_window_sweep.py:321:        \"- Fixed stride: `s=4`.\",",
+      "scripts/postrun_collect_family_complements.sh:326:    lines.append(r\"\\caption{Expanded pooling-temperature family complement sweep at fixed $s=4$, $w=16$, $\\tau_r=1.0$, $q=0.85$, and the same post-parity set-only architecture/training recipe used in the Tier C anchor family. Rows are deduplicated by full control-key; if multiple source files share the same key, the newest completed run is retained and all candidates are recorded in the audit JSON.}\")",
+      "configs/_deprecated/wikitext2_nystrom.yaml:6:  backend: nystrom",
+      "configs/_deprecated/wikitext2_nystrom.yaml:21:    num_landmarks: 8",
+      "docs/revision_source_of_truth_definitions.md:9:- The historical clipped-window topology remains available as `set_causality_mode=noncausal` for noncausal/bidirectional use.",
+      "docs/revision_source_of_truth_definitions.md:202:The old clipped membership topology remains available as `set_causality_mode=noncausal`, where starts are `range(0, L, s)`, `M = ceil(L / s)`, trailing windows are clipped, and `token_to_sets[t]` lists sets containing token `t`.",
+      "docs/revision_source_of_truth_definitions.md:209:| `s=4` | 125 | 0 | 3.8359375 | 4 |",
+      "docs/revision_source_of_truth_definitions.md:230:Diagnostics consume the supplied candidate fiber/mask. In `strict_past`, that fiber is the Option-1 endpoint fiber already stored in `bank.token_to_sets`; in `noncausal`, it is the historical containing-token membership fiber. Diagnostics must not reconstruct containing-token membership internally. Early strict-past tokens with zero candidates are excluded from entropy and gap normalizers so the reported values remain finite.",
+      "docs/revision_source_of_truth_definitions.md:321:- `NystromBackend` remains in `src/set_attention/backends/nystrom.py` only for historical reference/import compatibility. As of A1.10, constructing it raises `RuntimeError(\"NystromBackend is deprecated for this revision cycle; use landmark backend.\")`, and active config validation rejects `backend: nystrom`."
+    ],
+    "stderr": []
+  },
+  "locked_stride_confirmation": "A3.1 fixed-stride mechanism sweep uses s=4; A2.2/A2.3 LR-normalized headline/family grid remains s=8 and is not overridden."
+}

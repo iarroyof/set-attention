@@ -141,7 +141,7 @@ strict_keys = [
     "model.causal",
     "model.backend_params.radius",
     "model.backend_params.k_s",
-    "model.backend_params.num_landmarks",
+    "model.backend_params.landmark_coverage",
     "model.backend_params.k",
 ]
 
@@ -316,7 +316,7 @@ Set-only rows additionally use:
 
 Backend-specific parameters:
 - sparse/local_band: radius=4
-- linear/landmark: num_landmarks=24
+- linear/landmark: landmark_coverage=0.25
 - dense/exact: no backend-specific radius/landmark parameter
 """
 )

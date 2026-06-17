@@ -1,3 +1,5 @@
+# Deprecated for this revision cycle. Use backend: landmark with
+# backend_params.landmark_coverage for active linear-family runs.
 model:
   implementation: set_only
   attention_family: linear
