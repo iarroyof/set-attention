@@ -232,6 +232,7 @@ class SetOnlyLM(nn.Module):
         )
         self._last_aux_losses: dict[str, torch.Tensor] = {}
         self._last_aux_metrics: dict[str, float] = {}
+        self.span_ablation_enabled = False
         if isinstance(pooling, dict):
             self.pooling_mode = pooling.get("mode", "mean")
             self.pooling_params = {
@@ -606,6 +607,22 @@ class SetOnlyLM(nn.Module):
     def get_auxiliary_metrics(self) -> dict[str, float]:
         return dict(self._last_aux_metrics)
 
+    def set_span_ablation(self, enabled: bool = True) -> None:
+        self.span_ablation_enabled = bool(enabled)
+
+    def anchor_pre_encoder_parameter_count(self) -> int:
+        if self.anchor_pre_encoder is None:
+            return 0
+        return sum(p.numel() for p in self.anchor_pre_encoder.parameters())
+
+    def inference_parameter_count(self) -> int:
+        excluded_prefix = "anchor_pre_encoder."
+        return sum(
+            p.numel()
+            for name, p in self.named_parameters()
+            if not name.startswith(excluded_prefix)
+        )
+
     def _encode_tokens(
         self,
         input_ids: torch.Tensor,
@@ -752,6 +769,8 @@ class SetOnlyLM(nn.Module):
             router_out = self.router(token_states, set_states, desc_router, bank.token_to_sets)
         routed_repr = self.set_output_proj(router_out.token_repr)
         self._update_anchor_loss(routed_repr, input_ids)
+        if self.span_ablation_enabled:
+            routed_repr = torch.zeros_like(routed_repr)
         token_repr = routed_repr
         if self.set_causality_mode == "strict_past":
             if self.output_residual_mode == "direct":

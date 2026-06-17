@@ -1,0 +1,26 @@
+{
+  "anchor_reference_counts": {
+    "anchor_pre_encoder_params": 3548928,
+    "inference_minus_token_params": 3546240,
+    "matched_dense_token_params": 10941696,
+    "set_dictionary_inference_params": 14487936,
+    "set_dictionary_train_params": 18036864
+  },
+  "checks": {
+    "pre_encoder_excluded_from_inference_count": true,
+    "thin_anchor_exact_under_span_ablation": true,
+    "token_mlp_disabled_for_anchor_span": true
+  },
+  "notes": [
+    "Synthetic span-ablation delta is a harness smoke value, not a trained PPL collapse claim.",
+    "Actual ladder summaries must fail a run if trained span ablation does not sharply worsen PPL."
+  ],
+  "small_smoke": {
+    "inference_peak_vram_mib": 17.5126953125,
+    "normal_loss": 5.503087997436523,
+    "span_ablated_loss": 5.339049339294434,
+    "span_ablation_delta_loss": -0.16403865814208984,
+    "train_peak_vram_mib": 16.8193359375
+  },
+  "status": "pass"
+}

@@ -111,6 +111,45 @@ def test_anchor_span_uses_thin_anchor_plus_span():
     assert torch.allclose(anchor_repr, thin_anchor + span_only)
 
 
+def test_span_ablation_zeros_span_and_excludes_anchor_params_from_inference_count():
+    input_ids = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]], dtype=torch.long)
+    model = SetOnlyLM(
+        vocab_size=31,
+        d_model=8,
+        num_layers=0,
+        num_heads=2,
+        window_size=4,
+        stride=2,
+        dropout=0.0,
+        max_seq_len=8,
+        dim_feedforward=16,
+        pooling="mean",
+        router_type="uniform",
+        router_topk=0,
+        backend="exact",
+        feature_mode="geometry_only",
+        token_mlp=False,
+        set_causality_mode="strict_past",
+        output_residual_mode="anchor_span",
+        anchor={"enabled": True, "pre_encoder_layers": 1},
+    )
+    model.eval()
+
+    with torch.no_grad():
+        model.set_span_ablation(True)
+        ablated_logits = model(input_ids)
+        pos_ids = torch.arange(input_ids.shape[1], device=input_ids.device).unsqueeze(0)
+        thin_anchor = model.token_emb(input_ids) + model.pos_emb(pos_ids)
+        expected_logits = model.lm_head(thin_anchor)
+
+    assert torch.allclose(ablated_logits, expected_logits, atol=1e-6)
+    assert model.anchor_pre_encoder_parameter_count() > 0
+    assert (
+        sum(p.numel() for p in model.parameters()) - model.inference_parameter_count()
+        == model.anchor_pre_encoder_parameter_count()
+    )
+
+
 def test_output_residual_mode_config_validation():
     cfg = {
         "model": {
