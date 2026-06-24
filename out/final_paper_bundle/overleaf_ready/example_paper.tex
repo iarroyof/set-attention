@@ -1,0 +1,3880 @@
+\documentclass{article}
+
+% If you need to pass options to natbib, do so before loading neurips_2025.
+\usepackage{neurips_2025}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage{nicefrac}
+\usepackage{xcolor}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{placeins}
+
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{dsfont}
+\usepackage{mathtools}
+\usepackage{amsthm}
+\newtheorem{framework}{Framework}
+\newcommand{\mathbbm}[1]{\mathds{#1}}
+
+% if you use cleveref..
+\usepackage[capitalize,noabbrev]{cleveref}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% THEOREMS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\usepackage[textsize=tiny]{todonotes}
+
+\title{Set Attention}
+
+\author{Anonymous Authors}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We introduce Set Attention, a sequence modeling architecture that replaces token-to-token attention with set construction, probabilistic pooling, set-level processing, and multi-head routing back to tokens. A tiered analysis separates exact structural facts, mechanistic stability bounds, and empirically testable operating-regime predictions. The theory shows that multi-head routing strictly enlarges the routing function class until limited by candidate-set topology, characterizes topology-induced entropy collapse, and decomposes gradient transport through pooling, set processing, and routing.
+
+Controlled language-modeling experiments support these predictions across dense exact, sparse local-band, and linear landmark set-attention families. Stride/candidate-count sweeps expose topology-induced routing collapse, pooling-temperature sweeps link effective support to gradient transport, and LR-normalized matched controls show that the present causal implementation reduces long-context memory but does not outperform matched token-attention baselines in perplexity under the tested operating points. The resulting candidate-count, concentration, and transport view offers a principled basis for diagnosing set-mediated alternatives to attention and suggests a lens for related long-context problems such as cache compression, memory pruning, and learned routing.
+\end{abstract}
+
+\section{Introduction}
+
+Attention is the dominant primitive for sequence modeling, but standard token-to-token attention ties expressive interaction to costly pairwise structure. Efficient alternatives such as sparse, local, top-$k$, low-rank, kernelized, and linear mechanisms all constrain how information is aggregated and transported. They are usually introduced as separate designs; our goal is to expose a common structural language in which those tradeoffs can be stated explicitly.
+
+Set Attention replaces direct token-to-token interaction with a set-mediated pipeline: tokens are organized into a bank of sets, each set is pooled into a state, set states interact through a set-attention family, and a learned multi-head router maps processed set states back to tokens. In this view, information flow is governed by bank topology, pooling concentration, set-level processing, and token-to-set routing. Dense exact, sparse local-band, and linear landmark set-attention backends then become different choices inside the same architecture rather than unrelated approximations.
+
+This formulation isolates questions that are hard to ask in ordinary attention. When does topology force routing collapse? How many distinct routing patterns can multi-head routing express? How does pooling concentration affect gradient transport? We answer these questions with a tiered analysis: Tier~A gives exact structural facts about candidate sets and routing laws; Tier~B gives local perturbation bounds under explicit smoothness assumptions; Tier~C turns these results into experimentally testable feasible-region predictions.
+
+The main theory shows that multi-head routing strictly enlarges the routing function class over single-head routing, with intrinsic capacity growing with the number of routing heads until capped by candidate-count topology. It also characterizes routing entropy, top-$k$ constraints, topology-induced degeneracy, and a perturbation decomposition through pooling, set processing, and routing. These results motivate an operating picture in which stable behavior depends on nondegenerate candidate diversity, sufficient pooling support, and controlled gradient transport.
+
+Our language-modeling experiments test this picture directly. Cross-family stride and pooling-temperature sweeps show that routing collapse and pooling-support effects persist across dense exact, sparse local-band, and linear landmark Set Attention. A separate LR-normalized matched comparison provides model-level context: matched token-attention baselines remain stronger in validation perplexity, while set-routed models reduce peak VRAM in the long-context slice. More broadly, the candidate-count, concentration, and transport view may apply to long-context design problems such as cache compression, memory pruning, and learned routing, where retaining state is not enough if the retained structure collapses diversity or support.
+
+The rest of the paper is organized as follows. Section~\ref{sec:model-overview} defines the Set Attention architecture and the dense, sparse, and linear set-processing families. Section~\ref{sec:main-theory} states the compact Tier~A--C theoretical results, with full proofs deferred to the appendix. Section~\ref{sec:results} reports the Tier~C mechanism experiments and the LR-normalized baseline comparison. The appendix gives the full notation, detailed model definitions, proofs, provenance tables, and extended diagnostics.
+
+\section{Related Work}
+Prior work on structured and efficient alternatives to token-to-token attention can be organized into several overlapping themes. One line constrains token-to-token interaction directly through sparse or structured patterns such as locality, top-$k$ selection, or other restricted connectivity rules. Another line seeks linear or low-rank approximations that preserve the token-level attention interface while reducing the cost of dense pairwise interaction. These approaches are closely related to the efficiency motivation of this paper, but they typically treat the attention map itself as the main object to sparsify, approximate, or compress.
+
+A second line of work changes how attention information is composed or aggregated rather than only changing the score kernel. LASER and DCFormer are examples within this broader design space: both explore departures from standard attention by modifying how information is organized inside the architecture, including mechanisms that alter head interaction or internal aggregation structure. We use the term \emph{routing} for our own explicit token-to-set assignment distribution; prior non-MoE transformer variants are better understood as inducing routing-like information flow rather than as implementing the same explicit routing module. The key difference is that our construction makes set formation, pooling, and routing explicit architectural stages, with bank topology entering as a first-class structural object rather than as an implicit property of an attention mask or a head-composition rule.
+
+A third line emphasizes deployment setting or modality. Ripple Attention illustrates this perspective by tailoring attention structure to vision workloads, where the practical constraints and useful inductive biases differ from those of autoregressive language modeling. More broadly, this literature shows that efficient attention design is often shaped by hardware considerations, modality-specific structure, or the need to preserve strong baseline behavior under restricted interaction budgets.
+
+Our paper differs from these lines of work in both representation and analysis. Instead of approximating token-to-token attention directly, we study set-mediated token interaction through explicit bank topology, probabilistic pooling, set-level processing, and routing distributions back to token space. This lets us analyze pooling concentration, candidate-count structure, and routing behavior within a single framework, and then connect that framework to a tiered theoretical framing tied to the empirical diagnostics in the Results section. That perspective also motivates the formal setup of the next section, where the bank, pooling law, and routing map are introduced as explicit mathematical objects.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% SECTION 4: MODEL DEFINITION AND STRUCTURAL OBJECTS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\section{Model Overview}
+\label{sec:model-overview}
+
+Set Attention replaces direct token-to-token attention by a set-mediated pipeline
+\[
+x_{1:L}\ \longrightarrow\ h_{1:L}^{(0)}\ \longrightarrow\ S^{(0)}\ \longrightarrow\ S^{(K)}\ \longrightarrow\ r_{1:L}\ \longrightarrow\ f_{1:L}\ \longrightarrow\ y_{1:L}.
+\]
+Here \(h_{1:L}^{(0)}\) are initial token states, \(S^{(0)}=(s_1^{(0)},\ldots,s_M^{(0)})\) is the matrix of pooled set states, \(S^{(K)}=(s_1^{(K)},\ldots,s_M^{(K)})\) is the matrix after \(K\) set-attention blocks, \(r_{1:L}\) are routed set-context states, \(f_{1:L}\) are the final residual token states, and \(y_{1:L}\) are vocabulary logits.
+For a fixed sample, token states are
+\begin{equation}
+\label{eq:main-token-state}
+h_t^{(0)}=e(x_t)+p_t,\qquad t\in[L],
+\end{equation}
+with learned token and positional embeddings. In the autoregressive strict-past setting used for the main experiments, the bank drops partial trailing windows. With starts $a_m=1+(m-1)s$ and endpoints $e_m=a_m+w-1$,
+\begin{equation}
+\label{eq:main-bank}
+M=\left\lfloor\frac{L-w}{s}\right\rfloor+1,
+\qquad
+S_m=\{t\in[L]:a_m\le t\le e_m\},
+\end{equation}
+so every active set has exactly $w$ tokens. The strict-past routing candidate
+fiber is endpoint based,
+\begin{equation}
+\label{eq:main-strict-past-candidates}
+\mathcal C_t^{\mathrm{sp}}=\{m\in[M]:t-w<e_m\le t\}.
+\end{equation}
+This is the candidate family used by the causal language-modeling experiments. A legacy noncausal mode can instead use membership candidates $\{m:t\in S_m\}$, but that is not the main autoregressive paper mode.
+
+Each bank set is pooled into a set state \(s_m^{(0)}\), the expectation of token states under a probability law $\mathbb P_m\in\Delta(S_m)$,
+\begin{equation}
+\label{eq:main-pooling}
+s_m^{(0)}=\sum_{t\in S_m}\omega_{t,m}h_t^{(0)},
+\qquad
+\omega_{\cdot,m}\in\Delta(S_m).
+\end{equation}
+The main experiments use soft-trimmed Boltzmann pooling,
+$\omega_{t,m}\propto \exp(-\delta_{t,m}/\tau_{\mathrm{pool}})r^{\mathrm{trim}}_{t,m}$,
+with normalization over $S_m$; mean pooling is the corresponding uniform law. The full definition is in Appendix~\ref{sec:pooling-operator} and uses $|S_m|$ wherever set cardinality matters.
+
+The set states are processed by $K$ residual set-attention blocks with set-attention heads distinct from routing heads. For one set-attention head,
+\begin{equation}
+\label{eq:main-set-score}
+a_{ij}^{(h)}=
+\frac{\langle q_i^{(h)},k_j^{(h)}\rangle}{\sqrt{d_a}}
++g_{ij}+b_{ij}^{(h)}+m_{ij},
+\end{equation}
+where $q_i^{(h)},k_j^{(h)}\in\mathbb R^{d_a}$ are set-level query/key projections, $g_{ij}$ is geometry bias, $b_{ij}^{(h)}$ is learned content bias, and $m_{ij}$ is the causal or structural mask term. These additional structural terms are part of the dense exact set-attention backend. Let $A^{(h)}=(a_{ij}^{(h)})$ denote the resulting score matrix, and let $Q,K,V$ denote the corresponding query, key, and value matrices for that set-attention head.
+
+The set-processing families used in this work are:
+\begin{align}
+\operatorname{SetDense}(Q,K,V) &= \operatorname{softmax}(A)V,\\
+\operatorname{SetLinear}(Q,K,V) &= \operatorname{softmax}(A_{M\Lambda})\operatorname{softmax}(A_{\Lambda M})V,\\
+\operatorname{SetSparse}(Q,K,V) &: A_{ij}=-\infty\quad\text{outside a local band.}
+\end{align}
+The linear family is the landmark backend, where $\Lambda$ indexes landmark set states, and the sparse family is the local-band backend.
+
+Routing maps processed set states back to token states. With descriptor $d_m$ for set $m$, the learned multi-head router computes
+\begin{equation}
+\label{eq:main-router-score}
+q_t^{(u)}=W_{Q,r}^{(u)}h_t^{(0)},\qquad
+k_m^{(u)}=W_{K,r}^{(u)}d_m,
+\qquad
+g_{t,m}^{(u)}=\frac{\langle q_t^{(u)},k_m^{(u)}\rangle}{\sqrt{d_\phi}}.
+\end{equation}
+In the hashed-count experimental path, the router descriptor is the pooled set state, $d_m=s_m^{(0)}$; hashed-count features enter the set-attention content bias. Candidate masking sets non-candidates to $-\infty$; the optional fixed top-$k$ step also sets all but the retained candidates to $-\infty$. Denote the resulting masked logit by $\tilde g_{t,m}^{(u)}$. Routing probabilities are
+\begin{equation}
+\label{eq:main-routing-probs}
+\pi_{t,m}^{(u)}\propto \exp\!\left(\tilde g_{t,m}^{(u)}/\tau_r^{\mathrm{eff}}\right),
+\qquad m\in\mathcal C_t,
+\end{equation}
+where $\tau_r^{\mathrm{eff}}=\max\{\tau_r,\tau_{\min}\}$ for the configured lower clamp $\tau_{\min}>0$. Writing $\tilde s_m^{(u)}$ for the head-$u$ subvector of the processed set state $s_m^{(K)}$, the routed head output is
+\begin{equation}
+\label{eq:main-routed-head}
+r_t^{(u)}=\sum_{m\in\mathcal C_t}\pi_{t,m}^{(u)}\tilde s_m^{(u)},
+\qquad
+r_t=\operatorname{Concat}_{u=1}^{H_r}r_t^{(u)}.
+\end{equation}
+If $\mathcal C_t=\varnothing$, the routed context is defined as $r_t=0$.
+The default language-model head receives the direct residual representation
+\begin{equation}
+\label{eq:main-direct-residual}
+f_t=h_t^{(0)}+r_t.
+\end{equation}
+For calibration experiments that study convergence toward the token-level
+limit, we also use a named output policy
+\begin{equation}
+\label{eq:main-empty-only-residual}
+f_t^{\mathrm{empty}}=
+\begin{cases}
+h_t^{(0)},& C_t=0,\\
+r_t,& C_t>0.
+\end{cases}
+\end{equation}
+This \texttt{empty\_only} policy preserves a well-defined state for early
+strict-past positions with no sealed endpoint while avoiding an additional
+token residual whenever routed set information is present. The \texttt{direct}
+policy in \eqref{eq:main-direct-residual} is the default for the reported
+A1--A6 runs; \texttt{empty\_only} is used only when explicitly configured for
+token-limit and compression-calibration experiments.
+
+A third output policy, used for the set-dictionary study, is the
+\texttt{anchor\_span} residual
+\begin{equation}
+\label{eq:main-anchor-span}
+f_t = a_t + r_t,\qquad a_t = e(x_t)+p_t,
+\end{equation}
+which differs from \texttt{direct} only by disabling the pre-pooling token MLP
+(Appendix~\ref{app:token-mlp}): the \emph{thin anchor} $a_t$ is the raw
+embedding-plus-position identity carrier, while the routed span $r_t$ carries the
+contextual prediction. A span ablation that sets $r_t{:=}0$ at evaluation collapses
+perplexity toward the unigram regime, confirming that $a_t$ is a deliberately weak
+identity term rather than a predictive token bypass, so prediction is genuinely
+set-mediated.
+
+\paragraph{Multi-resolution head groups.}
+The routing heads $\{1,\dots,H_r\}$ may be partitioned into $G$ groups, each group
+$g$ carrying its own bank topology $(w_g,s_g)$ and hence its own candidate fiber
+$\mathcal C_t^{(g)}=\{m:t-w_g<e^{(g)}_m\le t\}$ with mean candidate count
+$\bar C^{(g)}\approx w_g/s_g$. Group $g$ pools, processes, and routes through
+\eqref{eq:main-pooling}--\eqref{eq:main-routed-head} restricted to its own bank,
+and the routed head subvectors are concatenated across all groups to form $r_t$. We
+use a fine group $(w,s)=(2,1)$ (near-token resolution) and a coarse, ``blurred''
+group $(4,2)$, and write the blur fraction $\beta=H_r^{\mathrm{coarse}}/H_r$ for the
+share of coarse heads; $G=1$ is the single-resolution model, and $\beta\in\{0,1\}$
+recovers the uniform fine and coarse banks.
+
+Finally, vocabulary logits satisfy $y_t\in\mathbb R^{V_{\mathrm{vocab}}}$. Full notation, diagnostics, and optional implementation components are given in Appendix~\ref{sec:model-objects} and Appendix~\ref{app:token-mlp}.
+
+
+\section{Main Theoretical Results}
+\label{sec:main-theory}
+
+The theory has three tiers. Tier A gives exact structural facts about routing, topology, and pooling; Tier B gives local mechanistic bounds under explicit stability assumptions; Tier C turns those facts into feasible-region statements that motivate the experiments. We state compact versions here and defer proofs to Appendix~\ref{sec:theory}.
+\todo[inline]{\textbf{SD-audit (2026-06):} the formal statements in this section were written for the single-resolution \texttt{direct}/\texttt{empty\_only} model. Each carries an inline SD-audit mark stating, for the new \texttt{anchor\_span} + multi-resolution model, whether it \emph{holds}, \emph{needs update}, or requires \emph{verification}. The detailed appendix proofs (\S\ref{sec:theory}) inherit the same status until revised.}
+
+\paragraph{Tier A: exact structural constraints.}
+\begin{theorem}[Topology and temperature constrain routing]
+\label{thm:main-routing-entropy}
+For token position $t$, let $\mathcal C_t$ be the candidate set indices supplied by the active routing mode. In the strict-past autoregressive mode, this is the endpoint fiber in \eqref{eq:main-strict-past-candidates}; in the named noncausal mode, it is the membership fiber. Let $C_t=|\mathcal C_t|$, and let $\mathbb Q_t^{(u)}\in\Delta(\mathcal C_t)$ be the head-$u$ routing law with masses $\pi_{t,m}^{(u)}$ whenever $C_t>0$. Its entropy $H(\mathbb Q_t^{(u)})=-\sum_{m\in\mathcal C_t}\pi_{t,m}^{(u)}\log\pi_{t,m}^{(u)}$ satisfies
+\begin{equation}
+\label{eq:main-entropy-bound}
+0\le H(\mathbb Q_t^{(u)})\le \log |\operatorname{supp}(\mathbb Q_t^{(u)})|\le \log C_t,
+\qquad
+|\operatorname{supp}(\mathbb Q_t^{(u)})|\le \min\{k,C_t\}
+\end{equation}
+when top-$k$ masking is used. If $C_t=1$, then every head has $\mathbb Q_t^{(u)}=\delta_{m^\star(t)}$, the point mass on the unique candidate, so routing is forced by topology and cannot be repaired by learned scores, temperature, or top-$k$. If $C_t=0$, the strict-past routed context is zero; the default direct policy supplies $f_t=h_t^{(0)}$, and the calibrated \texttt{empty\_only} policy makes the same choice only for those empty-fiber positions. For fixed nonempty support and masked logits, softmax entropy is nondecreasing in $\tau_r$ and tends to zero as $\tau_r\to0^+$ when the maximum logit is unique.
+\end{theorem}
+\todo[inline]{\textbf{SD-audit: HOLDS.} The router is unchanged under \texttt{anchor\_span} (the anchor adds only to $f_t$, not to the routing law). Under multi-resolution the statement applies \emph{per head-group}: replace $\mathcal C_t$ by the group fiber $\mathcal C_t^{(g)}$ ($C_t^{(g)}\approx w_g/s_g$); the $C_t=1$ topological degeneracy is then per group, so a fine group near $w/s\!\approx\!2$ avoids it while a coarse group may not.}
+
+For the strict-past endpoint bank with width $w$ and stride $s$, post-warmup interior tokens have candidate counts on the order of $w/s$ up to integer and boundary effects. Thus $w/s$ remains the structural routing-capacity parameter. Top-$k$ was fixed rather than swept; in the emphasized dense-exact operating points it is typically inactive because $C_t<k$.
+
+\begin{theorem}[Multi-head routing capacity]
+\label{thm:main-multihead-capacity}
+For token $t$, let $\Pi_t\in\mathbb R^{H_r\times M}$ be the routing matrix with row $u$ equal to the head-$u$ law $\mathbb Q_t^{(u)}$, and zero columns outside $\mathcal C_t$. Single-head routing imposes the common-mixture form $\Pi_t=\mathbf 1_{H_r}\pi_t^\top$, where the same $\pi_t\in\Delta(\mathcal C_t)$ is used in every coordinate block. Multi-head routing instead uses $\Delta(\mathcal C_t)^{H_r}$, so
+\begin{equation}
+\label{eq:main-routing-rank}
+ \dim \Delta(\mathcal C_t)^{H_r}=H_r(C_t-1),
+\qquad
+1\le \operatorname{rank}(\Pi_t)\le \min\{H_r,C_t\},
+\end{equation}
+where the common-mixture constraint has rank $1$ and dimension $C_t-1$. Therefore multi-head routing strictly enlarges the routing class when $H_r\ge2$ and at least two candidate set states induce distinct head-subspace values, but topology caps the gain by $C_t$.
+\end{theorem}
+\todo[inline]{\textbf{SD-audit: NEEDS UPDATE} for multi-resolution (holds verbatim only for $G\!=\!1$). With $G$ groups, heads in group $g$ route over the group fiber $\mathcal C_t^{(g)}$, so the per-token routing rank ceiling becomes $\operatorname{rank}(\Pi_t)\le\sum_{g}\min\{H_r^{(g)},C_t^{(g)}\}$, strictly above the uniform $\min\{H_r,C_t\}$ whenever the groups have distinct $C_t^{(g)}$. This is the formal basis for the observed multi-resolution gain (mixed fine+coarse beats either uniform bank) and must be stated and proved before being cited.}
+
+\begin{proposition}[Pooling concentration and gradient transport]
+\label{prop:main-pooling-transport}
+For set $S_m$, let $\mathbb P_m\in\Delta(S_m)$ be the pooling law with weights $\omega_{t,m}$ and pooled state $s_m^{(0)}=\sum_{t\in S_m}\omega_{t,m}h_t^{(0)}$. Its effective support is
+\begin{equation}
+\label{eq:main-pooling-neff}
+n_{\mathrm{eff}}^{(m)}=\frac{1}{\sum_{t\in S_m}\omega_{t,m}^2},
+\qquad
+1\le n_{\mathrm{eff}}^{(m)}\le |S_m|.
+\end{equation}
+Uniform pooling attains the upper bound, while values near $1$ mean one token dominates. Concentrated pooling therefore reduces the number of token states that directly carry gradient into the set stack; Appendix~\ref{sec:tier-a-gradients} gives the direct and coupling gradient terms.
+\end{proposition}
+\todo[inline]{\textbf{SD-audit: HOLDS}, per resolution group. Each group pools its own bank, so $n_{\mathrm{eff}}^{(m)}$ and $|S_m|=w_g$ are group-local; under \texttt{anchor\_span} the pooled state $s_m^{(0)}$ is built from the thin anchor $a_j$ (= $h_j^{(0)}$ with the token MLP disabled), which does not change the bound, only the pooled content.}
+
+\paragraph{Tier B: local mechanistic stability.}
+\begin{theorem}[Local feasible-region bound]
+\label{thm:main-feasible-region}
+Let $\mathcal J$ be a scalar samplewise loss, and compare the set-attention pipeline $\mathcal R\circ\Phi_{\mathrm{set}}\circ\mathcal P$ with reference operators $\mathcal R_{\mathrm{ref}}\circ\Phi_{\mathrm{ref}}\circ\mathcal P_{\mathrm{ref}}$. If the readout, set stack, and routing operator are locally Lipschitz with constants $L_{\mathrm{out}},L_{\mathrm{set}},L_{\mathrm{route}}$, and if $\varepsilon_{\mathrm{pool}},\varepsilon_{\mathrm{set}},\varepsilon_{\mathrm{route}}$ are the corresponding local representation discrepancies at the pooling, set-processing, and routing stages, then
+\begin{equation}
+\label{eq:main-mechanistic-bound}
+|\Delta\mathcal J|\le L_{\mathrm{out}}\left(L_{\mathrm{route}}L_{\mathrm{set}}\varepsilon_{\mathrm{pool}}+L_{\mathrm{route}}\varepsilon_{\mathrm{set}}+\varepsilon_{\mathrm{route}}\right).
+\end{equation}
+\end{theorem}
+\todo[inline]{\textbf{SD-audit: VERIFY / RESTATE.} The Lipschitz composition argument still applies, but two objects changed: (i) under multi-resolution $\mathcal P,\Phi_{\mathrm{set}},\mathcal R$ are per-group and $r_t$ is a concatenation, so the discrepancies $\varepsilon_{\mathrm{pool}},\varepsilon_{\mathrm{set}},\varepsilon_{\mathrm{route}}$ and constants should be group-indexed and summed; (ii) under \texttt{anchor\_span} the readout consumes $a_t+r_t$, so the reference/readout operator $\mathcal R_{\mathrm{out}}$ must be restated on the thin anchor rather than $h_t^{(0)}$. Re-derive before citing.}
+
+\paragraph{Tier C: feasible-region consequences.}
+The preceding results define the empirical feasible region. Nondegenerate routing needs candidate count above the singleton regime, topology limits rank through $\min\{H_r,C_t\}$, pooling must avoid collapse in $n_{\mathrm{eff}}^{(m)}$, and the local perturbation bound must remain small. In compact form, the design target is
+\begin{equation}
+\label{eq:main-tier-c-feasible-region}
+\bar C>1,\qquad
+\operatorname{rank}(\Pi_t)\le \min\{H_r,C_t\},\qquad
+n_{\mathrm{eff}}^{(m)}\not\approx 1,\qquad
+|\Delta\mathcal J|\ \text{small}.
+\end{equation}
+\todo[inline]{\textbf{SD-audit: UPDATE} the rank target for multi-resolution: the relevant ceiling is $\operatorname{rank}(\Pi_t)\le\sum_g\min\{H_r^{(g)},C_t^{(g)}\}$ (per Thm.~\ref{thm:main-multihead-capacity} mark), and the empirical claim shifts from ``avoid the singleton regime'' to ``mix resolutions to raise the achievable rank/quality at fixed compression and memory.'' The \texttt{anchor\_span} ablation (span $r_t{:=}0$) is the diagnostic that the set path, not the anchor, supplies the prediction.}
+This motivates the Tier C experiments: topology/temperature sweeps test routing degeneracy and entropy, boundary sweeps test the $s=w$ collapse regime, and pooling sweeps test whether effective support and gradient transport explain the observed validation-perplexity changes. We report normalized routing entropy, router top-1 concentration, structural candidate count, pooling effective support, and gradient transport ratios $\rho_p$, $\rho_a$, and $\rho_{pa}$. Head agreement is modal top-1 agreement across routing heads, while head diversity uses Jensen--Shannon divergence with midpoint $m=\tfrac12(p+q)$.
+
+
+\section{Results}
+\label{sec:results}
+
+\paragraph{Protocol.}
+All language-modeling results use WikiText-2 with the LR-normalized reference
+width $D=384$, $d_{\mathrm{ff}}=1536$, window size $w=16$, stride $s=8$,
+and learning rate $10^{-4}$ unless otherwise stated.  For set-only models,
+the autoregressive setting uses strict-past endpoint routing, drops partial
+trailing windows, and therefore has $M=63$ sets at $L=512$ and $M=255$ sets at
+$L=2048$.  Linear-family rows use the landmark backend with coverage $0.25$.
+All reported means are over three seeds unless explicitly marked otherwise;
+artifact hashes and per-run metadata are recorded in
+\texttt{audit/A5\_4\_handoff.md}.
+
+\subsection{Matched Backend Controls at the LR-Normalized Reference}
+\label{sec:results-matched-controls}
+
+Table~\ref{tab:matched-headline} compares each SKA family against the matched
+token-attention backend at the $L=512$ LR-normalized headline setting.  The
+matched controls are essential: comparing all SKA variants only to a dense
+token baseline would conflate the effect of set routing with the effect of the
+underlying dense, sparse, or landmark backend.
+
+\begin{table}[t]
+\centering
+\caption{Matched backend controls at $L=512$, $w=16$, $s=8$, $M=63$.  Values
+are mean validation perplexity over three seeds; lower is better.  Source
+artifacts: \texttt{a6\_set\_state\_width\_summary.tsv} and
+\texttt{a2\_baseline\_controls\_summary.tsv}.}
+\label{tab:matched-headline}
+\label{tab:matched-baseline-vs-setonly}
+\scriptsize
+\begin{tabular}{llcc}
+\toprule
+Family & Backend & Token PPL $\downarrow$ & SKA PPL $\downarrow$ \\
+\midrule
+Dense & exact & $781.1 \pm 37.1$ & $1422.8 \pm 45.8$ \\
+Sparse & local band & $740.2 \pm 3.8$ & $1527.5 \pm 47.1$ \\
+Linear & landmark & $973.9 \pm 13.7$ & $1515.9 \pm 135.3$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The matched comparison is unfavorable to SKA at this budget: all three token
+baselines achieve lower perplexity than their set-routed counterparts.  This
+does not invalidate the structural claims, but it narrows the empirical claim:
+the present implementation is a controlled diagnostic model rather than a
+drop-in perplexity improvement over matched token attention.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../plots/main/fig_causal_lr_sweep_dispersion.png}
+\caption{Post-A1 causal LM LR sweep at the $D=384$, $d_{\mathrm{ff}}=1536$,
+$L=512$, $w=16$, $s=8$ reference.  Token baselines and SKA variants are shown
+with matched dense, sparse local-band, and linear landmark backends.  Lines show
+three-seed means, shaded regions show 95\% confidence intervals, and faint
+markers show individual seeds.  Across the swept learning rates, matched token
+baselines remain lower in perplexity while SKA variants use less memory.}
+\label{fig:causal-lr-sweep-dispersion}
+\end{figure*}
+
+Figure~\ref{fig:causal-lr-sweep-dispersion} gives the corresponding
+multi-seed LR view rather than only the best-row table.  The dispersion is
+important for interpretation: SKA variants keep a consistent memory advantage
+at this reference size, but the validation-perplexity gap persists throughout
+the LR grid rather than being explained by a single unlucky learning rate.
+
+\subsection{Calibrated Token-Limit Compression Path}
+\label{sec:results-empty-only-calibration}
+
+The matched-control table evaluates the default direct residual architecture at
+the compressed LR-normalized operating point.  To test the convergence
+hypothesis more directly, we also run a calibrated \texttt{empty\_only}
+SetDense path.  In this mode the token residual is used only for positions with
+no sealed endpoint ($C_t=0$); otherwise the language-model head receives the
+routed set context.  Proposition~\ref{prop:empty-strict-past-fibers} shows that
+the singleton setting $w=1,s=1$ has $M=L$ and no empty-fiber positions, making
+it the cleanest empirical token-limit calibration available in the current
+implementation.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../plots/main/fig_a7_empty_only_calibration.png}
+\caption{Calibrated \texttt{empty\_only} SetDense compression path at
+$D=384$, $d_{\mathrm{ff}}=1536$, $L=512$, and learning rate $10^{-4}$.
+Validation perplexity is plotted against set-state ratio $M/L$, compression
+factor $L/M$, and measured mean candidate count; peak VRAM gives the memory
+tradeoff.  Three-seed SetDense points and the reused dense token baseline show
+95\% confidence intervals.
+The $w=1,s=1,M=L$ set point nearly reaches the dense token baseline but remains
+slightly worse, while stronger compression quickly increases perplexity.}
+\label{fig:a7-empty-only-calibration}
+\end{figure*}
+
+Figure~\ref{fig:a7-empty-only-calibration} separates the residual calibration
+question from the compressed default setting.  The $M/L=1$ point reaches mean
+validation perplexity $800.8$ versus $781.1$ for the matched dense token
+baseline, using the same seed set $\{0,1,2\}$ and the same training budget.
+Thus the calibrated set-mediated path approaches, but does not equal, token
+attention.  As $M/L$ decreases, validation perplexity rises and peak VRAM
+falls, matching the intended compression tradeoff.  This supports an empirical
+convergence picture rather than an exact-equivalence claim: even in the
+singleton limit, the computation still passes through set pooling, set-stack
+processing, and routing projections.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../plots/main/fig_a7_backend_family_compression.png}
+\caption{Backend-matched calibrated \texttt{empty\_only} compression paths for
+dense exact, sparse local-band, and linear landmark families at
+$D=384$, $d_{\mathrm{ff}}=1536$, $L=512$, and learning rate $10^{-4}$.
+Each column compares a set family against its matched token-attention backend
+baseline.  The convergence-critical singleton and near-singleton rows use five
+seeds; the remaining compressed points use the original three-seed grid.  Rows
+show the same validation perplexity estimates as a function of set-state ratio
+$M/L$, compression factor $L/M$, and mean candidate count.  Token baselines
+appear as horizontal references because they do not have a set-router candidate
+fiber or a set topology.  Near $M/L=1$, the set variants approach the matched
+token baselines, with the linear singleton point overlapping the landmark-token
+band.  Under compression, validation perplexity rises sharply across all
+backends, so the evidence supports empirical calibration rather than an
+architecture-independent equivalence.}
+\label{fig:a7-backend-family-compression}
+\end{figure*}
+
+The backend-family extension in
+Figure~\ref{fig:a7-backend-family-compression} answers whether the dense
+calibration behavior is an artifact of exact attention.  It is not: at
+$w=1,s=1,M=L$, SetDense reaches mean validation perplexity $805.1$ versus
+$781.1$ for the matched dense token baseline, SetSparse reaches $747.9$ versus
+$742.4$ for the matched sparse token baseline, and SetLinear reaches $927.0$
+versus $956.2$ for the matched landmark-token baseline, all with overlapping
+five-seed confidence intervals.  The agreement does not persist under
+meaningful compression: at $(w,s)=(2,1)$ the result is mixed across backends,
+and by $(w,s)=(3,1)$ all three set families separate from their token
+references.  Thus backend matching strengthens the operating-region
+interpretation: calibrated set attention can approach matched token attention
+near the uncompressed limit, but the present implementation pays
+a substantial quality cost as soon as the set bank meaningfully compresses the
+sequence.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../plots/main/fig_a7_seed_extension_fine_grained.png}
+\caption{A7 quality--efficiency frontier for backend-matched calibrated
+\texttt{empty\_only} runs.  Each panel plots the set-minus-token perplexity
+gap against peak VRAM as a percentage of the matched token backend.  The star
+marks the token baseline at $(100\%,0)$, and lower-left is better.  Each set
+point is labeled by topology $(w,s)$ and compression factor $L/M$; error bars
+show 95\% confidence intervals using three to five seeds.  Compressed points
+move left, showing a memory benefit, but generally move far upward in
+perplexity.  The singleton points remain near the token baselines but use
+slightly more VRAM.}
+\label{fig:a7-seed-extension-fine-grained}
+\end{figure*}
+
+\begin{table*}[t]
+\centering
+\small
+\caption{Compact A7 operating-point comparison.  The top block reports
+matched token-backend baselines relative to the dense token baseline.  The
+bottom block reports calibrated set \texttt{empty\_only} operating points
+relative to their matched token backend.  Near-token rows use five seeds;
+the first meaningful compression row near $L/M\approx2$ uses the original
+three-seed A7 grid.}
+\label{tab:a7-operating-point-comparison}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llrrrrrl}
+\toprule
+Group & Backend / family & Topology & $L/M$ & Val. PPL & $\Delta$PPL & VRAM & $n$ \\
+\midrule
+\multicolumn{8}{l}{\textit{Token baselines: $\Delta$PPL is relative to dense token attention; VRAM is absolute peak usage.}} \\
+Token & Dense exact & -- & -- & 781.1 & +0.0 & 13.1 GiB & 5 \\
+Token & Sparse local-band & -- & -- & 742.4 & -38.7 & 13.1 GiB & 5 \\
+Token & Linear landmark & -- & -- & 956.2 & +175.1 & 12.3 GiB & 5 \\
+\midrule
+\multicolumn{8}{l}{\textit{Set \texttt{empty\_only}: $\Delta$PPL and VRAM are relative to the matched token backend.}} \\
+Set & Dense exact & $(1,1)$ singleton & 1.000 & 805.1 & +24.0 & 103.9\% & 5 \\
+Set & Dense exact & $(2,1)$ near-token & 1.002 & 867.4 & +86.3 & 103.9\% & 5 \\
+Set & Dense exact & $(3,1)$ near-token & 1.004 & 922.1 & +141.0 & 103.8\% & 5 \\
+Set & Dense exact & $(4,2)$ first compression & 2.008 & 1273.6 & +492.5 & 88.1\% & 3 \\
+\addlinespace
+Set & Sparse local-band & $(1,1)$ singleton & 1.000 & 747.9 & +5.6 & 103.9\% & 5 \\
+Set & Sparse local-band & $(2,1)$ near-token & 1.002 & 810.1 & +67.7 & 103.9\% & 5 \\
+Set & Sparse local-band & $(3,1)$ near-token & 1.004 & 880.6 & +138.2 & 103.8\% & 5 \\
+Set & Sparse local-band & $(4,2)$ first compression & 2.008 & 1438.5 & +696.1 & 88.1\% & 3 \\
+\addlinespace
+Set & Linear landmark & $(1,1)$ singleton & 1.000 & 927.0 & -29.2 & 104.2\% & 5 \\
+Set & Linear landmark & $(2,1)$ near-token & 1.002 & 997.4 & +41.2 & 104.2\% & 5 \\
+Set & Linear landmark & $(3,1)$ near-token & 1.004 & 1114.2 & +158.0 & 104.1\% & 5 \\
+Set & Linear landmark & $(4,2)$ first compression & 2.008 & 1356.2 & +399.9 & 92.3\% & 3 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+Figure~\ref{fig:a7-seed-extension-fine-grained} reframes the same evidence as a
+quality--efficiency frontier.  With five seeds, the singleton topology has
+small or overlapping deltas in all backend families ($+24.0$ PPL for dense,
+$+5.6$ for sparse, and $-29.2$ for landmark linear), but these points sit at
+roughly $104\%$ of the matched token VRAM rather than below it.  A focused
+VRAM audit attributes this overhead to the active architecture and
+implementation path---the simultaneous token and set streams together with
+dense token-to-set routing and set-attention tensors---rather than to a
+removable diagnostic allocation.  The compressed
+points expose the only clear resource benefit: they reduce peak VRAM by roughly
+$12$--$20\%$ depending on backend and topology.  Table~\ref{tab:a7-operating-point-comparison}
+shows why this is not yet an acceptable quality-efficiency trade: the first
+meaningful compression rows have $+399.9$ to $+696.1$ PPL gaps, much larger
+than the $+175.1$ PPL gap between linear and dense token baselines in this
+run set.  Thus the present evidence supports two separate conclusions: the
+calibrated singleton limit is the clean quality-convergence point, while
+compression can buy memory but not yet at an acceptable quality cost.
+
+\subsection{Mechanism Sweeps}
+\label{sec:results-mechanism-sweeps}
+
+The fixed-stride window sweep and pooling-temperature sweep remain useful as
+mechanism checks, but they should be interpreted separately from the headline
+quality comparison.  At fixed stride $s=4$, increasing the window size changes
+candidate-count structure under the post-A1 strict-past bank definition
+$M=\lfloor(512-w)/4\rfloor+1$.  The summaries in
+Appendix~\ref{app:complete-experiment-record} report the active dense,
+sparse, and landmark set-family window and pooling-temperature sweeps with their
+per-run provenance.  Appendix~\ref{app:legacy-evidence-exclusion} states the
+legacy-artifact exclusion rule.
+Figures~\ref{fig:causal-window-diagnostics-dispersion}
+and~\ref{fig:causal-pooltau-diagnostics-dispersion} restore the corresponding
+post-A1 causal LM diagnostic views with seed dispersion.  Token baselines appear
+where the metric is defined; routing and pooling diagnostics are set-family
+quantities.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../plots/main/fig_causal_window_diagnostics_dispersion.png}
+\caption{Fixed-stride window sweep under strict-past routing at $s=4$.
+Validation perplexity and peak memory include matched sparse and linear token
+baselines alongside dense, sparse, and linear SKA families.  Routing entropy
+and top-1 concentration are shown only for SKA rows because token-attention
+baselines do not have a set-router candidate fiber.  Lines show three-seed
+means, shaded regions show 95\% confidence intervals, and faint markers show
+individual seeds.}
+\label{fig:causal-window-diagnostics-dispersion}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../plots/main/fig_causal_pooltau_diagnostics_dispersion.png}
+\caption{Pooling-temperature diagnostics for post-A1 causal LM SKA families at
+$w=16$, $s=4$.  Increasing $\tau_{\mathrm{pool}}$ broadens effective pooling
+support toward the full window; dense and sparse SKA continue improving through
+$\tau_{\mathrm{pool}}=0.95$, while the landmark linear backend is best near
+$\tau_{\mathrm{pool}}=0.5$ and degrades at $0.95$.  Lines show three-seed means,
+shaded regions show 95\% confidence intervals, and faint markers show
+individual seeds.}
+\label{fig:causal-pooltau-diagnostics-dispersion}
+\end{figure*}
+
+These figures use only the post-A1 causal LM manifests and matched-control
+artifacts.  They support the Tier~C diagnostic picture: candidate topology
+controls routing concentration, broader pooling support improves transport, and
+neither effect by itself closes the matched-token perplexity gap.
+
+\subsection{Long-Context Memory and Quality}
+\label{sec:results-long-context}
+
+At $L=2048$, strict-past set-only models use $M=255$ sealed sets.  The long
+context slice in Table~\ref{tab:long-context} shows the main empirical
+tradeoff and includes the matched $L=512$ reference point.  SKA variants have
+substantially lower peak VRAM at long context, but they still have worse
+validation perplexity.  The matched sparse token baseline is both
+memory-heavier and much stronger in perplexity than the corresponding sparse
+SKA row.
+
+\begin{table*}[t]
+\centering
+\caption{Long-context slice with matched short-context reference.  Short-context
+rows use $L=512$ and, for SKA, $w=16$, $s=8$, $M=63$; long-context rows use
+$L=2048$, $w=16$, $s=8$, $M=255$.  Values are mean validation perplexity over
+three seeds.  Gap columns report SKA minus its matched token backend, so a
+negative gap change means that the longer context narrows the SKA--token gap.
+Long-context VRAM is shown as a percentage of the matched token backend, with
+MiB in parentheses.  Source artifacts: \texttt{a2\_grid\_all\_runs.tsv},
+\texttt{a2\_baseline\_controls\_all\_runs.tsv},
+\texttt{a42\_slice\_all\_runs.tsv}, and
+\texttt{a4\_long\_context\_baseline\_controls\_all\_runs.tsv}.}
+\label{tab:long-context}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llccrrrr}
+\toprule
+Family & Backend & $L=512$ PPL $\downarrow$ & $L=2048$ PPL $\downarrow$ &
+Gap@512 & Gap@2048 & Gap change & $L=2048$ VRAM \\
+\midrule
+Token dense & exact & $781.1 \pm 45.5$ & $928.2 \pm 50.2$ & -- & -- & -- & $100.0\%$ (18620) \\
+Token sparse & local band & $740.2 \pm 4.7$ & $814.2 \pm 22.9$ & -- & -- & -- & $100.0\%$ (18644) \\
+Token linear & landmark & $973.9 \pm 16.8$ & $984.7 \pm 23.7$ & -- & -- & -- & $100.0\%$ (15207) \\
+\midrule
+SKA dense & exact & $1486.8 \pm 50.5$ & $1511.5 \pm 110.8$ & $+705.7$ & $+583.4$ & $-122.3$ & $59.3\%$ (11043) \\
+SKA sparse & local band & $1477.4 \pm 49.2$ & $1429.4 \pm 33.5$ & $+737.3$ & $+615.2$ & $-122.1$ & $59.2\%$ (11043) \\
+SKA linear & landmark & $1500.4 \pm 26.0$ & $1434.7 \pm 37.9$ & $+526.5$ & $+450.0$ & $-76.5$ & $72.3\%$ (10996) \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+The short-context comparison adds one useful signal.  Increasing context from
+$512$ to $2048$ does not close the gap, but it narrows the SKA--token gap by
+$76$--$122$ PPL while preserving a substantial long-context memory reduction
+($27.7$--$40.8\%$ relative to the matched token backend).  This makes the
+long-context setting a more favorable operating regime than the short
+causal-LM benchmark, but the absolute perplexity gaps remain too large for a
+performance-dominance claim.
+
+\subsection{Convergence Check}
+\label{sec:results-convergence}
+
+The 30-epoch convergence panel confirms that the 10-epoch gap is not simply a
+short-training artifact.  At seed 0 and the best available learning rate from
+the LR-normalized summaries, token baselines remain ahead after 30 epochs:
+dense token, sparse token, and linear token reach validation perplexities
+1140.9, 1116.2, and 1331.9, respectively, while the dense, sparse, and linear
+SKA rows reach 2439.7, 2251.1, and 2138.7.  These runs are intentionally
+diagnostic and should not be written as convergence wins for SKA.
+
+\subsection{Capacity Diagnostics}
+\label{sec:results-capacity}
+
+The A6 ablations test whether the quality gap is explained by obvious capacity
+bottlenecks.  Table~\ref{tab:capacity-diagnostics} summarizes the result.  The
+main conclusion is negative: moderate interface widening helps some rows, but
+neither wider set states nor deeper set stacks provide a broad remedy.
+
+\begin{table*}[t]
+\centering
+\caption{Capacity diagnostics at $L=512$, $w=16$, $s=8$, and LR $10^{-4}$.
+Entries are mean validation perplexity over three seeds.  Source artifacts:
+\texttt{a6\_dphi\_capacity\_summary.tsv},
+\texttt{a6\_set\_state\_width\_summary.tsv},
+\texttt{a6\_interface\_bottleneck\_summary.tsv}, and
+\texttt{a64\_depth\_sweep\_summary.tsv}.}
+\label{tab:capacity-diagnostics}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcccc}
+\toprule
+Test & Family & Setting A & PPL A $\downarrow$ & Setting B & PPL B $\downarrow$ \\
+\midrule
+$d_\phi$ sweep & Set Dense & $d_\phi=384$ & 1422.8 & $d_\phi=768$ & 1541.0 \\
+$d_\phi$ sweep & Set Sparse & $d_\phi=384$ & 1527.5 & $d_\phi=512$ & 1447.3 \\
+$d_\phi$ sweep & Set Linear & $d_\phi=384$ & 1515.9 & $d_\phi=512$ & 1484.1 \\
+set-state width & Set Dense & $d_s=384$ & 1422.8 & $d_s=768$ & 1520.8 \\
+set-state width & Set Sparse & $d_s=384$ & 1527.5 & $d_s=512$ & 1407.6 \\
+set-state width & Set Linear & $d_s=384$ & 1515.9 & $d_s=768$ & 1554.8 \\
+interface match & Set Dense & $(d_s,d_\phi)=(768,384)$ & 1520.8 & $(768,768)$ & 1556.8 \\
+interface match & Set Sparse & $(d_s,d_\phi)=(512,384)$ & 1407.6 & $(512,512)$ & 1421.9 \\
+interface match & Set Linear & $(d_s,d_\phi)=(768,384)$ & 1554.8 & $(768,512)$ & 1427.5 \\
+depth sweep & Set Dense & 6 layers & 1422.8 & 10 layers & 1568.8 \\
+depth sweep & Set Sparse & 6 layers & 1527.5 & 10 layers & 1594.3 \\
+depth sweep & Set Linear & 6 layers & 1515.9 & 10 layers & 1582.2 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+These results support a more nuanced diagnosis.  The routing interface width
+$d_\phi$ can be a bottleneck in some cases, especially for the landmark family,
+where $(d_s,d_\phi)=(768,512)$ improves over $(768,384)$.  However, matching
+$d_\phi$ to the full set-state width often worsens perplexity, and increasing
+set-stack depth from 6 to 8 or 10 layers consistently hurts validation
+perplexity.  The current SKA gap is therefore not explained by a single missing
+capacity knob; it is more likely a combination of routing optimization,
+generalization, and interface conditioning.
+
+\section{Conclusion}
+The revised experiments establish a conservative empirical picture.  The
+strict-past SKA implementation is causal, configurable, and memory-efficient at
+long context, but matched token-attention controls remain stronger on
+perplexity.  The capacity ablations rule out the simplest explanations that
+the gap is merely due to too-small $d_\phi$, too-small set-state width, too
+shallow set processing, insufficient anchoring signal, or too narrow a causal
+candidate fiber.  The most defensible contribution is therefore a causal
+set-mediated architecture and diagnostic analysis of when its topology,
+pooling, interface width, and set-processing depth help or fail, rather than a
+claim of perplexity dominance over matched token-attention baselines.
+
+\FloatBarrier
+
+\section{Future Work}
+
+\subsection{Routing Memory and Long-Context Priority}
+\label{sec:future-routing-memory}
+
+The VRAM audit changes the priority list.  The current problem is not mainly
+extra memory from logging or diagnostics: the near-token overhead comes from the
+active architecture and implementation path, especially the simultaneous token
+and set streams, dense token-to-set routing tensors, and set-attention tensors.
+Thus memory should be reduced by changing the active computation, not by
+subtracting a measurement artifact from the reported values.  The clearest
+implementation target is candidate-gather routing.  Under strict-past
+Option--1, token $t$ only routes over its endpoint fiber $\mathcal C_t$, but the
+current learned router still constructs dense $[B,H,L,M]$ score and probability
+tensors.  A semantics-preserving implementation should gather the active
+candidates into $[B,H,L,C_{\max}]$, where $C_{\max}$ is the maximum candidate
+count in the batch, and scatter the routed context back to tokens.  This directly
+attacks the audit finding while preserving the causal bank definition.  A second
+implementation target is to use fused or memory-efficient kernels for routing
+and set self-attention where the masks allow it, following the IO-aware lesson of
+FlashAttention \citep{dao2022flashattention}.  This may reduce peak memory
+without changing the mathematical model, although it does not by itself solve
+the quality gap.
+
+The more important scientific direction is to test settings that should favor a
+set-mediated model.  The long-context comparison in Table~\ref{tab:long-context}
+is encouraging in this limited sense: the SKA--token gap narrows at $L=2048$
+while SKA keeps a large VRAM reduction.  This is consistent with the broader
+long-sequence literature, where the value of alternative attention mechanisms is
+clearest under long-context memory pressure, sparse or routed computation, or
+compressed memory rather than under short-context token-equivalent replacement
+\citep{dai2019transformerxl,rae2019compressive,beltagy2020longformer,zaheer2020bigbird,roy2020routing}.  It is also aligned with latent and set bottleneck
+architectures, which are usually trained around a compression interface rather
+than evaluated only as a drop-in token-attention substitute
+\citep{lee2019settransformer,jaegle2021perceiverio}.
+
+\subsection{Set-Dictionary Span as a Diagnostic Branch}
+\label{sec:future-set-dictionary}
+
+The set-dictionary branch isolates a different representation path from the
+default pooling--routing model.  The default strict-past model in
+Section~\ref{sec:model-overview} routes a set context $r_t$ and then uses a
+token residual, for example $f_t=h_t^{(0)}+r_t$ in the direct-residual policy.
+The set-dictionary variant removes that contextual token residual from the
+prediction path.  It keeps only a thin identity anchor
+\begin{equation}
+A_t=e(x_t)+p_t,
+\end{equation}
+and asks the routed set states to provide the contextual correction:
+\begin{equation}
+\label{eq:set-dictionary-span}
+f_t=A_t+\operatorname{span}_t,\qquad
+\operatorname{span}_t=W_o\sum_{m\in\mathcal C_t}
+\alpha_{t,m}z_m^{(K)}.
+\end{equation}
+Here $z_m^{(K)}$ is the processed dictionary atom, $W_o$ is the set-output
+projection, and $\alpha_{t,m}$ is the learned multi-head routing weight.  Thus
+the contextual part of the token representation must be spanned by causal
+dictionary atoms rather than carried by an updated token stream.  This is the
+main mathematical distinction from the previous pooling--routing path: pooling
+still constructs atoms, and routing still chooses atoms, but the language-model
+head no longer receives a full token residual that can silently carry context.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{set_dictionary_architecture_figure.tikz.pdf}
+\caption{Causal dictionary set-attention architecture for the set-dictionary
+branch.  The thin vertical rail is the non-contextual anchor
+$h_{0,t}=E(x_t)+p_t$, carried only to the output residual in
+\texttt{anchor\_span} mode.  Fine and coarse set banks are pooled and processed
+in parallel, routed back to each token through separate head groups,
+concatenated, projected to a span update, and decoded as
+$p(x_{t+1}\mid x_{\le t})=\operatorname{softmax}(W_U(h_{0,t}+\operatorname{span}_t))$.
+The right panel lists the aligned computation steps used by the
+multi-resolution SD-9/SD-9.5 configuration, with fine heads using
+$(w,s)=(2,1)$ and coarse heads using $(4,2)$.}
+\label{fig:set-dictionary-architecture}
+\end{figure*}
+
+The branch also tests two causal candidate fibers.  The endpoint-window fiber
+used by the main strict-past experiments is
+\begin{equation}
+\mathcal C_t^{\mathrm{win}}=\{m:t-w<e_m\le t\},
+\end{equation}
+where $e_m$ is the endpoint of set $m$.  The maximal causal fiber used in the
+\texttt{all\_past} diagnostic is
+\begin{equation}
+\mathcal C_t^{\mathrm{all}}=\{m:e_m\le t\}.
+\end{equation}
+Both are causal; \(\mathcal C_t^{\mathrm{all}}\) removes the local
+candidate-count ceiling by allowing every sealed past atom to compete for each
+token.
+
+Finally, the trained-anchor diagnostic gives the span a predictive target
+without using that target at inference.  A shallow causal pre-encoder produces
+$h_t^\star$ and has its own next-token CE head.  During training, the objective
+is
+\begin{equation}
+\label{eq:set-dictionary-anchor-loss}
+\mathcal L
+=\mathcal L_{\mathrm{CE}}
++\lambda_{\mathrm{pre}}\mathcal L_{\mathrm{CE,pre}}
++\lambda_h\,\frac1L\sum_{t=1}^L
+\left\|\operatorname{LN}(\operatorname{span}_t)
+-\operatorname{sg}\!\left(\operatorname{LN}(h_t^\star)\right)\right\|_2^2,
+\end{equation}
+where $\operatorname{sg}$ stops gradients through the anchor target.  The
+pre-encoder and its head are training-only and are excluded from inference
+accounting.  This guard matters: if $h_t^\star$ is not trained, the anchor is a
+random target and the reconstruction diagnostic is uninterpretable.
+
+The related experiments are grouped in Table~\ref{tab:sd-capacity-ladder},
+Figure~\ref{fig:sd-capacity-ladder}, and
+Table~\ref{tab:sd-width-comparison}.  They test three increasingly direct
+interventions: a valid trained anchor, the maximal causal fiber, and
+over-provisioned dictionary atoms wider than the matched token baseline.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{../plots/main/fig_sd_capacity_ladder.pdf}
+\caption{Set-dictionary capacity ladder at $L=512$ and LR $10^{-4}$.  The
+trained-anchor run is valid: the anchor reconstruction error is below the
+pre-registered guard threshold and corresponds to a normalized cosine plateau
+near $0.30$.  Nevertheless, perplexity is flat.  Widening the candidate fiber
+to all sealed past atoms helps the more compressed $(16,8)$ topology but
+plateaus far above the dense token baseline; doubling atom width at $(4,2)$
+recovers only part of the remaining gap.}
+\label{fig:sd-capacity-ladder}
+\end{figure*}
+
+\begin{table*}[t]
+\centering
+\caption{Validated set-dictionary ladder.  All rows use dense exact
+set-processing, \texttt{anchor\_span} output, strict-past causality, three
+seeds, and WikiText-2 at $L=512$.  The trained-anchor row uses a causal
+pre-encoder with its own next-token CE loss; the \texttt{all\_past} rows use
+the maximal causal fiber.}
+\label{tab:sd-capacity-ladder}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llccccc}
+\toprule
+Intervention & Candidate fiber / width & Anchor valid? & Recon. err. & $(16,8)$ PPL $\downarrow$ & $(4,2)$ PPL $\downarrow$ & Span-carried? \\
+\midrule
+Endpoint CE only & endpoint window, $d_s=d_\phi=384$ & -- & -- & 1510.9 & 1297.9 & yes \\
+Trained predictive anchor & endpoint window, $d_s=d_\phi=384$ & yes & 1.18 & 1510.4 & 1289.0 & yes \\
+Maximal causal fiber & \texttt{all\_past}, $d_s=d_\phi=384$ & -- & -- & 1363.9 & 1288.6 & yes \\
+Over-provisioned atoms & \texttt{all\_past}, $d_s=d_\phi=768$ & -- & -- & -- & 1241.5 & yes \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+The important pattern is convergence across interventions.  The trained-anchor
+run is no longer confounded by an untrained random target: its final
+reconstruction error is $1.18$, below the validity guard, and the equivalent
+normalized cosine plateau is about $0.30$.  This confirms that a predictive
+signal reaches the span, but validation perplexity remains statistically flat
+relative to the endpoint CE-only row.  The maximal causal fiber then removes
+the local candidate-count ceiling.  It materially improves $(16,8)$ from
+$1510.9$ to $1363.9$ PPL, but still remains far from the dense token baseline
+at $781.1$ PPL; at $(4,2)$, where the local fiber was already stronger, the
+result is essentially unchanged.  Finally, the over-provisioned atom-width
+check improves the best set-dictionary $(4,2)$ result to $1241.5$ PPL, but
+Table~\ref{tab:sd-width-comparison} shows that this still trails the dense
+token baseline by $460.4$ PPL.
+
+\begin{table}[t]
+\centering
+\caption{Over-provisioned atom-width check at $(w,s)=(4,2)$.  The wide
+set-dictionary row uses $d_\phi=d_s=768$, while the matched dense token
+baseline has width $D=384$.  VRAM is peak train memory.}
+\label{tab:sd-width-comparison}
+\scriptsize
+\begin{tabular}{lrr}
+\toprule
+Model & Val. PPL $\downarrow$ & Peak VRAM MiB \\
+\midrule
+Dense token baseline & 781.1 & 13407.2 \\
+Best SD all\_past, $d_s=d_\phi=384$ & 1288.6 & 11913.5 \\
+SD all\_past, $d_s=d_\phi=768$ & 1241.5 & 12764.1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+These results make the negative result cleaner rather than weaker.  Three
+valid capacity probes point to the same ceiling: a trained anchor supplies a
+predictive target but the span absorbs only a limited fraction of it; the
+maximal causal fiber cannot close the gap; and atoms wider than the token
+baseline still remain far behind token attention.  Span-ablation deltas remain
+very large throughout, so the anchor is not silently solving the task.  The
+most parsimonious explanation is an upstream pooling-stage ceiling: once a bank
+atom is formed by compressing token states into a finite set summary, later
+routing, anchoring, and atom widening cannot recover all token-resolution
+predictive detail.  This is a publishable mechanism result, consistent with
+the paper's candidate-count, concentration, and transport framing.
+
+\FloatBarrier
+
+\subsection{Compressive-Memory Evaluation and Compression Baselines}
+\label{sec:future-compressive-memory}
+
+The set-dictionary ladder in Section~\ref{sec:future-set-dictionary} suggests
+that the next research direction should not be another short-context capacity
+sweep.  The better framing is compressive memory: set states should be judged
+as learned summaries of past context under explicit memory budgets, not only as
+a drop-in replacement for token attention at $L=512$.  A useful follow-up
+should therefore pair long-context evaluation with matched compression
+baselines.  Examples include sliding-window token attention with the same peak
+VRAM, recurrent or chunked memory with the same retained-state budget,
+landmark-token baselines with matched memory, and retrieval-style baselines
+that expose how much information survives in a compact state.  The key metric
+should be a quality--memory frontier over increasing $L$, with per-family
+token controls and set-mediated models compared at fixed training budget and
+fixed peak memory.
+
+This reframing also clarifies the role of the current negative results.  The
+trained-anchor, \texttt{all\_past}, and doubled-width probes show that simply
+giving the router more candidates, a predictive target, or wider atoms is not
+enough in the short-context token-replacement setting.  But those failures are
+precisely the diagnostics one wants before treating the set bank as a
+compressed memory.  Future experiments should ask whether the same bank gives a
+better long-context tradeoff when the baseline is an explicit compression
+system rather than unconstrained dense token attention.  The most informative
+protocol is a fixed-VRAM long-context suite: evaluate continuation,
+needle-style retrieval, associative recall, and long-document language
+modeling while comparing against token-window and compressed-memory baselines
+at the same memory budget.
+
+We therefore propose four targeted follow-up experiments after the routing
+memory fix.  First, use a compression curriculum: start from nearly
+token-equivalent banks such as $(w,s)=(1,1)$ or $(2,1)$ and gradually move to
+$(4,2)$ and $(8,4)$, instead of asking the model to learn language modeling,
+routing, pooling, and compression simultaneously.  Second, train with a matched
+token-attention teacher, adding logit distillation and optionally hidden-state
+matching so that set states learn which predictive information must survive
+compression.  Third, evaluate under a fixed-VRAM long-context protocol at larger
+$L$, comparing dense and landmark token controls against dense and landmark SKA
+with five seeds.  Fourth, because Table~\ref{tab:long-context} shows a partial
+long-context gap reduction, add an auxiliary compression objective: reconstruct
+teacher hidden states, token windows, or next-token distributions from the set
+states before or alongside the causal LM loss.
+
+	Two architectural variants are also worth isolating.  The first is activation
+	sharing: compute routing queries from a lightweight descriptor rather than
+	keeping a full token stream solely for routing, checkpoint or recompute token
+	states that are routing-only, or drop token activations after pooling except at
+	positions whose candidate fiber is empty.  These variants are more invasive than
+	candidate-gather routing and may affect quality, but they address the audit
+	observation that the singleton limit carries both token and set states.  The
+	second is hybrid attention: use token attention in some layers and set attention
+	in others.  This is closer to practical long-context systems, where local/global
+	sparse attention, recurrent memory, or retrieval often complements rather than
+	fully replaces token attention
+	\citep{dai2019transformerxl,beltagy2020longformer,wu2022memorizing}.
+	
+	\subsection{Hybrid Token--Set Bridge Pilot}
+	\label{sec:hybrid-token-set-pilot}
+	
+	We ran a small hybrid pilot to test whether preserving token-attention layers
+	can bridge fine-grained token information through a set-mediated stack.  The
+	hybrid model uses one shared token hidden stream $X\in\mathbb R^{B\times L\times
+	d}$: token layers and set layers both update this same sequence, rather than
+	forming disconnected token and set towers.  A token layer therefore transports
+	ordinary token-attention features forward to later layers, while a set layer
+	pools the current shared stream into strict-past endpoint sets, processes those
+	sets, and routes the resulting context back to token positions.  This shared
+	stream is the intended information bridge.  It does not make the architecture
+	equivalent to token attention, because positions with nonempty candidate fibers
+	still pass through pooling, set attention, routing projections, and the
+	\texttt{empty\_only} output policy.
+	
+	\begin{table*}[t]
+	\centering
+	\caption{Sparse local-band hybrid pilot at $D=384$, $d_{\mathrm{ff}}=1536$,
+	$L=512$, and LR $10^{-4}$.  Hybrid rows use strict-past set layers with
+	progressive set topologies $(w,s)=(4,2)$ followed by $(8,4)$.  Sparse token and
+	calibrated sparse-set rows are included as operating-point references from the
+	validated A7 summary.}
+	\label{tab:hybrid-token-set-pilot}
+	\scriptsize
+	\resizebox{\textwidth}{!}{%
+	\begin{tabular}{llrrrrr}
+	\toprule
+	Model & Pattern / topology & Seeds & Val. PPL $\downarrow$ & Train PPL & Peak VRAM MiB & Comment \\
+	\midrule
+	Token sparse & -- & 5 & 742.4 & 228.7 & 13408.7 & Matched sparse local-band baseline. \\
+	Set sparse \texttt{empty\_only} & $(1,1)$ & 5 & 747.9 & 228.8 & 13936.6 & Near-token calibration point. \\
+	Set sparse \texttt{empty\_only} & $(4,2)$ & 3 & 1438.5 & 481.3 & 11807.3 & First near-2 compressed set point. \\
+	\midrule
+	Hybrid sparse & TTSSSS, $4{:}2;4{:}2;8{:}4;8{:}4$ & 3 & 2623.9 & 946.3 & 13407.1 & Token bridge only in first two layers. \\
+	Hybrid sparse & TSTSTS, $4{:}2;4{:}2;8{:}4$ & 3 & 2576.9 & 911.8 & 13517.2 & Alternating token/set bridge. \\
+	Hybrid sparse & TTTTSS, $4{:}2;8{:}4$ & 3 & 2393.4 & 881.5 & 13401.1 & Best pilot; still far from controls. \\
+	\bottomrule
+	\end{tabular}%
+	}
+	\end{table*}
+	
+	Table~\ref{tab:hybrid-token-set-pilot} shows a clear negative result, but the
+	diagnostics make it informative.  Keeping more token layers helps monotonically
+	among the tested patterns: TTTTSS is better than TSTSTS and TTSSSS, which
+	supports the bridge intuition.  However, even the best hybrid row remains much
+	worse than both the sparse token baseline and the single-stack sparse set model
+	at comparable compression.  This is not simply a candidate-count failure.  The
+	single-stack sparse set row at $(w,s)=(4,2)$ has mean candidate count about
+	$1.98$ and reaches PPL $1438.5$, whereas the hybrid TTTTSS uses the same
+	near-2 set topology in one set layer plus an $(8,4)$ layer with mean candidate
+	count about $1.96$, yet degrades to PPL $2393.4$.  Repeated compression through
+	multiple set layers appears more damaging than one compressed set stack, even
+	when token layers provide a shared-stream bridge.
+	
+	The broader architecture evidence points in the same direction.  Capacity
+	ablations in Table~\ref{tab:capacity-diagnostics} show that widening $d_\phi$,
+	widening set states, or increasing set-stack depth does not reliably close the
+	gap; in fact, depth 8 and 10 worsen validation perplexity.  The A7
+	quality--efficiency frontier shows that compressed set rows can reduce VRAM but
+	pay large PPL gaps, while the A8 $L=8192$ linear follow-up shows a strong memory
+	benefit without a matching quality recovery.  The hybrid pilot adds one more
+	constraint: token/set layer mixing alone does not solve either side of the
+	tradeoff.  It also does not create a memory win in this implementation: peak
+	VRAM is essentially the same as sparse token attention because the model still
+	carries the token stream, set states, and dense token-to-set routing tensors.
+	
+	The minimal promising path is therefore not ``add set layers to a token model''
+	by itself.  It should combine hybrid placement with changes that target the
+	measured failure modes.  First, candidate-gather routing should remove dense
+	$[B,H,L,M]$ routing tensors; this is mainly a memory fix, but it restores the
+	purpose of compression.  Second, the set layers need a training signal that
+	tells them what token-level information must survive compression, such as a
+	compression curriculum, logit distillation, or hidden-state reconstruction from
+	a matched token teacher.  Third, if hybrid layers remain useful, they should
+	include explicit residual or cross-layer bridges from early token states into
+	later set layers, so compression is not forced to preserve all predictive detail
+	through a single routed context.  The observed ordering
+	TTTTSS $<$ TSTSTS $<$ TTSSSS in perplexity suggests that a still milder
+	pattern, such as a late single set layer or a gated set residual added on top of
+	token attention, is a more plausible next test than deeper set-heavy stacks.
+	
+\FloatBarrier
+
+\subsection{Long-Context Data and Memory Tasks}
+\label{sec:future-long-context-memory-tasks}
+
+Finally, the larger-data question should be tested, but not treated as the first
+fix.  The 30-epoch convergence panel argues against ``just train longer'' as the
+whole explanation, yet the set path has additional routing and compression
+machinery that may be undertrained on WikiText-2 scale.  A serious follow-up is
+a fixed-token-budget run on WikiText-103 or a fixed OpenWebText subset, using a
+compact grid of dense, sparse, and landmark token baselines against matching SKA
+families at $(w,s)\in\{(1,1),(2,1),(4,2),(6,2),(16,8)\}$.  This would test whether the
+observed compression loss is fundamental under the current architecture or a
+small-data/training-regime artifact.
+
+Set states should also be evaluated directly as compressed memories, not
+only through next-token perplexity.  Memory and retrieval continuation tasks are
+a natural fit: books, code, math, long-document continuation, associative
+recall, and needle-style retrieval can test whether a set state preserves the
+right information under compression.  This follows the motivation behind
+compressive and memorizing sequence models, where useful long-context behavior
+comes from storing or retrieving compact representations of past inputs rather
+than from exact short-context token replacement
+\citep{rae2019compressive,wu2022memorizing}.
+
+\FloatBarrier
+
+\subsection{Near-2 Compression Targets}
+\label{sec:near2-targets}
+
+The first implementation follow-up should not start with a broad topology
+sweep.  The most useful target is the near-2 compression regime, where $L/M$ is
+close to 2 and the candidate fiber still has roughly two or more sets per token.
+Table~\ref{tab:near2-targets} summarizes the evidence from the causal
+empty-only calibration runs.  The important comparison is that $(w,s)=(2,2)$
+and $(4,2)$ both have $L/M\simeq 2$, but $(2,2)$ leaves only about one candidate
+per token and performs much worse.  Thus compression factor alone is not the
+right control variable; near-2 compression should be paired with sufficient
+candidate support.
+
+\begin{table*}[t]
+\centering
+\caption{Near-2 compression evidence from the causal empty-only calibration
+summary at $D=384$, $d_{\mathrm{ff}}=1536$, $L=512$, and LR $10^{-4}$.  Values
+are mean validation perplexity and peak VRAM over the available seeds from
+\texttt{a7\_backend\_family\_empty\_only\_augmented\_summary.tsv}.}
+\label{tab:near2-targets}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llrrrrrl}
+\toprule
+Family & $(w,s)$ & $M$ & $L/M$ & Mean $|\mathcal C_t|$ & Seeds & Val PPL $\downarrow$ & Interpretation \\
+\midrule
+Set Dense & $(2,2)$ & 256 & 2.000 & 0.998 & 3 & 1429.0 & Near-2 but too few candidates. \\
+Set Dense & $(4,2)$ & 255 & 2.008 & 1.984 & 3 & 1273.6 & Best observed dense near-2 point. \\
+Set Dense & $(8,4)$ & 127 & 4.031 & 1.965 & 3 & 1311.7 & More compression, worse PPL. \\
+Set Linear & $(2,2)$ & 256 & 2.000 & 0.998 & 3 & 1693.6 & Near-2 but too few candidates. \\
+Set Linear & $(4,2)$ & 255 & 2.008 & 1.984 & 3 & 1356.2 & Best observed linear near-2 point. \\
+Set Linear & $(8,4)$ & 127 & 4.031 & 1.965 & 3 & 1394.9 & More compression, worse PPL. \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+This motivates a narrow implementation benchmark after candidate-gather routing:
+use $(w,s)=(4,2)$ as the primary quality-preserving compression target and test
+$(6,2)$ as the first unobserved variant.  For $L=512$, $(6,2)$ has
+$M=\lfloor(512-6)/2\rfloor+1=254$ and $L/M=2.016$, so it preserves the near-2
+compression factor while raising the expected interior candidate count from
+about 2 to about 3.  The hypothesis is that this additional overlap can reduce
+perplexity without leaving the intended compression regime.  The midpoint
+$(5,2)$ should be kept as a fallback if $(6,2)$ improves quality but costs too
+much memory or over-smooths routing diagnostics.  Larger-$L$ runs should carry
+forward whichever of $(4,2)$ and $(6,2)$ wins at $L=512$, starting with
+$L=4096$ smoke tests and treating $L=8192$ as a second-stage smoke only after
+the matched token and SKA memory paths are validated.
+
+\FloatBarrier
+\bibliography{example_paper}
+\bibliographystyle{plainnat}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% APPENDIX
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\appendix
+\onecolumn
+\section{Detailed Model Definition and Structural Objects}
+\label{sec:model-objects}
+
+We now formalize the Set Attention language model studied in this work, together with the structural objects used later in the tiered theoretical analysis. The goal of this section is not merely architectural description: it fixes the finite-set, probability, and operator-theoretic objects that appear in Section~\ref{sec:theory}. Every symbol introduced here is used consistently there.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Basic Notation}
+\label{sec:basic-notation}
+
+\paragraph{Sequence, representation, and capacity parameters.}
+Let:
+\begin{itemize}
+    \item $B \in \mathbb{N}$ denote the batch size,
+    \item $L \in \mathbb{N}$ denote the token sequence length,
+    \item $L_{\max}\in\mathbb N$ denote the maximum sequence length supported by the positional embedding table,
+    \item $D \in \mathbb{N}$ denote the token/state embedding dimension,
+    \item $K \in \mathbb N$ denote the number of set-attention blocks,
+    \item $H_r \in \mathbb{N}$ denote the number of \emph{routing heads},
+    \item $d_r = D/H_r$ denote the dimension per routing head,
+    \item $H_a \in \mathbb{N}$ denote the number of \emph{set-attention heads},
+    \item $d_a = D/H_a$ denote the dimension per set-attention head,
+    \item $d_{\mathrm{ff}} \in \mathbb{N}$ denote the hidden width of the set-level feedforward network,
+    \item $V_{\mathrm{vocab}} \in \mathbb{N}$ denote the vocabulary size.
+\end{itemize}
+
+\begin{remark}[Router heads vs. set-attention heads]
+\label{rem:head-notation}
+The routing mechanism and the set-attention stack are distinct architectural modules. Accordingly, we use different symbols for their head counts: $H_r$ for routing heads, and $H_a$ for set-attention heads. This distinction is necessary in Section~\ref{sec:theory}, where routing-head capacity and set-attention stability play different theoretical roles.
+\end{remark}
+
+\paragraph{Batch-level vs. single-sample notation.}
+Unless stated otherwise, bold uppercase symbols such as $\mathbf{X}^{(0)}$,
+$\mathbf{S}^{(0)}$, and $\mathbf{Z}$ denote batched tensors. When the batch
+index is suppressed for a fixed sample, we reuse the same base symbol without
+boldface, for example $X^{(0)}\in\mathbb R^{L\times D}$ and
+$S^{(0)}\in\mathbb R^{M\times D}$. This convention is used throughout
+Sections~\ref{sec:model-objects} and~\ref{sec:theory}.
+
+\paragraph{Finite-index and probability notation.}
+We write
+\[
+[L]:=\{1,\dots,L\}
+\]
+for the token-position index set. For any finite set $A$, let
+\[
+\Delta(A)
+:=
+\left\{
+p:A\to[0,1]:
+\sum_{a\in A} p(a)=1
+\right\}
+\]
+denote the probability simplex on $A$. We use $\delta_a$ for the Dirac mass
+concentrated at $a\in A$.
+For a linear map $A$, its operator norm is
+\[
+\|A\|_{\mathrm{op}}:=\sup_{\|v\|_2=1}\|Av\|_2.
+\]
+We write $\mathbf I_D$ for the $D\times D$ identity matrix.
+
+\paragraph{Bank construction parameters.}
+Let:
+\begin{itemize}
+    \item $w \in \mathbb{N}$ denote the window size (number of tokens per set),
+    \item $s \in \mathbb{N}$ denote the stride (spacing between consecutive set starts).
+\end{itemize}
+We assume throughout that
+\begin{equation}
+\label{eq:ws-order}
+1 \le s \le w \le L.
+\end{equation}
+
+\paragraph{Pooling parameters.}
+Let:
+\begin{itemize}
+    \item $\tau_{\mathrm{pool}} > 0$ denote the pooling temperature,
+    \item $q \in (0,1)$ denote the trimming quantile,
+    \item $\alpha > 0$ denote the trimming sharpness parameter.
+\end{itemize}
+
+\paragraph{Routing parameters.}
+Let:
+\begin{itemize}
+    \item $\tau_r > 0$ denote the routing temperature,
+    \item $\tau_{\min} > 0$ denote the enforced minimum routing temperature,
+    \item $k \in \mathbb{N} \cup \{\infty\}$ denote the optional top-$k$ routing restriction.
+\end{itemize}
+The implementation clamps the routing temperature below by $\tau_{\min}$; mathematically, this means that all realized routing distributions are evaluated at an effective temperature satisfying
+\begin{equation}
+\label{eq:tau-clamp}
+\tau_r^{\mathrm{eff}} \ge \tau_{\min}.
+\end{equation}
+In our current experiments, the routing configurations used for the main paper satisfy $H_r>1$, use a fixed finite routing top-$k$ configuration, and pooling is not head-aware. The routing top-$k$ value was not swept as an experimental control.
+
+\paragraph{Embedding matrices.}
+The token embedding matrix is
+\begin{equation}
+\label{eq:token-embedding}
+\mathbf{E} \in \mathbb{R}^{V_{\mathrm{vocab}} \times D}
+\end{equation}
+and the positional embedding matrix is
+\begin{equation}
+\label{eq:pos-embedding}
+\mathbf{P} \in \mathbb{R}^{L_{\max} \times D},
+\end{equation}
+where positional embeddings are learned absolute embeddings.
+
+\paragraph{Input token sequence.}
+An input token sequence is
+\begin{equation}
+\label{eq:input-sequence}
+\mathbf{x}=(x_1,\dots,x_L)\in\{1,\dots,V_{\mathrm{vocab}}\}^L.
+\end{equation}
+
+\paragraph{Initial token states.}
+For a fixed sample, the embedded token representation is
+\begin{equation}
+\label{eq:sample-token-state}
+h_t^{(0)}=e(x_t)+p_t,
+\qquad t\in[L],
+\end{equation}
+where $e(\cdot)$ denotes the learned token embedding and $p_t$ the learned positional embedding. Batched token representations collect these states as
+\begin{equation}
+\label{eq:token-states}
+\mathbf{X}^{(0)}\in\mathbb{R}^{B\times L\times D},
+\end{equation}
+with $\mathbf X^{(0)}_{b,t,:}=h_{b,t}^{(0)}$.
+
+\paragraph{Loss and perplexity.}
+The training objective is the standard autoregressive cross-entropy loss. For a batch, let
+\begin{equation}
+\label{eq:loss}
+\mathcal{L}\in\mathbb{R}
+\end{equation}
+denote the batch-averaged loss, and define validation perplexity by
+\begin{equation}
+\label{eq:perplexity}
+\operatorname{PPL}=\exp(\mathcal{L}_{\mathrm{val}}).
+\end{equation}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Bank Topology as a Hypergraph Incidence Structure}
+\label{sec:bank-topology}
+
+The set bank is a deterministic family of overlapping local subsets of token positions. This family is the primary finite-set object underlying the model. For the autoregressive paper mode, we use the strict-past construction: partial trailing windows are dropped, and token-to-set candidates are determined by set endpoints rather than by membership.
+
+\paragraph{Number of sets.}
+Given $L$, $w$, and $s$, the number of sets is
+\begin{equation}
+\label{eq:num-sets}
+M=\left\lfloor\frac{L-w}{s}\right\rfloor+1.
+\end{equation}
+
+\paragraph{Set family.}
+For each set index $m\in\{1,\dots,M\}$, define its start position
+\begin{equation}
+\label{eq:set-start}
+a_m=1+(m-1)s
+\end{equation}
+and endpoint
+\begin{equation}
+\label{eq:set-endpoint}
+e_m=a_m+w-1.
+\end{equation}
+The corresponding active token subset is
+\begin{equation}
+\label{eq:set-definition}
+S_m=\{\,t\in[L]: a_m\le t\le e_m\,\}\subseteq[L].
+\end{equation}
+Thus the bank is the finite set family
+\begin{equation}
+\label{eq:set-family}
+\mathcal{S}=\{S_1,\dots,S_M\}\subseteq 2^{[L]}.
+\end{equation}
+
+\paragraph{Trailing tokens and early positions.}
+Dropping partial trailing windows means that every active set has cardinality $w$. For arbitrary $(L,w,s)$, membership in the active set family need not cover a final suffix if the last endpoint is less than $L$. Conversely, under strict-past endpoint routing, early token positions can have no available set endpoint. In that case the routed context is zero and the direct token residual carries the position.
+
+\begin{definition}[Bank topology]
+\label{def:bank-topology}
+The \emph{bank topology} induced by $(L,w,s)$ is the finite hypergraph
+\begin{equation}
+\label{eq:bank-topology}
+\mathcal{H}_{L,w,s}=([L],\mathcal S),
+\qquad
+[L]=\{1,\dots,L\},
+\end{equation}
+whose vertex set is the token-position index set and whose hyperedges are the sets in $\mathcal S$.
+
+Equivalently, this hypergraph is represented by its incidence matrix
+\begin{equation}
+\label{eq:incidence-matrix}
+\mathbf A\in\{0,1\}^{L\times M},
+\end{equation}
+with entries
+\begin{equation}
+\label{eq:incidence-entry}
+A_{t,m}=\mathbbm{1}_{S_m}(t)=
+\begin{cases}
+1,& t\in S_m,\\
+0,& t\notin S_m.
+\end{cases}
+\end{equation}
+\end{definition}
+
+\begin{remark}[Meaning of ``topology'']
+\label{rem:topology-meaning}
+In this paper, ``topology'' does not refer to a topological space in the sense of open sets. It refers instead to the finite bank structure $\mathcal H_{L,w,s}$ together with the active candidate rule. In strict-past mode, routing support is determined by endpoints; in the named noncausal mode, it is determined by membership. This structure determines routing support, candidate multiplicity, and the topology-induced feasible region analyzed in Section~\ref{sec:theory}.
+\end{remark}
+
+\begin{definition}[Candidate family and candidate count]
+\label{def:candidate-family}
+For each token position $t\in [L]$, define its strict-past \emph{candidate family}
+\begin{equation}
+\label{eq:candidate-family}
+\mathcal C_t=\{m\in\{1,\dots,M\}: t-w<e_m\le t\},
+\end{equation}
+and its \emph{candidate count}
+\begin{equation}
+\label{eq:candidate-count}
+C_t=|\mathcal C_t|.
+\end{equation}
+The mean candidate count is
+\begin{equation}
+\label{eq:mean-candidate-count}
+\bar C=\frac{1}{L}\sum_{t=1}^L C_t.
+\end{equation}
+\end{definition}
+
+The legacy noncausal mode uses the membership candidate family
+\begin{equation}
+\label{eq:noncausal-candidate-family}
+\mathcal C_t^{\mathrm{nc}}=\{m\in\{1,\dots,M\}:t\in S_m\}=\{m:A_{t,m}=1\}.
+\end{equation}
+Unless explicitly stated otherwise, the autoregressive experiments and diagnostics in this paper use the strict-past endpoint family \eqref{eq:candidate-family}.
+
+\begin{proposition}[Empty strict-past fibers and singleton token limit]
+\label{prop:empty-strict-past-fibers}
+Assume the strict-past endpoint bank above with $L\ge w\ge1$ and endpoints
+$e_m=w+(m-1)s$ in 1-indexed notation. Then
+\[
+C_t=0 \quad\Longleftrightarrow\quad t< w .
+\]
+Consequently, exactly $w-1$ token positions have an empty strict-past
+candidate fiber, and a uniformly sampled token position satisfies
+\begin{equation}
+\label{eq:empty-fiber-probability}
+\mathbb P(C_t=0)=\frac{w-1}{L}.
+\end{equation}
+In the singleton calibration limit $w=1,s=1$, we have $M=L$, $C_t=1$ for
+every $t\in[L]$, and therefore $\mathbb P(C_t=0)=0$.
+\end{proposition}
+
+\begin{proof}
+The earliest sealed endpoint is $e_1=w$. If $t<w$, no endpoint can satisfy
+$e_m\le t$, hence $\mathcal C_t=\varnothing$. If $t\ge w$, endpoint $e_1=w$
+satisfies $t-w<w\le t$, so $1\in\mathcal C_t$ and $C_t>0$. This proves the
+equivalence and the count of empty positions. Dividing by $L$ gives
+\eqref{eq:empty-fiber-probability}. When $w=1,s=1$, the starts are
+$a_m=m$, the endpoints are $e_m=m$, and $M=L$. For each token $t$, the
+candidate condition becomes $t-1<e_m\le t$, which selects exactly
+$e_m=t$.
+\end{proof}
+
+\paragraph{Residual policy for calibration.}
+Proposition~\ref{prop:empty-strict-past-fibers} motivates separating the
+ordinary residual architecture from calibration experiments. The default
+\texttt{direct} policy uses
+\[
+\mathbf z_t=\mathbf X^{(0)}_{t,:}+\mathbf r_t,
+\]
+which is the architecture used by the main causal runs. The calibrated
+\texttt{empty\_only} policy uses
+\[
+\mathbf z_t=
+\begin{cases}
+\mathbf X^{(0)}_{t,:},& C_t=0,\\
+\mathbf r_t,& C_t>0.
+\end{cases}
+\]
+Thus early strict-past tokens with no sealed endpoint still have a valid
+language-model state, while tokens with nonempty set support are evaluated
+through the set-routed path without an extra direct token skip. In the
+$w=1,s=1$ singleton limit, the empty case never occurs, so
+\texttt{empty\_only} coincides with the no-final-residual routed policy.
+This makes it the appropriate named mode for empirical convergence tests as
+$M/L\to1$ without introducing a residual advantage that is absent from the
+matched token-attention baseline.
+
+\begin{proposition}[Interior candidate count]
+\label{prop:interior-candidate-count}
+For strict-past interior token positions $t$ sufficiently far from sequence boundaries and after warmup, $C_t$ is the number of stride-spaced endpoints in the interval $(t-w,t]$.
+Consequently, for sequences with $L\gg w$,
+\begin{equation}
+\label{eq:mean-candidate-approx}
+\bar C\approx\frac{w}{s}.
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+A set endpoint contributes to the strict-past candidate family if and only if
+\[
+t-w<e_m\le t.
+\]
+Substituting $e_m=w+(m-1)s$ gives a length-$w$ interval of admissible set endpoints on a stride-$s$ grid:
+\[
+\frac{t-w-w}{s}< m-1\le \frac{t-w}{s}.
+\]
+Thus the exact count can differ by one depending on integer alignment, but is on the order of $w/s$. Averaging over tokens and noting that warmup and boundary effects are negligible when $L\gg w$ gives $\bar C\approx w/s$.
+\end{proof}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Pooling Operator as Probability Aggregation on Finite Sets}
+\label{sec:pooling-operator}
+
+Each set $S_m$ is aggregated into a single embedding by constructing a probability measure on the finite set $S_m$ and taking the expectation of the token-state function under that measure.
+
+\paragraph{Token-state function on a set.}
+For each batch element (suppressed when unambiguous) and each set $S_m$, define the token-state function
+\begin{equation}
+\label{eq:set-token-function}
+\mathbf X^{(m)}:S_m\to\mathbb R^D,
+\qquad
+t\mapsto \mathbf X_{t,:}.
+\end{equation}
+
+\paragraph{Uniform set mean.}
+Define the set mean embedding by
+\begin{equation}
+\label{eq:set-mean}
+\boldsymbol\mu_m=\frac{1}{|S_m|}\sum_{t\in S_m}\mathbf X_{t,:}
+\in\mathbb R^D.
+\end{equation}
+
+\paragraph{Normalized squared deviations.}
+For each $t\in S_m$, define
+\begin{equation}
+\label{eq:normalized-deviation}
+\delta_{t,m}=\frac{\|\mathbf X_{t,:}-\boldsymbol\mu_m\|_2^2}{D}\in\mathbb R_{\ge 0}.
+\end{equation}
+These deviations define the energy-like quantities used in the Boltzmann pooling rule.
+
+\paragraph{Quantile threshold and soft trimming gate.}
+Let
+\begin{equation}
+\label{eq:trimming-threshold}
+\theta_m=\operatorname{Quantile}_q\bigl(\{\delta_{t,m}:t\in S_m\}\bigr).
+\end{equation}
+During backpropagation, $\theta_m$ is treated as gradient-detached. Define the sigmoid gate
+\begin{equation}
+\label{eq:sigmoid}
+\sigma(u)=\frac{1}{1+e^{-u}},
+\end{equation}
+and the soft trimming factor
+\begin{equation}
+\label{eq:trimming-gate}
+r^{\mathrm{trim}}_{t,m}=\sigma\bigl(\alpha(\theta_m-\delta_{t,m})\bigr)\in(0,1).
+\end{equation}
+
+\paragraph{Pooling logits and probability mass function.}
+Define the pooling logits by
+\begin{equation}
+\label{eq:pooling-logits}
+\ell^{\mathrm{pool}}_{t,m}=-\frac{\delta_{t,m}}{\tau_{\mathrm{pool}}}+\log(r^{\mathrm{trim}}_{t,m}+\varepsilon_0),
+\qquad
+\varepsilon_0=10^{-8}.
+\end{equation}
+Then define the pooling weights
+\begin{equation}
+\label{eq:pooling-weights}
+\omega_{t,m}=\frac{\exp(\ell^{\mathrm{pool}}_{t,m})}{\sum_{u\in S_m}\exp(\ell^{\mathrm{pool}}_{u,m})},
+\qquad t\in S_m.
+\end{equation}
+These weights define a probability measure
+\begin{equation}
+\label{eq:pooling-pmf}
+\mathbb P_m\in\Delta(S_m),
+\qquad
+\mathbb P_m(\{t\})=\omega_{t,m}.
+\end{equation}
+
+\begin{remark}[Strict support vs. effective support]
+\label{rem:support-vs-effective-support}
+Because the implemented pooling rule uses a smooth softmax and a smooth sigmoid gate, the strict support of $\mathbb P_m$ is typically all of $S_m$. For this reason, the more informative notion of concentration is not strict support but \emph{effective support}, introduced later in Section~\ref{sec:theory} through the inverse participation ratio.
+\end{remark}
+
+\paragraph{Pooled set embedding as expectation.}
+The pooled embedding for set $S_m$ is the expectation of the token-state function under $\mathbb P_m$:
+\begin{equation}
+\label{eq:pooled-embedding}
+s_m^{(0)}
+=
+\mathbb E_{\mathbb P_m}[\mathbf X^{(m)}]
+=
+\sum_{t\in S_m}\omega_{t,m}\mathbf X_{t,:}
+\in\mathbb R^D.
+\end{equation}
+
+\paragraph{Set-state tensor.}
+Collecting all pooled set embeddings yields the set-state tensor
+\begin{equation}
+\label{eq:set-states}
+\mathbf S^{(0)}\in\mathbb R^{B\times M\times D},
+\qquad
+\mathbf S^{(0)}_{b,m,:}=s_{b,m}^{(0)}.
+\end{equation}
+We use $\mathbf S^{(0)}$ as the canonical notation for post-pooling, pre-set-processing states, since this aligns cleanly with the later gradient diagnostics and theoretical objects.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Set-Processing Stack}
+\label{sec:set-processing}
+
+The pooled set states are processed by a stack of $K$ set-attention blocks.
+
+\paragraph{Set-state recursion.}
+Let
+\begin{equation}
+\label{eq:set-state-levels}
+\mathbf S^{(\ell)}\in\mathbb R^{B\times M\times D},
+\qquad
+\ell\in\{0,1,\dots,K\},
+\end{equation}
+with $\mathbf S^{(0)}$ from \eqref{eq:set-states}. Each block computes
+\begin{align}
+\label{eq:block-attention}
+\mathbf S^{(\ell+1/2)} &= \mathbf S^{(\ell)} + \operatorname{Dropout}\Bigl(\operatorname{SetAttention}(\operatorname{LayerNorm}(\mathbf S^{(\ell)}))\Bigr),\\
+\label{eq:block-ffn}
+\mathbf S^{(\ell+1)} &= \mathbf S^{(\ell+1/2)} + \operatorname{Dropout}\Bigl(\operatorname{FFN}(\operatorname{LayerNorm}(\mathbf S^{(\ell+1/2)}))\Bigr).
+\end{align}
+
+\paragraph{Causal set mask.}
+For autoregressive language modeling, set attention uses a causal mask
+\begin{equation}
+\label{eq:causal-mask}
+\mathbf C\in\{0,1\}^{M\times M},
+\qquad
+C_{i,j}=
+\begin{cases}
+1,& i\ge j,\\
+0,& i<j.
+\end{cases}
+\end{equation}
+Thus set $i$ may attend only to itself and preceding sets.
+
+\paragraph{Multi-head set attention.}
+Within each block, set attention is standard multi-head self-attention with $H_a$ heads. For each attention head $h\in\{1,\dots,H_a\}$,
+\begin{align}
+\label{eq:qkv-projections}
+\mathbf Q^{(h)} &= \mathbf S\mathbf W_Q^{(h)} \in \mathbb R^{M\times d_a},
+&\mathbf W_Q^{(h)}\in\mathbb R^{D\times d_a},\\
+\mathbf K^{(h)} &= \mathbf S\mathbf W_K^{(h)} \in \mathbb R^{M\times d_a},
+&\mathbf W_K^{(h)}\in\mathbb R^{D\times d_a},\\
+\mathbf V^{(h)} &= \mathbf S\mathbf W_V^{(h)} \in \mathbb R^{M\times d_a},
+&\mathbf W_V^{(h)}\in\mathbb R^{D\times d_a}.
+\end{align}
+The implemented score matrix is
+\begin{equation}
+\label{eq:attention-scores}
+\widetilde{\mathbf A}^{(h)} \in \mathbb R^{M\times M}
+=
+\frac{\mathbf Q^{(h)}(\mathbf K^{(h)})^\top}{\sqrt{d_a}}
+\;+\;\mathbf G
+\;+\;\mathbf B^{(h)}
+\;+\;(\mathbf 1_{M\times M}-\mathbf C)(-\infty),
+\end{equation}
+where $\mathbf G\in\mathbb R^{M\times M}$ denotes the geometry bias, $\mathbf
+B^{(h)}\in\mathbb R^{M\times M}$ denotes the per-head content bias, and
+$\mathbf 1_{M\times M}$ is the all-ones matrix. The corresponding attention
+output is
+\begin{equation}
+\label{eq:attention-output}
+\mathbf O^{(h)}=\operatorname{softmax}(\widetilde{\mathbf A}^{(h)})\mathbf V^{(h)}
+\in \mathbb R^{M\times d_a}.
+\end{equation}
+Concatenation and output projection yield
+\begin{equation}
+\label{eq:multihead-concat}
+\operatorname{SetAttention}(\mathbf S)
+=
+[\mathbf O^{(1)};\dots;\mathbf O^{(H_a)}]\mathbf W_O,
+\qquad
+\mathbf W_O\in\mathbb R^{D\times D}.
+\end{equation}
+
+\paragraph{Functional set-attention families.}
+The implementation supports three functional set-processing families used in the paper bundle. The dense-exact family uses full set-to-set attention,
+\begin{equation}
+\label{eq:dense-set-attention-family}
+\operatorname{Attn}_{\mathrm{dense}}(Q,K,V)=\operatorname{softmax}(A)V,
+\end{equation}
+with $A$ given by \eqref{eq:attention-scores}. The linear family used in the experiments is the landmark backend: it routes set interactions through a smaller landmark subset $\Lambda\subseteq\{1,\dots,M\}$, giving a compressed surrogate of the form
+\begin{equation}
+\label{eq:landmark-set-attention-family}
+\operatorname{Attn}_{\mathrm{landmark}}(Q,K,V)
+=
+\operatorname{softmax}(A_{M\Lambda})\,
+\operatorname{softmax}(A_{\Lambda M})V.
+\end{equation}
+The sparse family used in the experiments is local-band attention: each set attends only within a fixed neighborhood in bank-index space,
+\begin{equation}
+\label{eq:local-band-set-attention-family}
+A_{ij}=-\infty\quad\text{whenever}\quad |i-j|>r,
+\end{equation}
+up to optional global indices and the causal/set masks. We do not include the Nystr\"om backend in the main paper, since it was not part of the functional family emphasized by the reported experiments.
+
+\paragraph{Set-level feedforward network.}
+The block feedforward network is
+\begin{equation}
+\label{eq:ffn}
+\operatorname{FFN}(\mathbf s)=\mathbf W_2\,\operatorname{GELU}(\mathbf W_1\mathbf s),
+\end{equation}
+with
+\begin{equation}
+\mathbf W_1\in\mathbb R^{d_{\mathrm{ff}}\times D},
+\qquad
+\mathbf W_2\in\mathbb R^{D\times d_{\mathrm{ff}}}.
+\end{equation}
+
+\paragraph{Processed set states and operator notation.}
+After $K$ blocks, the processed set states are
+\begin{equation}
+\label{eq:final-set-states}
+\widetilde{\mathbf S}=\mathbf S^{(K)}\in\mathbb R^{B\times M\times D}.
+\end{equation}
+We write the full set-processing stack as the operator
+\begin{equation}
+\label{eq:set-stack-operator}
+\Phi_{\mathrm{set}}:\mathbb R^{M\times D}\to\mathbb R^{M\times D},
+\qquad
+\widetilde{\mathbf S}=\Phi_{\mathrm{set}}(\mathbf S^{(0)}).
+\end{equation}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Multi-Head Routing Operator}
+\label{sec:routing-operator}
+
+The routing operator maps processed set states back to token-level representations. This module is multi-head in all main set-only experiments used for the paper.
+
+\paragraph{Head splitting of set states.}
+For each processed set state $\widetilde{\mathbf S}_m\in\mathbb R^D$, split its coordinates into $H_r$ routing-head subvectors:
+\begin{equation}
+\label{eq:head-split}
+\widetilde{\mathbf S}_m=\bigl[\widetilde{\mathbf S}_m^{(1)};\dots;\widetilde{\mathbf S}_m^{(H_r)}\bigr],
+\qquad
+\widetilde{\mathbf S}_m^{(u)}\in\mathbb R^{d_r}.
+\end{equation}
+%Equivalently,
+%\begin{equation}
+%\label{eq:head-split-concat}
+%\widetilde{\mathbf S}=\operatorname{Concat}(\widetilde{\mathbf S}^{(1)},\dots,\widetilde{\mathbf S}^{(H_r)}),
+%\qquad
+%\widetilde{\mathbf S}^{(u)}\in\mathbb R^{M\times d_r}.
+%\end{equation}
+
+\paragraph{Per-head routing scores.}
+For each token position $t$ and routing head $u\in\{1,\dots,H_r\}$, the learned router computes headwise token-query / set-descriptor compatibility scores. Let $d_m$ denote the descriptor used by the router for set $m$. In the hashed-count experimental path used in the paper, the router receives the pre-set-attention pooled state as this descriptor, so $d_m=s_m^{(0)}$; the hashed-count features affect set attention through content bias. The router computes
+\begin{equation}
+\label{eq:routing-query-key}
+q_t^{(u)}=W_{Q,r}^{(u)}h_t^{(0)},
+\qquad
+k_m^{(u)}=W_{K,r}^{(u)}d_m,
+\end{equation}
+and raw scores
+\begin{equation}
+\label{eq:routing-scores}
+g^{(u)}_{t,m}
+=
+\frac{\langle q_t^{(u)},k_m^{(u)}\rangle}{\sqrt{d_\phi}},
+\qquad m\in\{1,\dots,M\}.
+\end{equation}
+Here $d_\phi$ is the router projection dimension; when a single-head router is used, the same expression reduces to the corresponding full-width query--descriptor dot product.
+
+\paragraph{Candidate masking and optional top-$k$ restriction.}
+The topology restricts routing to candidate sets in $\mathcal C_t$. The reported experiments keep a fixed finite router top-$k$ setting rather than sweeping it; in the dense-exact operating points emphasized below, this cutoff is effectively inactive whenever $C_t$ is already smaller than the configured value. Define the masked logits
+\begin{equation}
+\label{eq:masked-logits}
+\widetilde g^{(u)}_{t,m}=
+\begin{cases}
+g^{(u)}_{t,m},& m\in\mathcal C_t \text{ and } m \text{ survives top-}k,\\
+-\infty,& \text{otherwise}.
+\end{cases}
+\end{equation}
+
+\paragraph{Per-head routing probability measures.}
+For each token position $t$ and head $u$, define the routing probability measure
+\begin{equation}
+\label{eq:routing-probability-measure}
+\mathbb Q_t^{(u)}\in\Delta(\mathcal C_t)
+\end{equation}
+when $C_t>0$, with mass function
+\begin{equation}
+\label{eq:routing-probabilities}
+\pi_{t,m}^{(u)}=\mathbb Q_t^{(u)}(\{m\})
+=
+\frac{\exp(\widetilde g^{(u)}_{t,m}/\tau_r^{\mathrm{eff}})}{\sum_{j=1}^M \exp(\widetilde g^{(u)}_{t,j}/\tau_r^{\mathrm{eff}})}.
+\end{equation}
+Its support is
+\begin{equation}
+\label{eq:routing-support}
+\operatorname{supp}(\mathbb Q_t^{(u)})
+=
+\{m\in\mathcal C_t: \pi_{t,m}^{(u)}>0\}
+\subseteq \mathcal C_t.
+\end{equation}
+Each headwise routing distribution satisfies
+\begin{equation}
+\label{eq:routing-prob-sum}
+\sum_{m=1}^M \pi_{t,m}^{(u)}=1.
+\end{equation}
+When $C_t=0$ in strict-past mode, no softmax is formed for that token and the routed context below is set to zero.
+
+\paragraph{Per-head routed context.}
+For each head $u$, define the routed head-subvector as the expectation of the head-split set-state function under $\mathbb Q_t^{(u)}$:
+\begin{equation}
+\label{eq:per-head-routed}
+\mathbf r_t^{(u)}
+=
+\mathbb E_{\mathbb Q_t^{(u)}}[\widetilde{\mathbf S}^{(u)}]
+=
+\sum_{m=1}^M \pi_{t,m}^{(u)}\widetilde{\mathbf S}^{(u)}_m
+\in\mathbb R^{d_r}.
+\end{equation}
+
+\paragraph{Routed context and output residual policy.}
+The routed context is the concatenation of headwise routed subvectors:
+\begin{equation}
+\label{eq:routed-token}
+\mathbf r_t
+=
+\operatorname{Concat}(\mathbf r_t^{(1)},\dots,\mathbf r_t^{(H_r)})
+\in\mathbb R^D.
+\end{equation}
+If $C_t=0$, define $\mathbf r_t=\mathbf 0$. The default final token representation is the direct residual
+\begin{equation}
+\label{eq:direct-residual-appendix}
+\mathbf z_t=\mathbf X^{(0)}_{t,:}+\mathbf r_t.
+\end{equation}
+For explicitly configured calibration runs, the \texttt{empty\_only} policy
+instead uses $\mathbf z_t=\mathbf X^{(0)}_{t,:}$ when $C_t=0$ and
+$\mathbf z_t=\mathbf r_t$ when $C_t>0$; the \texttt{none} policy uses
+$\mathbf z_t=\mathbf r_t$ throughout strict-past mode.
+Collecting all token positions yields the final token-state tensor
+\begin{equation}
+\label{eq:routed-tokens}
+\mathbf Z\in\mathbb R^{B\times L\times D}.
+\end{equation}
+
+\paragraph{Head-aggregated routing distribution.}
+For analysis and diagnostics, define the head-aggregated routing distribution by
+\begin{equation}
+\label{eq:aggregated-routing}
+\bar\pi_{t,m}=\frac{1}{H_r}\sum_{u=1}^{H_r}\pi_{t,m}^{(u)}.
+\end{equation}
+This defines a probability measure
+\begin{equation}
+\label{eq:aggregated-routing-measure}
+\bar{\mathbb Q}_t\in\Delta(\mathcal C_t),
+\qquad
+\bar{\mathbb Q}_t(\{m\})=\bar\pi_{t,m}.
+\end{equation}
+
+\paragraph{Operator notation.}
+We write the multi-head routing operator as
+\begin{equation}
+\label{eq:routing-operator}
+\mathcal R_{H_r,\tau_r,\mathcal H,k}:\mathbb R^{M\times D}\to\mathbb R^{L\times D},
+\qquad
+\mathbf R=\mathcal R_{H_r,\tau_r,\mathcal H,k}(\widetilde{\mathbf S}),
+\end{equation}
+where $\mathcal H=\mathcal H_{L,w,s}$ is the bank topology, and $\mathbf Z$ is formed from $\mathbf X^{(0)}$ and $\mathbf R$ by the configured output residual policy before being passed to the language-model head.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Language Model Head and Loss}
+\label{sec:lm-head}
+
+The final token representations are mapped to vocabulary logits by a linear readout:
+\begin{equation}
+\label{eq:output-logits}
+\mathbf Y=\mathbf Z\mathbf W_{\mathrm{lm}}^\top+\mathbf b_{\mathrm{lm}}
+\in\mathbb R^{B\times L\times V_{\mathrm{vocab}}},
+\end{equation}
+where
+\begin{equation}
+\mathbf W_{\mathrm{lm}}\in\mathbb R^{V_{\mathrm{vocab}}\times D},
+\qquad
+\mathbf b_{\mathrm{lm}}\in\mathbb R^{V_{\mathrm{vocab}}}.
+\end{equation}
+For a fixed sample, write $y_t\in\mathbb R^{V_{\mathrm{vocab}}}$ for the vocabulary-logit vector at token position $t$. The autoregressive cross-entropy loss functional is
+\begin{equation}
+\label{eq:cross-entropy}
+\mathcal J
+=
+-\frac{1}{L}\sum_{t=1}^{L}
+\log p_{\mathrm{model}}(x^{\mathrm{target}}_t\mid y_t).
+\end{equation}
+Here the data loader supplies pre-shifted input and target chunks: the model consumes the input chunk and predicts the aligned next-token target chunk at every label position. The empirical batch loss $\mathcal L$ is the average of $\mathcal J$ over all batch and label positions.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Complete Architecture Summary}
+\label{sec:architecture-summary}
+
+The full Set Attention language model is the composition:
+\begin{equation}
+\label{eq:full-pipeline}
+\mathbf x
+\xrightarrow{\mathrm{Embed}}
+\mathbf X^{(0)}
+\xrightarrow{\mathcal P}
+\mathbf S^{(0)}
+\xrightarrow{\Phi_{\mathrm{set}}}
+\widetilde{\mathbf S}
+\xrightarrow{\mathcal R}
+\mathbf R
+\xrightarrow{+\mathbf X^{(0)}}
+\mathbf Z
+\xrightarrow{\mathrm{LM\ Head}}
+\mathbf Y,
+\end{equation}
+where:
+\begin{itemize}
+    \item $\mathcal P=\mathcal P_{w,s,q,\alpha,\tau_{\mathrm{pool}}}$ is the pooling operator on bank sets,
+    \item $\Phi_{\mathrm{set}}$ is the set-processing stack,
+    \item $\mathcal R=\mathcal R_{H_r,\tau_r,\mathcal H,k}$ is the multi-head routing operator.
+\end{itemize}
+
+\paragraph{Architectural parity fact.}
+There is no post-routing token-level MLP in the main proposal. The only feedforward network active in the core architecture is the set-level FFN inside each set-attention block. This fact is important in Section~\ref{sec:theory}, where the theoretical analysis focuses on the set-attention and routing mechanism itself rather than on an added post-routing token nonlinearity.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Observable Routing Diagnostics}
+\label{sec:routing-diagnostics}
+
+This subsection defines the routing diagnostics used later in Section~\ref{sec:theory} and in the experiments.
+
+\paragraph{Per-head routing entropy.}
+For each token $t$ and routing head $u$, define the Shannon entropy
+\begin{equation}
+\label{eq:per-head-entropy-single}
+H(\mathbb Q_t^{(u)})
+=
+-\sum_{m=1}^M \pi_{t,m}^{(u)}\log \pi_{t,m}^{(u)}.
+\end{equation}
+The mean per-head routing entropy is
+\begin{equation}
+\label{eq:per-head-entropy-mean}
+H_{\mathrm{head}}
+=
+\frac{1}{LH_r}
+\sum_{t=1}^L\sum_{u=1}^{H_r}
+H(\mathbb Q_t^{(u)}).
+\end{equation}
+
+\paragraph{Aggregated routing entropy.}
+For each token position $t$, define the entropy of the aggregated routing distribution
+\begin{equation}
+\label{eq:aggregated-entropy-single}
+H(\bar{\mathbb Q}_t)
+=
+-\sum_{m=1}^M \bar\pi_{t,m}\log \bar\pi_{t,m}.
+\end{equation}
+Its mean over tokens is
+\begin{equation}
+\label{eq:aggregated-entropy}
+H_{\mathrm{agg}}
+=
+\frac{1}{L}\sum_{t=1}^L H(\bar{\mathbb Q}_t).
+\end{equation}
+
+\paragraph{Normalized aggregated entropy.}
+To align with the sharp structural bounds in Section~\ref{sec:theory}, define the per-token normalized aggregated entropy by
+\begin{equation}
+\label{eq:normalized-agg-entropy-token}
+\overline H_{\mathrm{agg}}(t)
+=
+\frac{H(\bar{\mathbb Q}_t)}{\log C_t},
+\qquad C_t\ge 2,
+\end{equation}
+and the mean normalized aggregated entropy by
+\begin{equation}
+\label{eq:normalized-agg-entropy}
+\overline H_{\mathrm{agg}}
+=
+\frac{1}{|\{t:C_t\ge 2\}|}
+\sum_{t:C_t\ge 2}
+\frac{H(\bar{\mathbb Q}_t)}{\log C_t}.
+\end{equation}
+This normalization places the quantity in $[0,1]$ and matches the candidate-family-based entropy bounds used later.
+
+\paragraph{Router top-1 concentration.}
+The reported router top-1 diagnostic is probability concentration, not modal head agreement. For each token with nonempty candidate set, define
+\begin{equation}
+\label{eq:router-top1-concentration-token}
+\kappa_t=\frac{1}{H_r}\sum_{u=1}^{H_r}\max_{m\in\mathcal C_t}\pi_{t,m}^{(u)}.
+\end{equation}
+The mean router top-1 concentration is the average of $\kappa_t$ over tokens with $C_t>0$. It lies in $[1/C_t,1]$ per token when all candidates survive masking and equals $1$ for deterministic routing.
+
+\paragraph{Head agreement.}
+For each token $t$, define the top-1 agreement score
+\begin{equation}
+\label{eq:head-agreement-token}
+a_t
+=
+\frac{1}{H_r}
+\max_{m\in\mathcal{C}_t}
+\sum_{u=1}^{H_r}
+\mathbbm{1}_{\left[\arg\max_{j\in\mathcal{C}_t} \pi_{t,j}^{(u)}=m\right]}
+\in\left[\frac{1}{H_r},1\right].
+\end{equation}
+This score is modal top-1 agreement across routing heads; it is not a measure of full distributional agreement.
+The mean head agreement is
+\begin{equation}
+\label{eq:head-agreement}
+\mathcal A
+=
+\frac{1}{L}\sum_{t=1}^L a_t.
+\end{equation}
+
+\paragraph{Head diversity via Jensen--Shannon deviation from the mean.}
+For probability laws $p,q\in\Delta(A)$ on a common finite support $A$, define
+\[
+\operatorname{KL}(p\,\|\,q)
+:=
+\sum_{a\in A} p(a)\log\frac{p(a)}{q(a)}.
+\]
+For each token $t$ and head $u$, let
+\[
+m_t^{(u)}=\tfrac12\left(\mathbb Q_t^{(u)}+\bar{\mathbb Q}_t\right).
+\]
+Define the Jensen--Shannon divergence from the aggregated routing distribution by
+\begin{equation}
+\label{eq:js-divergence}
+\operatorname{JS}(\mathbb Q_t^{(u)}\,\|\,\bar{\mathbb Q}_t)
+=
+\frac{1}{2}\operatorname{KL}(\mathbb Q_t^{(u)}\,\|\,m_t^{(u)})
++
+\frac{1}{2}\operatorname{KL}(\bar{\mathbb Q}_t\,\|\,m_t^{(u)}).
+\end{equation}
+The mean JS-to-mean diversity is
+\begin{equation}
+\label{eq:js-diversity}
+\mathcal D_{\mathrm{JS}}
+=
+\frac{1}{LH_r}
+\sum_{t=1}^L\sum_{u=1}^{H_r}
+\operatorname{JS}(\mathbb Q_t^{(u)}\,\|\,\bar{\mathbb Q}_t).
+\end{equation}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Gradient Flow Diagnostics}
+\label{sec:gradient-flow-diagnostics}
+
+This subsection fixes the gradient-flow observables used later in the mechanistic analysis.
+
+\paragraph{Intermediate states for gradient diagnostics.}
+Let:
+\begin{itemize}
+    \item $\mathbf h\in\mathbb R^{L\times D}$ denote token states immediately before pooling,
+    \item $\mathbf z_0\in\mathbb R^{M\times D}$ denote set states immediately after pooling,
+    \item $\mathbf z_K\in\mathbb R^{M\times D}$ denote set states immediately after the set-processing stack.
+\end{itemize}
+These correspond respectively to the tensor stages $\mathbf X^{(0)}$, $\mathbf S^{(0)}$, and $\widetilde{\mathbf S}$ for a fixed batch element, with notation simplified for the gradient analysis.
+
+\paragraph{Pooling gradient-flow ratio.}
+Define
+\begin{equation}
+\label{eq:rho-p}
+\rho_p
+=
+\frac{\|\nabla_{\mathbf z_0}\mathcal L\|_2}{\|\nabla_{\mathbf h}\mathcal L\|_2+\varepsilon_g},
+\qquad
+\varepsilon_g=10^{-8}.
+\end{equation}
+
+\paragraph{Set-processing gradient-flow ratio.}
+Define
+\begin{equation}
+\label{eq:rho-a}
+\rho_a
+=
+\frac{\|\nabla_{\mathbf z_K}\mathcal L\|_2}{\|\nabla_{\mathbf z_0}\mathcal L\|_2+\varepsilon_g}.
+\end{equation}
+
+\paragraph{Combined gradient-flow ratio.}
+Define
+\begin{equation}
+\label{eq:rho-pa}
+\rho_{pa}
+=
+\frac{\|\nabla_{\mathbf z_K}\mathcal L\|_2}{\|\nabla_{\mathbf h}\mathcal L\|_2+\varepsilon_g}.
+\end{equation}
+
+\paragraph{Exact stabilizer-corrected multiplicative relation.}
+These quantities satisfy the exact identity
+\begin{equation}
+\label{eq:rho-composition-corrected}
+\rho_p\rho_a
+=
+\rho_{pa}
+\frac{\|\nabla_{\mathbf z_0}\mathcal L\|_2}{\|\nabla_{\mathbf z_0}\mathcal L\|_2+\varepsilon_g}.
+\end{equation}
+Hence the idealized multiplicative relation $\rho_{pa}=\rho_p\rho_a$ is recovered in the limit $\varepsilon_g\to 0$.
+
+\paragraph{Interpretation.}
+These ratios are used as local diagnostics of gradient transport through the architectural stages:
+\begin{itemize}
+    \item $\rho_p\ll 1$: pooling-related gradient bottleneck,
+    \item $\rho_p\gg 1$: pooling-related gradient amplification,
+    \item $\rho_a\ll 1$: set-stack-related gradient decay,
+    \item $\rho_a\gg 1$: set-stack-related gradient amplification.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% END OF SECTION 4
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% SECTION 5: TIERED THEORETICAL ANALYSIS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% SECTION 5: TIERED THEORETICAL ANALYSIS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\section{Detailed Theory and Proofs}
+\label{sec:theory}
+
+This section presents the theoretical analysis of Set Attention using the structural objects introduced in Section~\ref{sec:model-objects}. We separate the analysis into three tiers.
+
+\begin{itemize}
+    \item \textbf{Tier A: Exact structural theorems.} These results follow directly from the model definition and finite-dimensional probability/linear algebra.
+    \item \textbf{Tier B: Mechanistic propositions under explicit regularity assumptions.} These results connect the suboperators of the model to perturbation and stability bounds.
+    \item \textbf{Tier C: Empirical corollaries and feasible-region consequences.} These results connect the formal objects to measurable diagnostics and experimentally testable design rules.
+\end{itemize}
+
+The central principle is that the architecture can be decomposed into three mathematically distinct operators:
+$\mathcal{P}_{w,s,q,\alpha,\tau_{\mathrm{pool}}}$ (pooling), $\Phi_{\mathrm{set}}$ (set processing), and
+$\mathcal{R}_{\tau_r,\mathcal{H},H_r,k}$ (routing), and that the behavior of the full language model can be studied by analyzing these components and their compositions.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Tier A: Exact Structural Theorems}
+\label{sec:tier-a}
+
+The results in this subsection require no statistical assumptions on the data distribution and no approximation arguments. They are exact consequences of the architecture defined in Section~\ref{sec:model-objects}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Routing Entropy, Support, and Temperature Dependence}
+\label{sec:tier-a-routing-entropy}
+
+We first analyze the routing distributions as finite probability measures on the candidate-set fibers.
+
+\begin{theorem}[Per-head routing entropy bound and temperature monotonicity]
+\label{thm:per-head-entropy}
+Fix a token position $t \in \{1,\dots,L\}$ and a routing head $u \in \{1,\dots,H_r\}$. Let
+\[
+\mathbb{Q}^{(u)}_{t}
+\]
+be the per-head routing probability measure on the candidate fiber $\mathcal{C}_{t}$, with mass function
+\[
+\pi^{(u)}_{t,m} = \mathbb{Q}^{(u)}_{t}(\{m\}), \qquad m \in \{1,\dots,M\},
+\]
+as defined in Section~\ref{sec:routing-operator}. Then the following statements hold.
+
+\begin{enumerate}
+    \item The Shannon entropy of the per-head routing distribution satisfies
+    \begin{equation}
+    \label{eq:per-head-entropy-bound-thm}
+    H\!\left(\mathbb{Q}^{(u)}_{t}\right)
+    :=
+    - \sum_{m=1}^{M} \pi^{(u)}_{t,m}\log \pi^{(u)}_{t,m}
+    \leq
+    \log \left| \operatorname{supp}\!\left(\mathbb{Q}^{(u)}_{t}\right)\right|.
+    \end{equation}
+
+    \item Equality in \eqref{eq:per-head-entropy-bound-thm} holds if and only if $\mathbb{Q}^{(u)}_{t}$ is uniform on its support.
+
+    \item If the masked routing logits $\tilde g^{(u)}_{t,m}$ are fixed and the support does not change with $\tau_r$, then
+    \begin{equation}
+    \label{eq:entropy-monotone-temp}
+    \tau_r \longmapsto H\!\left(\mathbb{Q}^{(u)}_{t}\right)
+    \end{equation}
+    is nondecreasing.
+
+    \item In the low-temperature limit,
+    \begin{equation}
+    \label{eq:entropy-low-temp-limit}
+    \lim_{\tau_r \to 0^+} H\!\left(\mathbb{Q}^{(u)}_{t}\right)=0
+    \end{equation}
+    provided the maximum masked logit is unique.
+
+    \item In the high-temperature limit,
+    \begin{equation}
+    \label{eq:entropy-high-temp-limit}
+    \lim_{\tau_r\to\infty} H\!\left(\mathbb{Q}^{(u)}_{t}\right)
+    =
+    \log \left|\operatorname{supp}\!\left(\mathbb{Q}^{(u)}_{t}\right)\right|.
+    \end{equation}
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+We prove the five statements one by one.
+
+\paragraph{Step 1: Entropy bound on finite support.}
+Let
+\[
+S_{t}^{(u)} := \operatorname{supp}\!\left(\mathbb{Q}^{(u)}_{t}\right)
+\subseteq \mathcal{C}_{t}.
+\]
+Since $\mathbb{Q}^{(u)}_{t}$ is a probability measure on the finite set $S_{t}^{(u)}$, its Shannon entropy is maximized by the uniform distribution on that support. This is the classical finite-support entropy maximization principle. Therefore
+\[
+H\!\left(\mathbb{Q}^{(u)}_{t}\right)\le \log |S_{t}^{(u)}|,
+\]
+which proves \eqref{eq:per-head-entropy-bound-thm}.
+
+\paragraph{Step 2: Characterization of equality.}
+The Shannon entropy is strictly concave on the probability simplex. Therefore the unique maximizer over distributions supported on $S_{t}^{(u)}$ is the uniform distribution:
+\[
+\pi^{(u)}_{t,m} = \frac{1}{|S_{t}^{(u)}|} \qquad \text{for all } m\in S_{t}^{(u)}.
+\]
+Hence equality holds if and only if $\mathbb{Q}^{(u)}_{t}$ is uniform on its support.
+
+\paragraph{Step 3: Softmax form.}
+On the support $S_{t}^{(u)}$, the routing probabilities are
+\[
+\pi^{(u)}_{t,m}(\tau_r)
+=
+\frac{\exp(\tilde g^{(u)}_{t,m}/\tau_r)}
+{\sum_{j\in S_{t}^{(u)}} \exp(\tilde g^{(u)}_{t,j}/\tau_r)}.
+\]
+Define the partition function
+\[
+Z_{t}^{(u)}(\tau_r)
+=
+\sum_{j\in S_{t}^{(u)}} \exp(\tilde g^{(u)}_{t,j}/\tau_r).
+\]
+Then
+\[
+\log \pi^{(u)}_{t,m}
+=
+\frac{\tilde g^{(u)}_{t,m}}{\tau_r}
+-
+\log Z_{t}^{(u)}(\tau_r).
+\]
+Therefore
+\begin{align}
+ H\!\left(\mathbb{Q}^{(u)}_{t}\right)
+&=
+-\sum_{m\in S_{t}^{(u)}} \pi^{(u)}_{t,m}
+\left(
+\frac{\tilde g^{(u)}_{t,m}}{\tau_r}
+-
+\log Z_{t}^{(u)}(\tau_r)
+\right)
+\\
+&= 
+\log Z_{t}^{(u)}(\tau_r)
+-
+\frac{1}{\tau_r}
+\mathbb E_{m\sim \mathbb Q^{(u)}_{t}}[\tilde g^{(u)}_{t,m}].
+\label{eq:entropy-partition-form}
+\end{align}
+
+\paragraph{Step 4: Derivative of the partition function.}
+Differentiate $Z_{t}^{(u)}(\tau_r)$:
+\[
+\frac{d}{d\tau_r} Z_{t}^{(u)}(\tau_r)
+=
+-\frac{1}{\tau_r^2}
+\sum_{j\in S_{t}^{(u)}} \tilde g^{(u)}_{t,j}
+\exp(\tilde g^{(u)}_{t,j}/\tau_r).
+\]
+Hence
+\[
+\frac{d}{d\tau_r}\log Z_{t}^{(u)}(\tau_r)
+=
+-\frac{1}{\tau_r^2}
+\mathbb E_{m\sim \mathbb Q^{(u)}_{t}}[\tilde g^{(u)}_{t,m}].
+\]
+
+\paragraph{Step 5: Derivative of the expected score.}
+A standard softmax differentiation computation yields
+\[
+\frac{d}{d\tau_r}
+\mathbb E_{m\sim \mathbb Q^{(u)}_{t}}[\tilde g^{(u)}_{t,m}]
+=
+-\frac{1}{\tau_r^2}
+\operatorname{Var}_{m\sim \mathbb Q^{(u)}_{t}}(\tilde g^{(u)}_{t,m}).
+\]
+
+\paragraph{Step 6: Derivative of the entropy.}
+Differentiate \eqref{eq:entropy-partition-form}:
+\begin{align}
+\frac{d}{d\tau_r}
+ H\!\left(\mathbb{Q}^{(u)}_{t}\right)
+&=
+-\frac{1}{\tau_r^2}
+\mathbb E_{m\sim \mathbb Q^{(u)}_{t}}[\tilde g^{(u)}_{t,m}]
+-
+\frac{d}{d\tau_r}
+\left(
+\frac{1}{\tau_r}
+\mathbb E_{m\sim \mathbb Q^{(u)}_{t}}[\tilde g^{(u)}_{t,m}]
+\right)
+\\
+&= 
+-\frac{1}{\tau_r^2}\mathbb{E}[\tilde g]
++
+\frac{1}{\tau_r^2}\mathbb{E}[\tilde g]
++
+\frac{1}{\tau_r^3}
+\operatorname{Var}_{m\sim \mathbb Q^{(u)}_{t}}(\tilde g^{(u)}_{t,m})
+\\
+&= 
+\frac{1}{\tau_r^3}
+\operatorname{Var}_{m\sim \mathbb Q^{(u)}_{t}}(\tilde g^{(u)}_{t,m})
+\ge 0.
+\end{align}
+This proves monotonicity.
+
+\paragraph{Step 7: Low-temperature limit.}
+If the maximum masked logit is unique, then the softmax converges to the corresponding Dirac mass:
+\[
+\pi^{(u)}_{t,m}(\tau_r)\to \delta_{m,m^\star}
+\quad\text{as } \tau_r\to 0^+.
+\]
+The entropy of a Dirac mass is zero, proving \eqref{eq:entropy-low-temp-limit}.
+
+\paragraph{Step 8: High-temperature limit.}
+As $\tau_r\to\infty$, all finite masked logits satisfy
+\[
+\exp(\tilde g^{(u)}_{t,m}/\tau_r)\to 1
+\quad\text{for } m\in S_{t}^{(u)}.
+\]
+Hence the routing measure converges to the uniform law on $S_{t}^{(u)}$, whose entropy is $\log |S_{t}^{(u)}|$. This proves \eqref{eq:entropy-high-temp-limit}.
+\end{proof}
+
+\begin{corollary}[Normalized per-head routing entropy]
+\label{cor:normalized-head-entropy}
+If $\left|\operatorname{supp}\!\left(\mathbb{Q}^{(u)}_{t}\right)\right|\ge 2$, then the normalized per-head routing entropy
+\begin{equation}
+\label{eq:normalized-head-entropy}
+\overline H^{(u)}_{t}
+:=
+\frac{H\!\left(\mathbb{Q}^{(u)}_{t}\right)}
+{\log \left|\operatorname{supp}\!\left(\mathbb{Q}^{(u)}_{t}\right)\right|}
+\in [0,1].
+\end{equation}
+Moreover, $\overline H^{(u)}_{t}=0$ for deterministic routing and $\overline H^{(u)}_{t}=1$ for uniform routing on support.
+\end{corollary}
+
+\begin{proof}
+This follows immediately from Theorem~\ref{thm:per-head-entropy}: the numerator is bounded between $0$ and the denominator.
+\end{proof}
+
+\begin{theorem}[Aggregated entropy dominates mean per-head entropy]
+\label{thm:aggregated-vs-head-entropy}
+Let
+\[
+\bar{\pi}_{t,m}
+=
+\frac{1}{H_r}\sum_{u=1}^{H_r} \pi^{(u)}_{t,m}
+\]
+be the head-aggregated routing distribution at token $t$, and let
+\[
+\bar{\mathbb{Q}}_{t}
+\]
+be the corresponding probability measure on $\{1,\dots,M\}$. Then for every token $t$,
+\begin{equation}
+\label{eq:agg-entropy-jensen}
+H(\bar{\mathbb{Q}}_{t})
+\ge
+\frac{1}{H_r}\sum_{u=1}^{H_r}
+H\!\left(\mathbb{Q}^{(u)}_{t}\right).
+\end{equation}
+Consequently, averaging over tokens,
+\begin{equation}
+\label{eq:agg-entropy-jensen-mean}
+    H_{\mathrm{agg}}
+    \ge
+    H_{\mathrm{head}},
+    \end{equation}
+    where
+    \[
+    H_{\mathrm{agg}}
+    =
+    \frac{1}{L}\sum_{t=1}^{L} H(\bar{\mathbb{Q}}_{t}),
+    \qquad
+    H_{\mathrm{head}}
+    =
+    \frac{1}{H_r L}\sum_{u=1}^{H_r}\sum_{t=1}^{L} H\!\left(\mathbb{Q}^{(u)}_{t}\right).
+    \]
+Equality holds in \eqref{eq:agg-entropy-jensen} if and only if
+\[
+\mathbb{Q}^{(1)}_{t}
+=
+\mathbb{Q}^{(2)}_{t}
+=
+\cdots
+=
+\mathbb{Q}^{(H_r)}_{t}.
+\]
+\end{theorem}
+
+\begin{proof}
+The Shannon entropy functional on a finite simplex is concave. Therefore, by Jensen's inequality,
+\[
+H\!\left(\frac{1}{H_r}\sum_{u=1}^{H_r}\mathbb{Q}^{(u)}_{t}\right)
+\ge
+\frac{1}{H_r}\sum_{u=1}^{H_r} H\!\left(\mathbb{Q}^{(u)}_{t}\right).
+\]
+But by definition,
+\[
+\frac{1}{H_r}\sum_{u=1}^{H_r}\mathbb{Q}^{(u)}_{t}
+=
+\bar{\mathbb{Q}}_{t}.
+\]
+This proves \eqref{eq:agg-entropy-jensen}. Averaging over $t$ yields \eqref{eq:agg-entropy-jensen-mean}. Since Shannon entropy is strictly concave, equality occurs if and only if all measures being averaged are identical.
+\end{proof}
+
+\begin{remark}[Interpretation of the entropy gap]
+\label{rem:entropy-gap-interpretation}
+The quantity
+\[
+H_{\mathrm{agg}}-H_{\mathrm{head}}
+\]
+measures a precise notion of \emph{head diversity}. If all heads route identically, then the gap is zero. If individual heads are sharp but focus on different candidate sets, then the aggregated law becomes more diffuse and the gap grows.
+\end{remark}
+
+\begin{proposition}[Support and entropy cap under top-$k$ routing]
+\label{prop:topk-support-entropy}
+Suppose top-$k$ masking is applied before softmax, with $k\in \mathbb{N}$. Then for every token $t$ and head $u$,
+\begin{equation}
+\label{eq:per-head-support-topk}
+\left| \operatorname{supp}\!\left(\mathbb{Q}^{(u)}_{t}\right)\right|
+\le
+\min\{k, C_{t}\},
+\end{equation}
+where $C_{t}=|\mathcal{C}_{t}|$. Hence
+\begin{equation}
+\label{eq:per-head-entropy-topk}
+H\!\left(\mathbb{Q}^{(u)}_{t}\right)
+\le
+\log \min\{k,C_{t}\}.
+\end{equation}
+Moreover, the head-aggregated support satisfies
+\begin{equation}
+\label{eq:agg-support-topk}
+\left| \operatorname{supp}(\bar{\mathbb{Q}}_{t})\right|
+\le
+\min\{C_{t}, H_r k\},
+\end{equation}
+and therefore
+\begin{equation}
+\label{eq:agg-entropy-topk}
+H(\bar{\mathbb{Q}}_{t})
+\le
+\log \min\{C_{t}, H_r k\}.
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+By construction, top-$k$ filtering retains at most $k$ candidate sets inside $\mathcal{C}_{t}$ for each head. Therefore the support of each per-head law has cardinality at most $\min\{k,C_{t}\}$, which proves \eqref{eq:per-head-support-topk}. The entropy bound \eqref{eq:per-head-entropy-topk} follows from Theorem~\ref{thm:per-head-entropy}.
+
+For the aggregated law, the support is contained in the union of the per-head supports:
+\[
+\operatorname{supp}(\bar{\mathbb{Q}}_{t})
+\subseteq
+\bigcup_{u=1}^{H_r}
+\operatorname{supp}\!\left(\mathbb{Q}^{(u)}_{t}\right).
+\]
+The union contains at most $H_r k$ elements and is also contained in $\mathcal{C}_{t}$, proving \eqref{eq:agg-support-topk}. Applying the finite-support entropy bound again yields \eqref{eq:agg-entropy-topk}.
+\end{proof}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Degenerate Topology and Deterministic Routing}
+\label{sec:tier-a-degenerate-topology}
+
+We now show that the hypergraph topology can force routing degeneracy independently of learning.
+
+\begin{theorem}[Degenerate topology implies deterministic routing]
+\label{thm:degenerate-topology}
+Assume that for every token position $t \in \{1,\dots,L\}$,
+\begin{equation}
+\label{eq:degenerate-candidate-condition}
+C_{t}=|\mathcal{C}_{t}|=1.
+\end{equation}
+Then the following hold.
+
+\begin{enumerate}
+    \item For every routing head $u$ and every token $t$, the routing law is deterministic:
+    \[
+    \mathbb{Q}^{(u)}_{t} = \delta_{m^\star(t)}
+    \]
+    where $m^\star(t)$ is the unique element of $\mathcal{C}_{t}$.
+
+    \item For every routing head $u$ and every token $t$,
+    \begin{equation}
+    \label{eq:degenerate-entropy-zero}
+    H\!\left(\mathbb{Q}^{(u)}_{t}\right)=0.
+    \end{equation}
+
+    \item The routed token representation is independent of the routing temperature $\tau_r$, the top-$k$ parameter, and the learned routing logits.
+
+    \item The routing tensor at each token has rank one.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+Fix a token $t$. Since $|\mathcal{C}_{t}|=1$, there exists a unique index $m^\star(t)$ such that
+\[
+\mathcal{C}_{t}=\{m^\star(t)\}.
+\]
+After candidate masking, all logits except the one corresponding to $m^\star(t)$ are equal to $-\infty$. Therefore for every routing head $u$,
+\[
+\pi^{(u)}_{t,m^\star(t)}
+=
+\frac{\exp(g^{(u)}_{t,m^\star(t)}/\tau_r)}
+{\exp(g^{(u)}_{t,m^\star(t)}/\tau_r)}
+=
+1,
+\]
+and all other routing probabilities are zero. This proves determinism.
+
+The entropy of a Dirac mass is zero, proving \eqref{eq:degenerate-entropy-zero}. Since the softmax is applied to a singleton support, neither $\tau_r$ nor the numerical values of the logits can change the distribution; the routed token is exactly the unique candidate set state in each head subspace, hence the full routed token is likewise fixed by topology.
+
+Finally, because every head uses the same singleton distribution, the routing tensor has identical rows and therefore rank one.
+\end{proof}
+
+\begin{corollary}[Non-overlapping windows induce routing collapse]
+\label{cor:stride-equals-window}
+If $s=w$, then for every interior token $t$,
+\[
+C_{t}=1.
+\]
+Hence all conclusions of Theorem~\ref{thm:degenerate-topology} hold for interior tokens.
+\end{corollary}
+
+\begin{proof}
+In strict-past mode, candidates are set endpoints in $(t-w,t]$. If $s=w$, then active endpoints are spaced exactly $w$ positions apart, so any post-warmup interval of length $w$ contains exactly one endpoint. Thus $C_t=1$ for interior tokens, and Theorem~\ref{thm:degenerate-topology} applies. Early strict-past tokens before the first endpoint have $C_t=0$ and use only the direct residual path.
+\end{proof}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Multi-Head Routing Capacity}
+\label{sec:tier-a-multihead-capacity}
+
+This subsection isolates the routing submodule and proves precise capacity gains induced by multi-head routing.
+
+\begin{definition}[Routing tensor]
+\label{def:routing-tensor}
+For a token $t$, define the routing matrix
+\[
+\boldsymbol{\Pi}_{t} \in \mathbb{R}^{H_r \times M},
+\qquad
+(\boldsymbol{\Pi}_{t})_{u,m} = \pi^{(u)}_{t,m}.
+\]
+Each row is a probability vector:
+\[
+\sum_{m=1}^{M} (\boldsymbol{\Pi}_{t})_{u,m}=1,
+\qquad
+(\boldsymbol{\Pi}_{t})_{u,m}\ge 0.
+\]
+\end{definition}
+
+\begin{definition}[Single-head and multi-head routing classes]
+\label{def:routing-classes}
+Let $\mathcal{R}_1$ denote the class of routing maps realizable when a single routing distribution is shared across all $D$ output coordinates. Let $\mathcal{R}_{H_r}$ denote the class realizable by $H_r$-head routing with headwise concatenation, as defined in Section~\ref{sec:routing-operator}.
+\end{definition}
+
+\begin{proposition}[Single-head routing is the common-mixture constraint]
+\label{prop:single-head-common-mixture}
+A routing pattern belongs to $\mathcal{R}_1$ if and only if, for every token $t$, the routing tensor has identical rows:
+\begin{equation}
+\label{eq:single-head-common-mixture}
+\boldsymbol{\Pi}_{t}
+=
+\mathbf{1}_{H_r}\,\boldsymbol{\pi}_{t}^{\top}
+\end{equation}
+for some probability vector $\boldsymbol{\pi}_{t}\in \Delta(\mathcal C_t)$.
+\end{proposition}
+
+\begin{proof}
+If routing is single-head, then a single coefficient vector $\boldsymbol{\pi}_{t}$ is shared across all coordinate blocks. Hence every head uses the same routing law, giving \eqref{eq:single-head-common-mixture}. Conversely, if all rows are identical, then the multi-head routing output is just a headwise splitting of the same mixture coefficients, which is exactly the single-head regime.
+\end{proof}
+
+\begin{theorem}[Strict inclusion of routing classes]
+\label{thm:strict-routing-inclusion}
+Assume there exists at least one token $t$ with $C_{t}\ge 2$, and assume the candidate set states are nondegenerate in the sense that at least two candidate sets induce distinct head-subspace vectors in at least two router heads. Then
+\begin{equation}
+\label{eq:strict-routing-inclusion}
+\mathcal{R}_1 \subsetneq \mathcal{R}_{H_r}
+\qquad \text{for every } H_r\ge 2.
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+\textbf{Step 1: Inclusion.}
+Take any routing map in $\mathcal{R}_1$. By Proposition~\ref{prop:single-head-common-mixture}, it uses a common probability vector $\boldsymbol{\pi}_{t}$ at each token. This can be realized in $\mathcal{R}_{H_r}$ by assigning the same probability vector to every head. Hence $\mathcal{R}_1 \subseteq \mathcal{R}_{H_r}$.
+
+\textbf{Step 2: Strictness.}
+Fix a token $t$ with at least two candidates $a,b\in \mathcal{C}_{t}$, $a\neq b$. Consider a two-head routing pattern in which head $1$ assigns all mass to $a$ and head $2$ assigns all mass to $b$:
+\[
+\mathbb Q^{(1)}_{t} = \delta_a,
+\qquad
+\mathbb Q^{(2)}_{t} = \delta_b.
+\]
+Under the nondegeneracy assumption on the head-split set states, the resulting routed vector cannot be reproduced by any single common mixture vector, because single-head routing enforces the same set mixture in every head subspace. Therefore this routing pattern belongs to $\mathcal{R}_{H_r}$ but not to $\mathcal{R}_1$.
+
+Hence the inclusion is strict.
+\end{proof}
+
+\begin{theorem}[Linear growth of routing-distribution dimension]
+\label{thm:routing-dimension-growth}
+Fix a token $t$ with candidate count $C_{t}\ge 2$. Then the intrinsic dimension of the admissible routing-distribution space is
+\begin{equation}
+\label{eq:single-head-dim}
+\dim\bigl(\Delta(\mathcal{C}_{t})\bigr) = C_{t}-1
+\end{equation}
+in the single-head case, and
+\begin{equation}
+\label{eq:multi-head-dim}
+\dim\bigl(\Delta(\mathcal{C}_{t})^{H_r}\bigr)=H_r(C_{t}-1)
+\end{equation}
+in the $H_r$-head case. Therefore the dimension ratio is exactly
+\begin{equation}
+\label{eq:dim-ratio-routing}
+\frac{H_r(C_{t}-1)}{C_{t}-1}=H_r.
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+The simplex on $C_{t}$ atoms is
+\[
+\Delta(\mathcal{C}_{t})
+=
+\left\{
+p\in \mathbb{R}^{C_{t}}:
+p_i\ge 0,\ \sum_{i=1}^{C_{t}}p_i=1
+\right\},
+\]
+which is an affine manifold of dimension $C_{t}-1$. In the multi-head case, one chooses $H_r$ such simplices independently, so the admissible set is the Cartesian product
+\[
+\Delta(\mathcal{C}_{t})^{H_r}
+=
+\underbrace{\Delta(\mathcal{C}_{t})\times \cdots \times \Delta(\mathcal{C}_{t})}_{H_r\text{ times}}.
+\]
+The dimension of a Cartesian product of manifolds is the sum of the dimensions of the factors, yielding
+\[
+\dim\bigl(\Delta(\mathcal{C}_{t})^{H_r}\bigr)
+=
+H_r(C_{t}-1).
+\]
+The ratio is immediate.
+\end{proof}
+
+\begin{theorem}[Routing tensor rank bound and rank gain]
+\label{thm:routing-rank-gain}
+For every token $t$ with $C_t>0$, the routing tensor satisfies
+\begin{equation}
+\label{eq:rank-bound-routing}
+1 \le \operatorname{rank}(\boldsymbol{\Pi}_{t})
+\le
+\min\{H_r,C_{t}\}.
+\end{equation}
+Under the single-head common-mixture constraint, $\operatorname{rank}(\boldsymbol{\Pi}_{t})=1$. Hence multi-head routing increases the maximal attainable routing-tensor rank from $1$ to $\min\{H_r,C_{t}\}$.
+For strict-past tokens with $C_t=0$, no routing law is formed; the routed context is zero and the final representation is the direct residual.
+\end{theorem}
+
+\begin{proof}
+Each row of $\boldsymbol{\Pi}_{t}$ is a nonzero probability vector, so the rank is at least $1$. Since all columns outside $\mathcal{C}_{t}$ are zero, the effective matrix has at most $C_{t}$ nonzero columns. Therefore
+\[
+\operatorname{rank}(\boldsymbol{\Pi}_{t})
+\le \min\{H_r,C_{t}\}.
+\]
+If routing is single-head, then by Proposition~\ref{prop:single-head-common-mixture},
+\[
+\boldsymbol{\Pi}_{t}
+=
+\mathbf{1}_{H_r}\,\boldsymbol{\pi}_{t}^{\top},
+\]
+which is an outer product and therefore rank one. This proves the rank gain statement.
+\end{proof}
+
+\begin{corollary}[Topology-limited routing capacity]
+\label{cor:topology-limited-routing-capacity}
+For interior tokens, Proposition~\ref{prop:interior-candidate-count} gives candidate counts on the order of $w/s$. For each token with $C_t>0$,
+\begin{equation}
+\label{eq:topology-limited-rank}
+\operatorname{rank}(\boldsymbol{\Pi}_{t})
+\le
+\min\left\{H_r,C_t\right\}.
+\end{equation}
+In particular:
+\begin{enumerate}
+    \item if $s=w$, then the maximal routing rank is $1$ regardless of $H_r$;
+    \item if $H_r > C_t$, then additional router heads cannot increase the routing rank at token $t$.
+\end{enumerate}
+\end{corollary}
+
+\begin{proof}
+Apply Theorem~\ref{thm:routing-rank-gain} at each token with its actual candidate count $C_t$.
+\end{proof}
+
+\begin{remark}[What is quantified by the multi-head routing capacity theorems?]
+\label{rem:multihead-capacity-meaning}
+Theorems~\ref{thm:strict-routing-inclusion}--\ref{thm:routing-rank-gain} make a precise and limited claim: \emph{multi-head routing in Set Attention strictly enlarges the routing submodule function class, increases the intrinsic dimension of admissible routing laws by a factor of $H_r$, and raises the maximal routing-assignment rank from $1$ to $\min\{H_r,C_{t}\}$.} This is a submodule-capacity statement. It is not, by itself, a generalization or perplexity theorem for the full language model.
+\end{remark}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Pooling as a Maximum-Entropy Gibbs Measure}
+\label{sec:tier-a-pooling-maxent}
+
+We now state the exact maximum-entropy characterization of the Boltzmann component of pooling.
+
+\begin{theorem}[Boltzmann pooling as maximum-entropy Gibbs measure]
+\label{thm:boltzmann-maxent}
+Fix a set $S_m$ and define the energy function
+\[
+E_m(t) := \delta_{t,m}, \qquad t\in S_m,
+\]
+where $\delta_{t,m}$ is the normalized squared deviation from the set mean. Consider the optimization problem over probability measures $\mathbb{P}$ on the finite set $S_m$:
+\begin{equation}
+\label{eq:maxent-gibbs-problem}
+\max_{\mathbb{P}\in \mathcal{P}(S_m)}
+H(\mathbb{P})
+\qquad
+\text{subject to}
+\qquad
+\mathbb{E}_{\mathbb{P}}[E_m] = c,
+\end{equation}
+for a fixed constant $c$. Then the unique optimizer is the Gibbs measure
+\begin{equation}
+\label{eq:gibbs-solution}
+\mathbb{P}^{\star}(\{t\})
+=
+\frac{\exp(-\beta E_m(t))}
+{\sum_{u\in S_m}\exp(-\beta E_m(u))}
+=
+\frac{\exp(-\beta \delta_{t,m})}
+{Z_m(\beta)},
+\end{equation}
+for a unique inverse temperature $\beta$ chosen so that the moment constraint holds.
+\end{theorem}
+
+\begin{proof}
+Let $p_t:=\mathbb{P}(\{t\})$. Then the problem is
+\[
+\max_{(p_t)_{t\in S_m}}
+-\sum_{t\in S_m} p_t \log p_t
+\]
+subject to
+\[
+\sum_{t\in S_m} p_t = 1,
+\qquad
+\sum_{t\in S_m} p_t \delta_{t,m}=c.
+\]
+Introduce Lagrange multipliers $\lambda$ and $\beta$ and define
+\[
+\mathcal{J}(p,\lambda,\beta)
+=
+-\sum_{t\in S_m} p_t\log p_t
++
+\lambda\left(\sum_{t\in S_m}p_t-1\right)
+-
+\beta\left(\sum_{t\in S_m} p_t\delta_{t,m}-c\right).
+\]
+Differentiate with respect to $p_t$:
+\[
+\frac{\partial \mathcal{J}}{\partial p_t}
+=
+-(\log p_t +1)+\lambda-\beta \delta_{t,m}.
+\]
+Setting this equal to zero yields
+\[
+\log p_t = \lambda -1 - \beta\delta_{t,m}.
+\]
+Exponentiating,
+\[
+p_t = e^{\lambda-1} e^{-\beta\delta_{t,m}}.
+\]
+Normalization gives
+\[
+e^{\lambda-1}
+=
+\frac{1}{\sum_{u\in S_m} e^{-\beta\delta_{u,m}}},
+\]
+which proves \eqref{eq:gibbs-solution}. Since the Shannon entropy is strictly concave and the constraint set is convex, the optimizer is unique.
+\end{proof}
+
+\begin{remark}[Relation to the implemented soft-trimmed Boltzmann pooling]
+\label{rem:soft-trimmed-boltzmann}
+Theorem~\ref{thm:boltzmann-maxent} characterizes the pure Gibbs/Boltzmann factor. The implemented pooling rule multiplies this factor by the soft trimming gate
+\[
+r^{\mathrm{trim}}_{t,m}=\sigma\!\left(\alpha(\theta_m-\delta_{t,m})\right),
+\]
+so that
+\[
+\omega_{t,m}
+\propto
+\exp(-\delta_{t,m}/\tau_{\mathrm{pool}})\,r^{\mathrm{trim}}_{t,m}.
+\]
+Thus the implemented rule is a \emph{soft-trimmed Gibbs measure}: a differentiable robustification of the exact maximum-entropy solution.
+\end{remark}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Gradient Decomposition Through Pooling and Composition}
+\label{sec:tier-a-gradients}
+
+We now analyze how gradients flow through pooling and through the composition of pooling and set processing.
+
+\begin{theorem}[Gradient decomposition through pooling]
+\label{thm:gradient-decomposition-pooling}
+Fix a set $S_m$ and write
+\[
+s_m^{(0)}
+=
+\sum_{t\in S_m}\omega_{t,m}\mathbf{X}_{t,:}.
+\]
+Then for every $j\in S_m$,
+\begin{equation}
+\label{eq:gradient-pooling-decomposition}
+\frac{\partial \mathcal{L}}{\partial \mathbf{X}_{j,:}}
+=
+\omega_{j,m}\frac{\partial \mathcal{L}}{\partial s_m^{(0)}}
++
+\sum_{t\in S_m}
+\left(
+\frac{\partial \omega_{t,m}}{\partial \mathbf{X}_{j,:}}
+\right)^{\!\top}
+\!\!\mathbf{X}_{t,:}\,
+\frac{\partial \mathcal{L}}{\partial s_m^{(0)}}.
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+By the chain rule,
+\[
+\frac{\partial \mathcal{L}}{\partial \mathbf{X}_{j,:}}
+=
+\left(
+\frac{\partial s_m^{(0)}}{\partial \mathbf{X}_{j,:}}
+\right)^{\!\top}
+\frac{\partial \mathcal{L}}{\partial s_m^{(0)}}.
+\]
+Now
+\[
+s_m^{(0)} = \sum_{t\in S_m} \omega_{t,m}\mathbf{X}_{t,:}.
+\]
+Differentiate with respect to $\mathbf{X}_{j,:}$. By the product rule,
+\[
+\frac{\partial s_m^{(0)}}{\partial \mathbf{X}_{j,:}}
+=
+\sum_{t\in S_m}
+\left(
+\frac{\partial \omega_{t,m}}{\partial \mathbf{X}_{j,:}}\mathbf{X}_{t,:}
++
+\omega_{t,m}\frac{\partial \mathbf{X}_{t,:}}{\partial \mathbf{X}_{j,:}}
+\right).
+\]
+Since
+\[
+\frac{\partial \mathbf{X}_{t,:}}{\partial \mathbf{X}_{j,:}}
+=
+\begin{cases}
+\mathbf{I}_D, & t=j,\\
+0, & t\neq j,
+\end{cases}
+\]
+we obtain
+\[
+\frac{\partial s_m^{(0)}}{\partial \mathbf{X}_{j,:}}
+=
+\omega_{j,m}\mathbf{I}_D
++
+\sum_{t\in S_m}
+\frac{\partial \omega_{t,m}}{\partial \mathbf{X}_{j,:}}\mathbf{X}_{t,:}.
+\]
+Substituting into the chain rule yields \eqref{eq:gradient-pooling-decomposition}.
+\end{proof}
+
+\begin{corollary}[Direct and coupling gradient components]
+\label{cor:direct-coupling-gradients}
+The gradient in \eqref{eq:gradient-pooling-decomposition} decomposes into:
+\begin{align}
+\label{eq:direct-gradient-term}
+\mathbf{g}^{\mathrm{direct}}_{j,m}
+&=
+\omega_{j,m}\frac{\partial \mathcal{L}}{\partial s_m^{(0)}},
+\\
+\label{eq:coupling-gradient-term}
+\mathbf{g}^{\mathrm{couple}}_{j,m}
+&=
+\sum_{t\in S_m}
+\left(
+\frac{\partial \omega_{t,m}}{\partial \mathbf{X}_{j,:}}
+\right)^{\!\top}
+\!\!\mathbf{X}_{t,:}\,
+\frac{\partial \mathcal{L}}{\partial s_m^{(0)}}.
+\end{align}
+The first term transports downstream gradient mass directly through the weighted average, whereas the second term is a coupling correction created by the dependence of all pooling weights on all token vectors through the mean and deviations.
+\end{corollary}
+
+\begin{proof}
+This is an immediate decomposition of \eqref{eq:gradient-pooling-decomposition}.
+\end{proof}
+
+\begin{theorem}[Exact multiplicativity of raw gradient ratios]
+\label{thm:raw-gradient-ratio-multiplicative}
+Let
+\[
+\mathbf{h}
+\]
+be the pre-pooling token states,
+\[
+\mathbf{z}_0
+\]
+the post-pooling set states, and
+\[
+\mathbf{z}_K
+\]
+the post-set-stack states. Assume that
+\[
+\|\nabla_{\mathbf{h}}\mathcal{L}\|_2>0,
+\qquad
+\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2>0.
+\]
+Define the raw gradient ratios
+\begin{align}
+\tilde\rho_p
+&=
+\frac{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2}
+{\|\nabla_{\mathbf{h}}\mathcal{L}\|_2},
+\\
+\tilde\rho_a
+&=
+\frac{\|\nabla_{\mathbf{z}_K}\mathcal{L}\|_2}
+{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2},
+\\
+\tilde\rho_{pa}
+&=
+\frac{\|\nabla_{\mathbf{z}_K}\mathcal{L}\|_2}
+{\|\nabla_{\mathbf{h}}\mathcal{L}\|_2}.
+\end{align}
+Then
+\begin{equation}
+\label{eq:raw-gradient-multiplicativity}
+\tilde\rho_{pa}
+=
+\tilde\rho_p\,\tilde\rho_a.
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+This is an exact algebraic identity:
+\[
+\tilde\rho_p\,\tilde\rho_a
+=
+\frac{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2}
+{\|\nabla_{\mathbf{h}}\mathcal{L}\|_2}
+\cdot
+\frac{\|\nabla_{\mathbf{z}_K}\mathcal{L}\|_2}
+{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2}
+=
+\frac{\|\nabla_{\mathbf{z}_K}\mathcal{L}\|_2}
+{\|\nabla_{\mathbf{h}}\mathcal{L}\|_2}
+=
+\tilde\rho_{pa}.
+\]
+\end{proof}
+
+\begin{proposition}[Logged gradient ratios with numerical stabilizer]
+\label{prop:logged-gradient-ratios}
+Suppose the implementation logs the stabilized ratios
+\begin{align}
+\rho_p
+&=
+\frac{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2}
+{\|\nabla_{\mathbf{h}}\mathcal{L}\|_2+\varepsilon},
+\\
+\rho_a
+&=
+\frac{\|\nabla_{\mathbf{z}_K}\mathcal{L}\|_2}
+{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2+\varepsilon},
+\\
+\rho_{pa}
+&=
+\frac{\|\nabla_{\mathbf{z}_K}\mathcal{L}\|_2}
+{\|\nabla_{\mathbf{h}}\mathcal{L}\|_2+\varepsilon},
+\end{align}
+with $\varepsilon>0$. Then, in general,
+\begin{equation}
+\label{eq:logged-not-exact}
+\rho_{pa}\neq \rho_p\rho_a,
+\end{equation}
+but
+\begin{equation}
+\label{eq:logged-approx}
+\rho_p\rho_a
+=
+\rho_{pa}\cdot
+\frac{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2}
+{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2+\varepsilon}.
+\end{equation}
+Hence $\rho_p\rho_a \approx \rho_{pa}$ whenever
+\[
+\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2 \gg \varepsilon.
+\]
+\end{proposition}
+
+\begin{proof}
+Multiply the stabilized definitions:
+\[
+\rho_p\rho_a
+=
+\frac{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2}{\|\nabla_{\mathbf{h}}\mathcal{L}\|_2+\varepsilon}
+\cdot
+\frac{\|\nabla_{\mathbf{z}_K}\mathcal{L}\|_2}{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2+\varepsilon}.
+\]
+Factor out $\rho_{pa}$:
+\[
+\rho_p\rho_a
+=
+\frac{\|\nabla_{\mathbf{z}_K}\mathcal{L}\|_2}{\|\nabla_{\mathbf{h}}\mathcal{L}\|_2+\varepsilon}
+\cdot
+\frac{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2}{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2+\varepsilon}
+=
+\rho_{pa}\cdot
+\frac{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2}{\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2+\varepsilon}.
+\]
+This proves \eqref{eq:logged-approx}. Equality holds only if $\varepsilon=0$ or $\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2=\infty$.
+\end{proof}
+
+\begin{corollary}[Bottleneck localization via gradient ratios]
+\label{cor:bottleneck-localization}
+If the raw ratio $\tilde\rho_{pa}$ is small, then the exact identity \eqref{eq:raw-gradient-multiplicativity} localizes the bottleneck:
+\begin{itemize}
+    \item $\tilde\rho_p \ll 1$ indicates a pooling bottleneck;
+    \item $\tilde\rho_a \ll 1$ indicates a set-stack bottleneck;
+    \item both moderately below $1$ indicate compounding contraction.
+\end{itemize}
+If $\tilde\rho_{pa} > 1$, then at least one of $\tilde\rho_p$ or $\tilde\rho_a$ exceeds $1$, indicating local gradient amplification.
+\end{corollary}
+
+\begin{proof}
+Immediate from \eqref{eq:raw-gradient-multiplicativity}.
+\end{proof}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Necessary Topological Feasibility Condition}
+\label{sec:tier-a-feasibility}
+
+\begin{theorem}[Structural condition for nondegenerate soft routing]
+\label{thm:necessary-feasible-topology}
+If every token has at most one candidate,
+\begin{equation}
+\label{eq:necessary-cbar}
+C_t\le 1\qquad\text{for all }t,
+\end{equation}
+then no token admits a nondegenerate soft routing distribution. Tokens with
+$C_t=1$ route deterministically, and strict-past tokens with $C_t=0$ use the
+zero routed context and direct residual. Therefore sustained nondegenerate
+soft routing requires at least some tokens with $C_t\ge 2$; for long interior
+regions this corresponds to mean candidate count above the singleton regime.
+\end{theorem}
+
+\begin{proof}
+If $C_t=1$, Theorem~\ref{thm:degenerate-topology} applies at that token and the
+softmax is over a singleton support. If $C_t=0$, the implemented strict-past
+path does not form a routing distribution and uses $r_t=0$. Thus no token with
+$C_t\le1$ has a nondegenerate routing law over two or more candidates. A token
+with $C_t\ge2$ is therefore necessary for nondegenerate soft routing.
+\end{proof}
+
+\begin{corollary}[Stride constraint]
+\label{cor:stride-less-than-window}
+For long sequences, a necessary structural condition for nondegenerate routing is
+\begin{equation}
+\label{eq:stride-less-than-window}
+s<w.
+\end{equation}
+\end{corollary}
+
+\begin{proof}
+For interior tokens, Proposition~\ref{prop:interior-candidate-count} gives
+\[
+C_{t}\approx \frac{w}{s}.
+\]
+Theorem~\ref{thm:necessary-feasible-topology} requires interior tokens to leave the singleton regime, hence approximately $w/s>1$, which implies $s<w$.
+\end{proof}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Tier B: Mechanistic Propositions Under Explicit Assumptions}
+\label{sec:tier-b}
+
+The next results are not pure structural identities. They connect perturbations of the architecture to perturbations of the loss under explicit local regularity assumptions.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Regularity Assumptions}
+\label{sec:tier-b-assumptions}
+
+\begin{assumption}[Locally Lipschitz readout]
+\label{ass:lipschitz-readout}
+Let $\mathcal J:\mathbb R^{L\times D}\to\mathbb R$ denote the scalar loss as a
+function of the final direct-residual token-state matrix for a fixed sample. There exists a
+constant $L_{\mathrm{out}}>0$ such that, in the neighborhood of interest,
+\begin{equation}
+\label{eq:lipschitz-readout-assumption}
+|\mathcal J(\mathbf{Z})-\mathcal J(\mathbf{Z}')|
+\le
+L_{\mathrm{out}}\|\mathbf{Z}-\mathbf{Z}'\|_F.
+\end{equation}
+\end{assumption}
+
+\begin{assumption}[Stable set-processing stack]
+\label{ass:stable-set-stack}
+The set-processing operator $\Phi_{\mathrm{set}}$ is locally Lipschitz with constant $L_{\mathrm{set}}>0$:
+\begin{equation}
+\label{eq:lipschitz-set-stack-assumption}
+\|\Phi_{\mathrm{set}}(\mathbf{S})-\Phi_{\mathrm{set}}(\mathbf{S}')\|_F
+\le
+L_{\mathrm{set}}\|\mathbf{S}-\mathbf{S}'\|_F.
+\end{equation}
+\end{assumption}
+
+\begin{assumption}[Stable routing operator]
+\label{ass:stable-routing}
+For fixed topology $\mathcal{H}_{L,w,s}$, fixed head count $H_r$, and fixed top-$k$ policy, the routing operator is locally Lipschitz with constant $L_{\mathrm{route}}>0$:
+\begin{equation}
+\label{eq:lipschitz-routing-assumption}
+\|\mathcal{R}_{\tau_r,\mathcal{H},H_r,k}(\tilde{\mathbf{S}})
+-
+\mathcal{R}_{\tau_r,\mathcal{H},H_r,k}(\tilde{\mathbf{S}}')\|_F
+\le
+L_{\mathrm{route}}
+\|\tilde{\mathbf{S}}-\tilde{\mathbf{S}}'\|_F.
+\end{equation}
+\end{assumption}
+
+\begin{remark}[Role of the assumptions]
+\label{rem:regularity-assumptions}
+Assumptions~\ref{ass:lipschitz-readout}--\ref{ass:stable-routing} are local stability assumptions on the realized network, not universal properties of all parameter settings. They are the standard hypotheses needed to translate perturbations in latent states into perturbations of loss.
+\end{remark}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Mechanistic Perturbation Decomposition}
+\label{sec:tier-b-mechanistic}
+
+\begin{definition}[Proxy perturbation magnitudes]
+\label{def:proxy-perturbations}
+Let $\mathcal{P}_{\mathrm{ref}}$, $\Phi_{\mathrm{ref}}$, and $\mathcal{R}_{\mathrm{ref}}$ be reference operators of the same input-output types as the model operators. Define
+\begin{align}
+\label{eq:eps-pool}
+\varepsilon_{\mathrm{pool}}
+&=
+\|\mathcal{P}(\mathbf{X})-\mathcal{P}_{\mathrm{ref}}(\mathbf{X})\|_F,
+\\
+\label{eq:eps-set}
+\varepsilon_{\mathrm{set}}
+&=
+\|\Phi_{\mathrm{set}}(\mathbf{S})-\Phi_{\mathrm{ref}}(\mathbf{S})\|_F,
+\\
+\label{eq:eps-route}
+\varepsilon_{\mathrm{route}}
+&=
+\|\mathcal{R}(\tilde{\mathbf{S}})-\mathcal{R}_{\mathrm{ref}}(\tilde{\mathbf{S}})\|_F.
+\end{align}
+The final token state is $\mathbf Z=\mathbf X+\mathcal R(\tilde{\mathbf S})$.
+Because the compared operators use the same input token-state matrix
+$\mathbf X$, direct residual addition does not change these perturbation
+norms.
+\end{definition}
+
+\begin{theorem}[Mechanistic decomposition bound]
+\label{thm:mechanistic-decomposition}
+Under Assumptions~\ref{ass:lipschitz-readout}--\ref{ass:stable-routing}, the loss perturbation induced by replacing the reference operators by the set-attention operators satisfies
+\begin{equation}
+\label{eq:mechanistic-decomposition-bound}
+|\Delta \mathcal{J}|
+\le
+L_{\mathrm{out}}
+\left(
+L_{\mathrm{route}}L_{\mathrm{set}}\varepsilon_{\mathrm{pool}}
++
+L_{\mathrm{route}}\varepsilon_{\mathrm{set}}
++
+\varepsilon_{\mathrm{route}}
+\right),
+\end{equation}
+where
+\[
+\Delta \mathcal{J}
+=
+\mathcal J\bigl(\mathbf X+\mathcal{R}\circ \Phi_{\mathrm{set}}\circ \mathcal{P}(\mathbf{X})\bigr)
+-
+\mathcal J\bigl(\mathbf X+\mathcal{R}_{\mathrm{ref}}\circ \Phi_{\mathrm{ref}}\circ \mathcal{P}_{\mathrm{ref}}(\mathbf{X})\bigr).
+\]
+\end{theorem}
+
+\begin{proof}
+We proceed by inserting intermediate states and applying the triangle inequality.
+
+\paragraph{Step 1: Define the states.}
+Let
+\[
+\mathbf{S} = \mathcal{P}(\mathbf{X}), \qquad
+\mathbf{S}_{\mathrm{ref}} = \mathcal{P}_{\mathrm{ref}}(\mathbf{X}),
+\]
+\[
+\tilde{\mathbf{S}} = \Phi_{\mathrm{set}}(\mathbf{S}), \qquad
+\tilde{\mathbf{S}}_{\mathrm{ref}} = \Phi_{\mathrm{ref}}(\mathbf{S}_{\mathrm{ref}}),
+\]
+\[
+\mathbf{R} = \mathcal{R}(\tilde{\mathbf{S}}), \qquad
+\mathbf{R}_{\mathrm{ref}} = \mathcal{R}_{\mathrm{ref}}(\tilde{\mathbf{S}}_{\mathrm{ref}}),
+\]
+and the final states are $\mathbf Z=\mathbf X+\mathbf R$ and
+$\mathbf Z_{\mathrm{ref}}=\mathbf X+\mathbf R_{\mathrm{ref}}$.
+
+\paragraph{Step 2: Use Lipschitz continuity of the readout.}
+By Assumption~\ref{ass:lipschitz-readout},
+\[
+|\Delta \mathcal{J}|
+\le
+L_{\mathrm{out}}\|\mathbf{Z}-\mathbf{Z}_{\mathrm{ref}}\|_F.
+\]
+
+\paragraph{Step 3: Insert a routing intermediate state.}
+Define
+\[
+\mathbf{R}_{\mathrm{int}}
+=
+\mathcal{R}_{\mathrm{ref}}(\tilde{\mathbf{S}}).
+\]
+Let $\mathbf Z_{\mathrm{int}}=\mathbf X+\mathbf R_{\mathrm{int}}$.
+Then
+\[
+\|\mathbf{Z}-\mathbf{Z}_{\mathrm{ref}}\|_F
+\le
+\|\mathbf{Z}-\mathbf{Z}_{\mathrm{int}}\|_F
++
+\|\mathbf{Z}_{\mathrm{int}}-\mathbf{Z}_{\mathrm{ref}}\|_F.
+\]
+The first term is exactly $\varepsilon_{\mathrm{route}}$, because the shared
+direct residual $\mathbf X$ cancels.
+
+\paragraph{Step 4: Control the second routing term.}
+By Assumption~\ref{ass:stable-routing},
+\[
+\|\mathbf{Z}_{\mathrm{int}}-\mathbf{Z}_{\mathrm{ref}}\|_F
+=
+\|\mathbf X+\mathcal{R}_{\mathrm{ref}}(\tilde{\mathbf{S}})
+-
+\mathbf X-\mathcal{R}_{\mathrm{ref}}(\tilde{\mathbf{S}}_{\mathrm{ref}})\|_F
+\le
+L_{\mathrm{route}}
+\|\tilde{\mathbf{S}}-\tilde{\mathbf{S}}_{\mathrm{ref}}\|_F.
+\]
+
+\paragraph{Step 5: Insert a set-stack intermediate state.}
+Define
+\[
+\tilde{\mathbf{S}}_{\mathrm{int}}
+=
+\Phi_{\mathrm{ref}}(\mathbf{S}).
+\]
+Then
+\[
+\|\tilde{\mathbf{S}}-\tilde{\mathbf{S}}_{\mathrm{ref}}\|_F
+\le
+\|\tilde{\mathbf{S}}-\tilde{\mathbf{S}}_{\mathrm{int}}\|_F
++
+\|\tilde{\mathbf{S}}_{\mathrm{int}}-\tilde{\mathbf{S}}_{\mathrm{ref}}\|_F.
+\]
+The first term is exactly $\varepsilon_{\mathrm{set}}$.
+
+\paragraph{Step 6: Control the second set-stack term.}
+By Assumption~\ref{ass:stable-set-stack},
+\[
+\|\tilde{\mathbf{S}}_{\mathrm{int}}-\tilde{\mathbf{S}}_{\mathrm{ref}}\|_F
+=
+\|\Phi_{\mathrm{ref}}(\mathbf{S})-\Phi_{\mathrm{ref}}(\mathbf{S}_{\mathrm{ref}})\|_F
+\le
+L_{\mathrm{set}}
+\|\mathbf{S}-\mathbf{S}_{\mathrm{ref}}\|_F.
+\]
+But by definition,
+\[
+\|\mathbf{S}-\mathbf{S}_{\mathrm{ref}}\|_F
+=
+\varepsilon_{\mathrm{pool}}.
+\]
+
+\paragraph{Step 7: Substitute backwards.}
+Therefore
+\[
+\|\tilde{\mathbf{S}}-\tilde{\mathbf{S}}_{\mathrm{ref}}\|_F
+\le
+\varepsilon_{\mathrm{set}} + L_{\mathrm{set}}\varepsilon_{\mathrm{pool}}.
+\]
+Hence
+\[
+\|\mathbf{Z}_{\mathrm{int}}-\mathbf{Z}_{\mathrm{ref}}\|_F
+\le
+L_{\mathrm{route}}
+\left(
+\varepsilon_{\mathrm{set}} + L_{\mathrm{set}}\varepsilon_{\mathrm{pool}}
+\right).
+\]
+So
+\[
+\|\mathbf{Z}-\mathbf{Z}_{\mathrm{ref}}\|_F
+\le
+\varepsilon_{\mathrm{route}}
++
+L_{\mathrm{route}}\varepsilon_{\mathrm{set}}
++
+L_{\mathrm{route}}L_{\mathrm{set}}\varepsilon_{\mathrm{pool}}.
+\]
+
+\paragraph{Step 8: Final substitution into the readout bound.}
+Multiplying by $L_{\mathrm{out}}$ yields \eqref{eq:mechanistic-decomposition-bound}.
+\end{proof}
+
+\begin{remark}[Meaning of the mechanistic decomposition bound]
+\label{rem:mechanistic-bound-meaning}
+Theorem~\ref{thm:mechanistic-decomposition} is an \emph{error propagation bound} for the architecture decomposition
+\[
+\text{pooling} \to \text{set processing} \to \text{routing}.
+\]
+It does \emph{not} claim that perplexity exactly decomposes additively into three independent constants. Instead, it states that the loss perturbation is upper bounded by an additive combination of three mechanistic perturbation magnitudes, weighted by stability constants of downstream operators.
+\end{remark}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Effective Support and Pooling Concentration}
+\label{sec:tier-b-effective-support}
+
+\begin{definition}[Effective support]
+\label{def:effective-support}
+For a set $S_m$ with pooling law $\mathbb{P}_m$ and mass function $\omega_{t,m}$, define the effective support size
+\begin{equation}
+\label{eq:effective-support}
+n_{\mathrm{eff}}^{(m)}
+=
+\frac{1}{\sum_{t\in S_m} \omega_{t,m}^2},
+\end{equation}
+and the normalized effective support
+\begin{equation}
+\label{eq:normalized-effective-support}
+\rho_{\mathrm{eff}}^{(m)}
+=
+\frac{n_{\mathrm{eff}}^{(m)}}{|S_m|}
+\end{equation}
+\end{definition}
+
+\begin{proposition}[Bounds on effective support]
+\label{prop:effective-support-bounds}
+For every set $S_m$,
+\begin{equation}
+\label{eq:effective-support-bounds}
+1 \le n_{\mathrm{eff}}^{(m)} \le |S_m|,
+\qquad
+\frac{1}{|S_m|}\le \rho_{\mathrm{eff}}^{(m)}\le 1.
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+Since the weights are nonnegative and sum to $1$, Cauchy--Schwarz gives
+\[
+\left(\sum_{t\in S_m}\omega_{t,m}\right)^2
+\le
+|S_m| \sum_{t\in S_m}\omega_{t,m}^2.
+\]
+Thus
+\[
+1 \le |S_m| \sum_{t\in S_m}\omega_{t,m}^2,
+\qquad\text{so}\qquad
+\sum_{t\in S_m}\omega_{t,m}^2 \ge \frac{1}{|S_m|}.
+\]
+Also, since $\omega_{t,m}\in [0,1]$ and the weights sum to one,
+\[
+\sum_{t\in S_m}\omega_{t,m}^2 \le 1.
+\]
+Taking reciprocals yields
+\[
+1 \le n_{\mathrm{eff}}^{(m)} \le |S_m|.
+\]
+Dividing by $|S_m|$ proves the normalized bound.
+\end{proof}
+
+\begin{proposition}[Asymptotic pooling concentration regimes]
+\label{prop:pooling-concentration-regimes}
+Fix a set $S_m$.
+
+\begin{enumerate}
+    \item As $\tau_{\mathrm{pool}}\to 0^+$, the Boltzmann factor concentrates on the minimizers of $\delta_{t,m}$. If the set of minimizers has cardinality $q_m$, then
+    \[
+    n_{\mathrm{eff}}^{(m)} \to q_m.
+    \]
+
+    \item As $\tau_{\mathrm{pool}}\to \infty$, the Boltzmann factor becomes flat on the softly retained set, and
+    \[
+    n_{\mathrm{eff}}^{(m)} \to n_{\mathrm{retained}}^{(m)},
+    \]
+    where $n_{\mathrm{retained}}^{(m)}$ is the effective support induced by the trimming gate.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+As $\tau_{\mathrm{pool}}\to 0^+$, the factor $\exp(-\delta_{t,m}/\tau_{\mathrm{pool}})$ suppresses every non-minimizer exponentially relative to a minimizer. Hence the weight distribution converges to the uniform law on the set of minimizers, whose effective support is exactly the number of minimizers.
+
+As $\tau_{\mathrm{pool}}\to \infty$, the Boltzmann term tends to one on every finite-energy token, so the weights are determined asymptotically by the trimming gate alone. Therefore the effective support converges to the effective support of the retained subset.
+\end{proof}
+
+\begin{proposition}[Local Jacobian sandwich for gradient-flow ratios]
+\label{prop:jacobian-sandwich}
+Let $J_{\mathcal{P}}$ be the Jacobian of the pooling map at the current pre-pooling state, and let $J_{\Phi}$ be the Jacobian of the set-processing map at the current set state. Assume that their smallest singular values are:
+\[
+\sigma_{\min}(J_{\mathcal{P}})>0,
+\qquad
+\sigma_{\min}(J_{\Phi})>0.
+\]
+Then the raw gradient ratios satisfy
+\begin{equation}
+\label{eq:jacobian-sandwich-pool}
+\frac{1}{\|J_{\mathcal{P}}\|_{\mathrm{op}}}
+\le
+\tilde\rho_p
+\le
+\frac{1}{\sigma_{\min}(J_{\mathcal{P}})},
+\end{equation}
+and
+\begin{equation}
+\label{eq:jacobian-sandwich-set}
+\frac{1}{\|J_{\Phi}\|_{\mathrm{op}}}
+\le
+\tilde\rho_a
+\le
+\frac{1}{\sigma_{\min}(J_{\Phi})};
+\end{equation}
+\end{proposition}
+\noindent where $\|J_{(\cdot)}\|_{\mathrm{op}}=\sigma_{\max}(J_{(\cdot)})$ for euclidean norm.
+\begin{proof}
+By reverse-mode differentiation,
+\[
+\nabla_{\mathbf{h}}\mathcal{L}
+=
+J_{\mathcal{P}}^{\top}\nabla_{\mathbf{z}_0}\mathcal{L}.
+\]
+Hence
+\[
+\sigma_{\min}(J_{\mathcal{P}})\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2
+\le
+\|\nabla_{\mathbf{h}}\mathcal{L}\|_2
+\le
+\|J_{\mathcal{P}}\|_{\mathrm{op}}
+\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2.
+\]
+Dividing through by $\|\nabla_{\mathbf{h}}\mathcal{L}\|_2$ and $\|\nabla_{\mathbf{z}_0}\mathcal{L}\|_2$ yields \eqref{eq:jacobian-sandwich-pool}. The proof for \eqref{eq:jacobian-sandwich-set} is identical with $J_{\Phi}$ in place of $J_{\mathcal{P}}$.
+\end{proof}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Feasible Routing Region Under Entropy Constraints}
+\label{sec:tier-b-feasible-routing}
+
+\begin{proposition}[Entropy-based feasible routing region]
+\label{prop:entropy-feasible-routing}
+Assume that in the operating regime of interest the head-aggregated normalized routing entropy remains inside a nontrivial interval:
+\begin{equation}
+\label{eq:entropy-interval-feasible}
+0<\eta_{\min}\le \overline H_{\mathrm{agg}} \le \eta_{\max}<1.
+\end{equation}
+Then a necessary structural condition is
+\begin{equation}
+\label{eq:entropy-feasible-cbar}
+\bar{C}>1.
+\end{equation}
+For long sequences, this implies approximately
+\begin{equation}
+\label{eq:entropy-feasible-ws}
+\frac{w}{s}>1.
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+If the operating region had no tokens with $C_t\ge2$, then by Theorem~\ref{thm:necessary-feasible-topology} every routed token would be either deterministic or residual-only, so the aggregated entropy would be zero wherever defined, contradicting the lower bound $\eta_{\min}>0$. Hence the regime must leave the singleton candidate-count region; in long interior regions this is summarized by $\bar C>1$ and approximately $w/s>1$. The long-sequence approximation follows from Proposition~\ref{prop:interior-candidate-count}.
+\end{proof}
+
+\begin{proposition}[Capacity parameters enter through both rank and stability]
+\label{prop:capacity-stability}
+For fixed topology $(L,w,s)$, the capacity parameters $(D,d_{\mathrm{ff}},H_r,H_a)$ affect the feasible operating regime through two channels:
+\begin{enumerate}
+    \item the routing-capacity channel, via the rank and dimension bounds in Theorems~\ref{thm:routing-dimension-growth} and~\ref{thm:routing-rank-gain};
+    \item the stability channel, via the constants $L_{\mathrm{set}}$, $L_{\mathrm{route}}$, and the local Jacobian bounds in Proposition~\ref{prop:jacobian-sandwich}.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+The routing-capacity dependence follows directly from the fact that the dimension of the admissible routing-distribution space scales linearly with $H_r$, while the maximal routing rank is capped by $\min\{H_r,C_{t}\}$.
+
+The stability dependence follows from Assumptions~\ref{ass:stable-set-stack} and~\ref{ass:stable-routing}: the constants $L_{\mathrm{set}}$ and $L_{\mathrm{route}}$ depend on the realized operator norms of the corresponding neural maps, which in turn depend on the architecture dimensions $D$, $d_{\mathrm{ff}}$, and the head allocations.
+\end{proof}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Tier C: Empirical Corollaries and Feasible Region}
+\label{sec:tier-c}
+
+The results in this subsection do not introduce new axiomatic claims. They translate the exact and assumption-based results above into experimentally testable consequences.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Loss-Linked Corollaries}
+\label{sec:tier-c-loss}
+
+\begin{corollary}[Loss sensitivity to pooling collapse]
+\label{cor:loss-sensitivity-pooling}
+Suppose the operating regime is such that
+\[
+\varepsilon_{\mathrm{pool}} \gg \varepsilon_{\mathrm{set}},\varepsilon_{\mathrm{route}}.
+\]
+Then Theorem~\ref{thm:mechanistic-decomposition} implies
+\begin{equation}
+\label{eq:loss-pooling-dominance}
+|\Delta \mathcal{J}|
+\lesssim
+L_{\mathrm{out}}L_{\mathrm{route}}L_{\mathrm{set}}
+\varepsilon_{\mathrm{pool}}.
+\end{equation}
+In particular, aggressive pooling collapse (very small effective supports) can dominate the end-to-end loss perturbation even when set processing and routing remain stable.
+\end{corollary}
+
+\begin{proof}
+This is immediate from Theorem~\ref{thm:mechanistic-decomposition} by keeping only the dominant term.
+\end{proof}
+
+\begin{corollary}[Topology-induced collapse boundary]
+\label{cor:topology-collapse-boundary}
+If $s=w$, then for interior tokens:
+\begin{enumerate}
+    \item routing is deterministic in every head;
+    \item the per-head entropy is zero;
+    \item the aggregated entropy is zero;
+    \item the maximal routing rank is $1$ regardless of $H_r$;
+    \item changing $\tau_r$ cannot restore soft routing.
+\end{enumerate}
+Hence the hyperparameter slice $s=w$ lies on a structural collapse boundary of the routing mechanism.
+\end{corollary}
+
+\begin{proof}
+Corollary~\ref{cor:stride-equals-window} gives candidate-count collapse, Theorem~\ref{thm:degenerate-topology} gives deterministic routing, and Corollary~\ref{cor:topology-limited-routing-capacity} gives rank saturation at one.
+\end{proof}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Feasible Operating Region}
+\label{sec:tier-c-feasible-region}
+
+\begin{definition}[Feasible operating region]
+\label{def:feasible-operating-region}
+Fix the architecture dimensions $(D,d_{\mathrm{ff}},H_r,H_a)$. Define the feasible operating region
+\[
+\mathfrak{F}
+\subset
+\mathbb{N}^2 \times \mathbb{R}_{>0}^2 \times (0,1)\times \mathbb{R}_{>0}\times (\mathbb{N}\cup\{\infty\})
+\]
+to be the set of tuples
+\[
+(w,s,\tau_{\mathrm{pool}},\tau_r,q,\alpha,k)
+\]
+such that all of the following hold.
+
+\begin{enumerate}
+    \item \textbf{Topological nondegeneracy:}
+    \begin{equation}
+    \label{eq:feasible-topology-cond}
+    \bar{C}>1.
+    \end{equation}
+
+    \item \textbf{Noncollapsed pooling support:}
+    \begin{equation}
+    \label{eq:feasible-pooling-cond}
+    \frac{1}{M}\sum_{m=1}^{M}\rho_{\mathrm{eff}}^{(m)}
+    \ge \rho_{\min},
+    \end{equation}
+    for a prescribed threshold $\rho_{\min}\in (0,1)$.
+
+    \item \textbf{Gradient transport stability:}
+    \begin{equation}
+    \label{eq:feasible-gradient-cond1}
+    \gamma_{\min}\le \rho_p \le \gamma_{\max},
+    \qquad
+    \beta_{\min}\le \rho_a \le \beta_{\max},
+    \end{equation}
+    for prescribed stability thresholds.
+
+    \item \textbf{Bounded structural perturbation:}
+    \begin{equation}
+    \label{eq:feasible-loss-cond}
+    L_{\mathrm{out}}
+    \left(
+    L_{\mathrm{route}}L_{\mathrm{set}}\varepsilon_{\mathrm{pool}}
+    +
+    L_{\mathrm{route}}\varepsilon_{\mathrm{set}}
+    +
+    \varepsilon_{\mathrm{route}}
+    \right)
+    \le \kappa,
+    \end{equation}
+    for a prescribed tolerance $\kappa>0$.
+\end{enumerate}
+\end{definition}
+
+\begin{remark}[Nature of the feasible region]
+\label{rem:feasible-region-not-generalization}
+Definition~\ref{def:feasible-operating-region} gives a \emph{mechanistic operating-region characterization}. It is not a universal generalization bound and it is not a theorem of the form
+\[
+\mathrm{PPL} \le f(w,s,\tau_{\mathrm{pool}},\tau_r,\dots)
+\]
+for arbitrary language distributions. Rather, it formalizes the experimentally meaningful statement that acceptable operation requires jointly avoiding topological collapse, pooling collapse, gradient-path failure, and large structural perturbation.
+\end{remark}
+
+\begin{corollary}[Joint experimental design requirement]
+\label{cor:joint-experimental-design}
+If one wishes to empirically characterize the feasible region $\mathfrak{F}$, then one must jointly vary:
+\begin{enumerate}
+    \item topology parameters $(w,s)$, because they determine the candidate fibers and the topology-limited routing rank;
+    \item temperature parameters $(\tau_{\mathrm{pool}},\tau_r)$, because they control support concentration and entropy;
+    \item capacity parameters $(D,d_{\mathrm{ff}},H_r)$, because they affect both routing-submodule capacity and stability constants.
+\end{enumerate}
+\end{corollary}
+
+\begin{proof}
+Topology enters through $\bar C$ and the rank cap $\min\{H_r,C_{t}\}$; temperatures enter through the Gibbs concentration and softmax entropy laws; capacity enters through Theorems~\ref{thm:routing-dimension-growth}--\ref{thm:routing-rank-gain} and Proposition~\ref{prop:capacity-stability}. Therefore no one-dimensional sweep can fully characterize $\mathfrak{F}$.
+\end{proof}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Summary of Theoretical Commitments}
+\label{sec:tier-c-summary}
+
+\begin{remark}[What is proven and what is not]
+\label{rem:what-is-proven}
+The theory in this section supports the following precise claims.
+
+\begin{itemize}
+    \item \textbf{Exactly proven from the architecture:}
+    entropy bounds, temperature monotonicity, topology-induced routing degeneracy, strict routing-class enlargement under multi-head routing, dimension scaling by $H_r$, routing-rank increase up to $\min\{H_r,C_{t}\}$, the maximum-entropy Gibbs characterization of the Boltzmann factor, and the exact decomposition of pooling gradients.
+
+    \item \textbf{Proven under explicit local regularity assumptions:}
+    the mechanistic decomposition bound for loss perturbation, the Jacobian sandwich for gradient-flow ratios, and the feasible-region characterization in terms of perturbation/stability thresholds.
+
+    \item \textbf{Left empirical:}
+    the numerical values of thresholds such as $\rho_{\min}$, $\gamma_{\min}$, $\gamma_{\max}$, $\beta_{\min}$, $\beta_{\max}$, and $\kappa$, and the question of whether improved routing-submodule capacity translates into improved perplexity on a specific dataset.
+\end{itemize}
+\end{remark}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% END OF SECTION 5
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% END OF SECTION 5
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Extended Experimental Tables}
+\label{app:extended-experimental-tables}
+
+\subsection{Legacy Evidence Exclusion}
+\label{app:legacy-evidence-exclusion}
+
+Earlier drafts contained appendix tables and figures generated before the A1
+strict-past causal LM correction, or from artifacts whose per-run metadata did
+not establish the post-A1 causal LM protocol.  Those displays are excluded from
+the active manuscript evidence record.  The underlying files remain preserved
+for internal audit only, but reviewer-facing tables, figures, and claims in this
+revision use only validated post-A1 causal LM manifests under
+\texttt{out/paper\_integrated\_evidence/checks/}.  In particular, legacy
+artifact roots such as \texttt{out/paper\_bundle/},
+\texttt{out/paper\_complements\_bundle/}, \texttt{out/paper\_complements/},
+older \texttt{out/metrics/paper\_action*} outputs, and dense-only mechanism
+plots from the pre-A1 period are not mixed with the causal LM results reported
+here.
+
+The matched-quality comparison is reported in the main paper as
+Table~\ref{tab:matched-baseline-vs-setonly}. Source configurations use the
+corresponding implementation names for these paper-level quantities, and the
+generated TSV files retain those exact run identifiers.
+
+\iffalse
+Legacy pre-A1 / causality-unverified displays intentionally hidden from the
+active PDF. They are retained in source only as an audit trail and must not be
+used for reviewer-facing causal LM claims unless rebuilt under the post-A1
+protocol.
+
+\subsection{Detailed Tier C Tables}
+\label{app:tier-c-tables}
+
+The tables in this subsection give rounded numeric values for the Tier~C evidence summarized in the main text. In Table~\ref{tab:anchor-stability}, candidate count is constant at $3.953$ and peak VRAM is constant at $11206.7$ MiB across seeds, so both columns are omitted. Table~\ref{tab:boundary-stride-transition} is retained only as a narrow dense two-point supporting slice; the main paper uses the broader cross-family stride sweep rather than treating this table as standalone evidence for a sharp transition.
+
+\begin{table}[h]
+\centering
+\caption{Stability at the reference operating point across random seeds.}
+\label{tab:anchor-stability}
+\scriptsize
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{rcccccccc}
+\toprule
+Seed & Val. PPL $\downarrow$ & Routing entropy & Router top-1 & Pooling $n_{\mathrm{eff}}$ ratio & $\rho_p$ & $\rho_a$ & $\rho_{pa}$ & Time / epoch (s) $\downarrow$ \\
+\midrule
+0 & 580.6 & 0.264 & 0.395 & 0.411 & 0.829 & 0.128 & 0.106 & 73.4 \\
+1 & 653.3 & 0.263 & 0.399 & 0.413 & 0.812 & 0.137 & 0.112 & 99.8 \\
+2 & 581.2 & 0.263 & 0.402 & 0.412 & 0.827 & 0.130 & 0.108 & 81.9 \\
+Mean $\pm$ std & 605.0 $\pm$ 41.8 & 0.263 $\pm$ 0.001 & 0.399 $\pm$ 0.004 & -- & -- & -- & 0.109 $\pm$ 0.003 & 85.0 $\pm$ 13.5 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table*}[h]
+\centering
+\caption{Dense topology-temperature slice.}
+\label{tab:topology-temperature-feasible-region}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{cccccccccc}
+\toprule
+$s$ & $w$ & $\tau_r$ & Candidate count & Routing entropy & Router top-1 & $\rho_p$ & $\rho_a$ & $\rho_{pa}$ & Val. PPL $\downarrow$ \\
+\midrule
+16 & 16 & 0.5 & 1.000 & 0.000 & 1.000 & 1.245 & 0.201 & 0.251 & 1322.1 \\
+16 & 16 & 1.0 & 1.000 & 0.000 & 1.000 & 1.224 & 0.201 & 0.247 & 1270.5 \\
+16 & 16 & 2.0 & 1.000 & 0.000 & 1.000 & 1.223 & 0.199 & 0.244 & 1362.2 \\
+16 & 16 & 4.0 & 1.000 & 0.000 & 1.000 & 1.304 & 0.185 & 0.241 & 1321.3 \\
+6 & 16 & 0.5 & 2.641 & 0.195 & 0.537 & 0.944 & 0.146 & 0.138 & 634.6 \\
+6 & 16 & 1.0 & 2.641 & 0.199 & 0.518 & 0.934 & 0.151 & 0.141 & 669.7 \\
+6 & 16 & 2.0 & 2.641 & 0.201 & 0.507 & 0.921 & 0.152 & 0.140 & 693.7 \\
+6 & 16 & 4.0 & 2.641 & 0.203 & 0.496 & 0.914 & 0.151 & 0.138 & 720.3 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+\begin{table*}[h]
+\centering
+\caption{Two-point dense stride/candidate-count check.}
+\label{tab:boundary-stride-transition}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{ccccccccccccc}
+\toprule
+$s$ & $w$ & $\tau_r$ & Candidate count & Routing entropy & Router top-1 & Pooling $n_{\mathrm{eff}}$ ratio & $\rho_p$ & $\rho_a$ & $\rho_{pa}$ & Val. PPL $\downarrow$ & Time / epoch (s) $\downarrow$ & Peak VRAM (MiB) $\downarrow$ \\
+\midrule
+3 & 16 & 1.0 & 5.266 & 0.300 & 0.332 & 0.413 & 0.786 & 0.128 & 0.101 & 595.4 & 84.5 & 11470.9 \\
+5 & 16 & 1.0 & 3.166 & 0.230 & 0.458 & 0.406 & 0.878 & 0.144 & 0.126 & 690.0 & 109.9 & 11064.5 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+\begin{table*}[h]
+\centering
+\caption{Dense pooling-temperature sweep.}
+\label{tab:pooling-concentration-transport}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{ccccccccccc}
+\toprule
+$\tau_{\mathrm{pool}}$ & Pooling $n_{\mathrm{eff}}$ ratio & Pooling $n_{\mathrm{eff}}$ L2 & Pooling effective support & Routing entropy & Router top-1 & $\rho_p$ & $\rho_a$ & $\rho_{pa}$ & Val. PPL $\downarrow$ & Time / epoch (s) $\downarrow$ \\
+\midrule
+0.05 & 0.209 & 3.277 & 11.156 & 0.262 & 0.399 & 0.432 & 0.232 & 0.100 & 893.4 & 76.3 \\
+0.1 & 0.412 & 6.483 & 15.035 & 0.265 & 0.394 & 0.853 & 0.131 & 0.112 & 628.5 & 79.2 \\
+0.2 & 0.644 & 10.153 & 15.724 & 0.264 & 0.395 & 1.380 & 0.086 & 0.119 & 389.1 & 94.7 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+\clearpage
+
+The matched-quality comparison is reported in the main paper as Table~\ref{tab:matched-baseline-vs-setonly}. Source configurations use the corresponding implementation names for these paper-level quantities, and the generated TSV files retain those exact run identifiers.
+
+\subsection{Cross-Family Complement Sweeps}
+\label{app:family-complements}
+
+The following targeted complements use the reference operating recipe with learning rate $10^{-4}$. They expand the two mechanism-critical axes studied in the main paper, stride/candidate-count and pooling temperature, across dense exact, sparse local-band, and linear landmark set-attention families. Rows are deduplicated by the full control key, with audit JSONs retained in the experiment bundle.
+
+\begin{table*}[t]
+\centering
+\caption{Expanded cross-family boundary-stride complement sweep. Display values are rounded.}
+\label{tab:boundary-family-complements}
+\small
+\begin{tabular}{lccccccccc}
+\toprule
+Family & $s$ & Cand. & Entropy & Top-1 & $n_{\mathrm{eff}}$ ratio & $\rho_p$ & $\rho_a$ & $\rho_{pa}$ & Val. PPL $\downarrow$ \\
+\midrule
+Dense & 3 & 5.266 & 0.302 & 0.325 & 0.410 & 0.765 & 0.124 & 0.095 & 570.7 \\
+Dense & 4 & 3.953 & 0.265 & 0.393 & 0.410 & 0.874 & 0.134 & 0.117 & 600.5 \\
+Dense & 5 & 3.166 & 0.231 & 0.452 & 0.408 & 0.884 & 0.141 & 0.124 & 684.2 \\
+Dense & 6 & 2.641 & 0.198 & 0.522 & 0.397 & 0.887 & 0.148 & 0.131 & 733.0 \\
+Dense & 8 & 1.984 & 0.152 & 0.625 & 0.403 & 0.975 & 0.165 & 0.161 & 880.1 \\
+Linear & 3 & 5.266 & 0.300 & 0.335 & 0.399 & 0.760 & 0.145 & 0.110 & 659.1 \\
+Linear & 4 & 3.953 & 0.263 & 0.400 & 0.402 & 0.827 & 0.148 & 0.122 & 706.1 \\
+Linear & 5 & 3.166 & 0.231 & 0.455 & 0.402 & 0.888 & 0.151 & 0.134 & 767.1 \\
+Linear & 6 & 2.641 & 0.198 & 0.524 & 0.391 & 0.950 & 0.161 & 0.152 & 773.0 \\
+Linear & 8 & 1.984 & 0.153 & 0.620 & 0.397 & 1.047 & 0.172 & 0.180 & 1019.1 \\
+Sparse & 3 & 5.266 & 0.301 & 0.332 & 0.415 & 0.798 & 0.119 & 0.095 & 549.8 \\
+Sparse & 4 & 3.953 & 0.265 & 0.393 & 0.411 & 0.829 & 0.137 & 0.114 & 606.7 \\
+Sparse & 5 & 3.166 & 0.231 & 0.453 & 0.411 & 0.864 & 0.144 & 0.125 & 716.4 \\
+Sparse & 6 & 2.641 & 0.198 & 0.523 & 0.402 & 0.951 & 0.151 & 0.143 & 664.3 \\
+Sparse & 8 & 1.984 & 0.153 & 0.623 & 0.407 & 0.979 & 0.167 & 0.164 & 866.1 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{table*}[t]
+\centering
+\caption{Expanded cross-family pooling-temperature complement sweep. Display values are rounded.}
+\label{tab:pooltau-family-complements}
+\small
+\begin{tabular}{lccccccccc}
+\toprule
+Family & $\tau_{\mathrm{pool}}$ & $n_{\mathrm{eff}}$ ratio & $n_{\mathrm{eff}}$ L2 & Eff. support & Entropy & Top-1 & $\rho_{pa}$ & Val. PPL $\downarrow$ & Time / epoch (s) $\downarrow$ \\
+\midrule
+Dense & 0.050 & 0.204 & 3.200 & 11.063 & 0.260 & 0.406 & 0.098 & 982.5 & 71.3 \\
+Dense & 0.075 & 0.313 & 4.922 & 14.060 & 0.264 & 0.395 & 0.103 & 774.1 & 71.3 \\
+Dense & 0.100 & 0.411 & 6.466 & 15.034 & 0.263 & 0.401 & 0.110 & 665.0 & 70.6 \\
+Dense & 0.150 & 0.557 & 8.774 & 15.591 & 0.265 & 0.393 & 0.120 & 488.4 & 80.9 \\
+Dense & 0.200 & 0.642 & 10.114 & 15.714 & 0.264 & 0.394 & 0.125 & 356.9 & 71.3 \\
+Linear & 0.050 & 0.207 & 3.233 & 11.035 & 0.263 & 0.398 & 0.098 & 1051.1 & 72.2 \\
+Linear & 0.075 & 0.309 & 4.848 & 13.910 & 0.265 & 0.394 & 0.114 & 890.5 & 72.0 \\
+Linear & 0.100 & 0.406 & 6.378 & 14.985 & 0.265 & 0.391 & 0.123 & 675.8 & 73.7 \\
+Linear & 0.150 & 0.544 & 8.572 & 15.572 & 0.264 & 0.398 & 0.136 & 550.8 & 72.8 \\
+Linear & 0.200 & 0.632 & 9.957 & 15.707 & 0.264 & 0.394 & 0.144 & 474.5 & 71.2 \\
+Sparse & 0.050 & 0.210 & 3.284 & 11.196 & 0.263 & 0.396 & 0.102 & 872.7 & 71.5 \\
+Sparse & 0.075 & 0.314 & 4.917 & 14.020 & 0.264 & 0.397 & 0.110 & 758.5 & 74.9 \\
+Sparse & 0.100 & 0.406 & 6.398 & 15.030 & 0.262 & 0.405 & 0.107 & 648.7 & 77.4 \\
+Sparse & 0.150 & 0.553 & 8.716 & 15.591 & 0.263 & 0.399 & 0.114 & 462.4 & 72.9 \\
+Sparse & 0.200 & 0.641 & 10.104 & 15.725 & 0.263 & 0.398 & 0.119 & 359.6 & 71.9 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\fi
+
+\subsection{LR-Normalized Matched-Grid Provenance}
+\label{app:partial-lrnorm-slice}
+
+The completed LR-normalized grids are retained as external provenance artifacts rather than reproduced as an additional appendix table. This avoids mixing older dense-baseline-only slices with the v2.7 matched sparse/linear token controls used for the active claims. Source paths and hashes are recorded in \texttt{audit/A5\_4\_handoff.md} and \texttt{out/paper\_integrated\_evidence/checks/final\_artifact\_index.tsv}; the current paper-level comparison is Table~\ref{tab:matched-baseline-vs-setonly}.
+
+\subsection{Complete Post-A1 Causal LM Experiment Record}
+\label{app:complete-experiment-record}
+
+Table~\ref{tab:complete-causal-experiment-record} lists every stabilized
+post-A1 causal LM experiment family retained for this revision.  The table is an
+index rather than a replacement for the source artifacts: full CSV paths,
+manifest paths, row counts, SHA256 hashes, and audit notes are recorded in
+\texttt{audit/causal\_experiment\_report.md} and
+\texttt{out/paper\_integrated\_evidence/checks/causal\_experiment\_report\_index.tsv}.
+This separation keeps the manuscript readable while making the complete
+experiment record explicit and recoverable.
+
+\begin{table*}[t]
+\centering
+\caption{Complete stabilized post-A1 causal LM experiment record used for this
+revision.  ``Rows'' is the row count of the corresponding indexed TSV artifact;
+all listed manifests passed validation.}
+\label{tab:complete-causal-experiment-record}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llrll}
+\toprule
+Phase & Experiment family & Rows & Intended paper use & Caveat \\
+\midrule
+A2 & LR-normalized grid & 153 & Dense baseline and set-family provenance & Matched v2.7 controls supersede backend-family claims \\
+A2.4 & Matched token-backend controls & 10 & Sparse/linear token controls at LR-normalized reference & Fixed to $D=384,d_{\mathrm{ff}}=1536,L=512,w=16,s=8$ \\
+A3.1 & Fixed-stride window sweep & 18 & Candidate-count and compression mechanism evidence & Set-family mechanism evidence, not headline baseline comparison \\
+A3.1-control & Window-sweep token overlays & 12 & Backend attribution control for A3.1 & Use with A3.1 to separate set routing from backend effects \\
+A3.2 & Pooling-temperature sweep & 15 & Pooling support and transport diagnostics & High-temperature extension shows backend-specific saturation \\
+A3.3 & Stride/candidate-count sweep & 12 & Topology complement for Tier C diagnostics & Demoted complement rather than headline result \\
+A4.1 & Long-context smoke & 2 & Feasible long-context batch policy & Not a final comparison table \\
+A4.2 & Long-context set-family slice & 12 & Quality/memory comparison at $L=2048$ & Pair with A4.2 controls for backend-matched claims \\
+A4.2-control & Long-context token controls & 2 & Matched sparse/linear token controls at $L=2048$ & Dense token baseline remains strongest in perplexity \\
+A4.3 & 30-epoch convergence panel & 7 & Convergence check beyond 10 epochs & Token baselines remain favored under tested settings \\
+A6.1 & $d_\phi$ interface capacity & 9 & Set-token interface bottleneck diagnostic & Family-specific gains, not a complete fix \\
+A6.2 & Set-state width capacity & 12 & Explicit set-state dimensionality test & Wider set states do not reliably close the gap \\
+A6.3 & Joint interface bottleneck & 18 & Coupled set-state and $d_\phi$ bottleneck test & Matching $d_\phi$ to set-state width often worsens PPL \\
+A6.4 & Set-stack depth sweep & 18 & Depth bottleneck diagnostic & Depth 8/10 worsens validation PPL versus depth 6 \\
+A7 & \texttt{empty\_only} calibration & 105 & Empirical token-limit and backend-matched compression paths & Five-seed support at convergence-critical points; convergence as $M/L\to1$, not exact equivalence \\
+A8-hybrid & Hybrid token/set sparse pilot & 9 & Token--set bridge diagnostic for mixed layer stacks & Completed cleanly but poor PPL; not worth extending to seeds 3,4 without a new routing/memory fix \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+\iffalse
+Legacy dense-only mechanism figures intentionally hidden from the active PDF.
+They were generated before the current post-A1 causal LM evidence boundary and
+must not be mixed with the validated causal LM record.
+
+\subsection{Additional Dense-Only Mechanism Views}
+\label{app:dense-only-mechanism-figures}
+
+These dense-only figures give an additional focused slice of the same Tier~C mechanisms. The main paper uses the cross-family figures because they test the mechanisms across dense exact, sparse local-band, and linear landmark families. In the topology-temperature views, candidate-count-$1$ settings collapse toward worse validation quality, zero entropy, and unit concentration. In the pooling-temperature views, broader pooling support coincides with lower validation perplexity and stronger end-to-end transport.
+
+\begin{figure*}[t]
+\centering
+\begin{subfigure}[t]{0.32\textwidth}
+\centering
+\includegraphics[width=\linewidth]{../plots/main/fig_phase_candidates_vs_ppl.png}
+\caption{Validation perplexity versus candidate count.}
+\label{fig:phase-candidates-vs-ppl}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.32\textwidth}
+\centering
+\includegraphics[width=\linewidth]{../plots/main/fig_phase_candidates_vs_entropy.png}
+\caption{Routing entropy versus candidate count.}
+\label{fig:phase-candidates-vs-entropy}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.32\textwidth}
+\centering
+\includegraphics[width=\linewidth]{../plots/main/fig_phase_candidates_vs_top1.png}
+\caption{Router top-1 versus candidate count.}
+\label{fig:phase-candidates-vs-top1}
+\end{subfigure}
+\caption{Dense-only topology-temperature views.}
+\label{fig:dense-only-topology-temperature}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\begin{subfigure}[t]{0.32\textwidth}
+\centering
+\includegraphics[width=\linewidth]{../plots/main/fig_pooltau_vs_ppl.png}
+\caption{Validation perplexity versus pooling temperature.}
+\label{fig:pooltau-vs-ppl}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.32\textwidth}
+\centering
+\includegraphics[width=\linewidth]{../plots/main/fig_pooltau_vs_neff.png}
+\caption{Effective-support summaries versus pooling temperature.}
+\label{fig:pooltau-vs-neff}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.32\textwidth}
+\centering
+\includegraphics[width=\linewidth]{../plots/main/fig_pooltau_vs_rho_pa.png}
+\caption{End-to-end gradient transport $\rho_{pa}$ versus pooling temperature.}
+\label{fig:pooltau-vs-rho-pa}
+\end{subfigure}
+\caption{Dense-only pooling-temperature views.}
+\label{fig:dense-only-pooltau}
+\end{figure*}
+\fi
+
+\section{Implementation Notes and Supporting Comparisons}
+\label{app:implementation-notes}
+
+\subsection{Pre-Pooling Token MLP}
+\label{app:token-mlp}
+
+The implementation includes an optional pre-pooling token MLP,
+\[
+\operatorname{TokenMLP}(h)=W_2\,\operatorname{GELU}(W_1h),
+\]
+applied after token and positional embeddings and before bank pooling. This module was disabled in the experiments emphasized in the main paper and was not part of the topology, temperature, pooling, dense, sparse, or linear family sweeps. Preliminary checks with the module enabled did not materially change the qualitative behavior of the model, so it is treated as an implementation extension rather than a core architectural component.
+
+\subsection{Dropped Historical Parity Slice}
+\label{app:parity-support}
+
+Earlier drafts contained an appendix-only parity slice with baseline values that could not be reconciled with the canonical LR-normalized artifacts. The audit in \texttt{audit/A1\_3\_reconciliation.md} therefore treats that slice as unrecoverable for paper use. The active comparisons in this paper are the matched-control and long-context tables in the main Results section, with provenance recorded in the final reproducibility handoff.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\input{neurips_checklist}
+
+\end{document}
