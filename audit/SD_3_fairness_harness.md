@@ -5,20 +5,20 @@ Status: PASS
 Harness checks:
 - Thin-anchor span ablation exact: True
 - Token MLP disabled for anchor_span: True
-- Pre-encoder excluded from inference count: True
+- Pre-encoder/head excluded from inference count: True
 
 Anchor-reference parameter counts:
 - Set-dictionary inference params: 14487936
-- Set-dictionary train params: 18036864
-- Anchor pre-encoder params: 3548928
+- Set-dictionary train params: 18086016
+- Anchor pre-encoder/head params: 3598080
 - Matched dense token params: 10941696
 - Inference minus token params: 3546240
 
 Small smoke:
-- Normal loss: 5.503087997436523
-- Span-ablated loss: 5.339049339294434
-- Span-ablation delta loss: -0.16403865814208984
-- Train peak VRAM MiB: 16.8193359375
+- Normal loss: 5.325502872467041
+- Span-ablated loss: 5.268815517425537
+- Span-ablation delta loss: -0.056687355041503906
+- Train peak VRAM MiB: 17.03857421875
 - Inference peak VRAM MiB: 17.5126953125
 
 Notes:

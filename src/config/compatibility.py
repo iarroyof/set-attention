@@ -305,6 +305,48 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     )
     if model.get("multiscale"):
         raise ConfigError("set_only: multiscale is not implemented in this runner")
+    multiresolution_cfg = model.get("multiresolution", {})
+    if multiresolution_cfg and not isinstance(multiresolution_cfg, dict):
+        raise ConfigError("set_only: multiresolution must be a mapping")
+    multiresolution_enabled = bool((multiresolution_cfg or {}).get("enabled", False))
+    multiresolution_groups = (multiresolution_cfg or {}).get("groups", [])
+    if multiresolution_enabled:
+        require(
+            isinstance(multiresolution_groups, list) and len(multiresolution_groups) >= 1,
+            "set_only: multiresolution.groups must be a non-empty list when enabled",
+        )
+        total_group_heads = 0
+        for idx, group in enumerate(multiresolution_groups):
+            require(isinstance(group, dict), f"set_only: multiresolution.groups[{idx}] must be a mapping")
+            group_heads = _require_positive_int(
+                group.get("num_heads"),
+                f"set_only: multiresolution.groups[{idx}].num_heads",
+            )
+            group_w = _require_positive_int(
+                group.get("window_size", group.get("w")),
+                f"set_only: multiresolution.groups[{idx}].window_size",
+            )
+            group_s = _require_positive_int(
+                group.get("stride", group.get("s")),
+                f"set_only: multiresolution.groups[{idx}].stride",
+            )
+            require(
+                group_w <= seq_len,
+                f"set_only: multiresolution.groups[{idx}].window_size must be <= max_seq_len",
+            )
+            require(
+                group_s <= group_w,
+                f"set_only: multiresolution.groups[{idx}].stride must be <= window_size",
+            )
+            require(
+                _max_sets(seq_len, group_w, group_s, set_causality_mode) >= 1,
+                f"set_only: multiresolution.groups[{idx}] must create at least one set",
+            )
+            total_group_heads += group_heads
+        require(
+            total_group_heads == int(model.get("num_heads", 1)),
+            "set_only: multiresolution group head counts must sum to num_heads",
+        )
     if isinstance(pooling_cfg, dict):
         if "alpha" in pooling_cfg:
             _require_positive_float(pooling_cfg["alpha"], "set_only: pooling.alpha")
@@ -376,6 +418,23 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
             anchor_cfg.get("lambda_h", 0.1),
             "set_only: anchor.lambda_h",
         )
+        lambda_pre = _require_nonnegative_float(
+            anchor_cfg.get("lambda_pre", 1.0),
+            "set_only: anchor.lambda_pre",
+        )
+        _require_bool(
+            anchor_cfg.get("pre_encoder_head", True),
+            "set_only: anchor.pre_encoder_head",
+        )
+        if bool(anchor_cfg.get("enabled", False)):
+            require(
+                lambda_pre > 0.0,
+                "set_only: anchor.lambda_pre must be > 0 when anchor.enabled=true",
+            )
+            require(
+                bool(anchor_cfg.get("pre_encoder_head", True)),
+                "set_only: anchor.pre_encoder_head must be true when anchor.enabled=true",
+            )
         _require_bool(
             anchor_cfg.get("detach_target", True),
             "set_only: anchor.detach_target",
@@ -429,8 +488,8 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "set_only: candidate_fiber must be endpoint_window, all_past, or window_plus_landmarks",
     )
     require(
-        candidate_fiber == "endpoint_window",
-        "set_only: only candidate_fiber=endpoint_window is implemented in SD-2",
+        candidate_fiber in {"endpoint_window", "all_past"},
+        "set_only: candidate_fiber=window_plus_landmarks is deferred",
     )
     if task == "lm" and impl in {"set_only", "hybrid_token_set"}:
         require(
@@ -490,6 +549,35 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     require(set_d_head >= min_head_dim, "set_only: set_state_dim head dimension too small")
     if pooling_multihead:
         require(d_model % num_heads == 0, "set_only: pooling_multihead requires d_model divisible by num_heads")
+    if multiresolution_enabled:
+        d_phi_for_heads = int(d_phi) if d_phi is not None else int(d_model)
+        require(
+            d_phi_for_heads % num_heads == 0,
+            "set_only: d_phi must be divisible by num_heads for multiresolution",
+        )
+        for idx, group in enumerate(multiresolution_groups):
+            group_heads = int(group.get("num_heads"))
+            require(
+                (int(d_model) * group_heads) % num_heads == 0,
+                f"set_only: multiresolution.groups[{idx}] d_model share must be integral",
+            )
+            require(
+                (set_state_dim_for_heads * group_heads) % num_heads == 0,
+                f"set_only: multiresolution.groups[{idx}] set_state_dim share must be integral",
+            )
+            require(
+                (d_phi_for_heads * group_heads) % num_heads == 0,
+                f"set_only: multiresolution.groups[{idx}] d_phi share must be integral",
+            )
+            group_dim = (set_state_dim_for_heads * group_heads) // num_heads
+            require(
+                group_dim % group_heads == 0,
+                f"set_only: multiresolution.groups[{idx}] set_state_dim share must be divisible by group heads",
+            )
+            require(
+                group_dim // group_heads >= min_head_dim,
+                f"set_only: multiresolution.groups[{idx}] set head dimension too small",
+            )
 
     backend = model.get("backend")
     raw_backend_params = model.get("backend_params")

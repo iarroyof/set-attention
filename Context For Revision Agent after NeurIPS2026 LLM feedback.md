@@ -9,8 +9,9 @@ Locked revision plan:
   2. `docs/revision_source_of_truth_definitions.md`;
   3. this context file;
   4. `audit/phase_a_status.md` -- **read this before doing any Phase A work**; it is the authoritative task/run status tracker for all of Phase A;
-  5. `docs/example_paper_working_agent.tex`;
+  5. `out/final_paper_bundle/overleaf_ready/example_paper.tex` -- **current NeurIPS paper source**;
   6. `configs/hyperparameters.md`.
+- Do **not** use `docs/example_paper_working_agent.tex`, `docs/example_paper_from_zip.tex`, or `docs/example_paper_patched.tex` as current paper sources. Those are stale ICML-template drafts kept for history only. Paper updates should target `out/final_paper_bundle/overleaf_ready/example_paper.tex` and compile through `scripts/compile_paper_bundle.sh`, unless the user explicitly directs otherwise.
 
 Definition source of truth:
 - Use `docs/revision_source_of_truth_definitions.md` for code-backed definitions and values for hashed-count features, geometry/content-bias notation, `d_phi`, pooling `alpha` / temperature defaults, router heads, candidate counts, `Lambda`/backend selection, and router top-1 metrics. Do not fill those gaps from prose memory.
@@ -52,6 +53,7 @@ Repository/source of truth:
 
 Access and credentials:
 - Blue-demon SSH credentials are available locally via the existing SSH/password files already used by Codex. Prefer the configured SSH entry or password file, and never paste credential contents into logs or committed files.
+  - Canonical credential file (path only, never the secret): `../blue-demon.txt` relative to the repo root, i.e. `D:\UserFolders\Documents\GitHub\blue-demon.txt` (WSL: `/mnt/d/UserFolders/Documents/GitHub/blue-demon.txt`). It has 4 `key: value` lines: a label, `local IP address: 192.168.241.149`, `user: iarroyof`, `pass: <password>`. Parse the password with `grep -i '^pass' "$F" | sed 's/^[^:]*:[[:space:]]*//'` and pass it via `sshpass -e` (export `SSHPASS`). The same password is also mirrored at WSL `~/.ssh/.sshpass`. Run remote ops through `wsl -d Ubuntu-24.04 -u iarroyof` using a pre-written `.sh` (inline PowerShell→wsl→ssh quoting breaks); key-based ssh is not configured, so `sshpass -f` on a structured file or a bare `ssh` will fail auth.
 - GitHub credential/token file on the Windows host: `C:\Users\nachi\Documents\github_toke.txt`.
 - Use credential files only when needed for sync operations. Do not commit credential files, token contents, copied secrets, shell history containing tokens, or generated logs that expose them.
 - Keep the three repo copies synced when source/config/script/context changes are made:

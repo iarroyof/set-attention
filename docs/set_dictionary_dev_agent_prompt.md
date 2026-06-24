@@ -56,6 +56,12 @@ GATING (hard order — do not skip):
 AFTER PERFORMING A CHANGE (after-action updates, every time):
 - Re-read the tracker, then update audit/phase_sd_status.md for every pending->running (log launch
   time/PID/ETA/log path) and running->done (validated_runs, audit file) transition.
+- Long-running sweep monitoring follows the onboarding rule: after a detached `nohup` launch, run exactly
+  one compact status check to confirm the job is alive and early logs/artifacts exist; then disconnect
+  and stop polling. Do not run repeated SSH polling or local sleep loops while waiting for completion.
+  Wait for the user's explicit notification that the sweep ended before final validation, artifact sync,
+  summarization, or launching the next sweep. Break this only if the first health check shows the job
+  died, artifacts are missing, or logs show OOM/NaN/traceback/W&B failures.
 - If you changed config keys: update configs/hyperparameters.md and ensure get_resolved_metadata()
   (src/models/set_only/set_only_lm.py:408) and the CSV fingerprint include them.
 - Write/append the per-task audit markdown under audit/ and the manifest/TSV under

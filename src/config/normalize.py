@@ -146,6 +146,8 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
             anchor_cfg.setdefault("target", "pre_encoder")
             anchor_cfg.setdefault("pre_encoder_layers", 2)
             anchor_cfg.setdefault("lambda_h", 0.1)
+            anchor_cfg.setdefault("lambda_pre", 1.0)
+            anchor_cfg.setdefault("pre_encoder_head", True)
             anchor_cfg.setdefault("detach_target", True)
             anchor_cfg.setdefault("norm", "layernorm")
             anchor_cfg["teacher"] = teacher_cfg
@@ -164,6 +166,13 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
             multivector_cfg.setdefault("r", 1)
         model["multivector_basis"] = multivector_cfg
         model.setdefault("candidate_fiber", "endpoint_window")
+        multiresolution_cfg = model.get("multiresolution")
+        if multiresolution_cfg is None:
+            multiresolution_cfg = {}
+        if isinstance(multiresolution_cfg, dict):
+            multiresolution_cfg.setdefault("enabled", False)
+            multiresolution_cfg.setdefault("groups", [])
+        model["multiresolution"] = multiresolution_cfg
         data_cfg = cfg.get("data", {})
         task = cfg.get("task")
         if task is None:

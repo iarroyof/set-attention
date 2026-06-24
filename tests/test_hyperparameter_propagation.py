@@ -80,6 +80,8 @@ def test_a1_4_normalize_preserves_canonical_defaults():
     assert model["anchor"]["target"] == "pre_encoder"
     assert model["anchor"]["pre_encoder_layers"] == 2
     assert model["anchor"]["lambda_h"] == 0.1
+    assert model["anchor"]["lambda_pre"] == 1.0
+    assert model["anchor"]["pre_encoder_head"] is True
     assert model["anchor"]["detach_target"] is True
     assert model["anchor"]["norm"] == "layernorm"
     assert model["anchor"]["teacher"]["enabled"] is False
@@ -168,6 +170,8 @@ def test_a1_4_resolved_metadata_reaches_json_and_csv():
         assert json_payload["resolved.anchor_target"] == "pre_encoder"
         assert json_payload["resolved.anchor_pre_encoder_layers"] == 0
         assert json_payload["resolved.anchor_lambda_h"] == 0.1
+        assert json_payload["resolved.anchor_lambda_pre"] == 1.0
+        assert json_payload["resolved.anchor_pre_encoder_head"] is True
         assert json_payload["resolved.anchor_detach_target"] is True
         assert json_payload["resolved.anchor_norm"] == "layernorm"
         assert json_payload["resolved.anchor_teacher_enabled"] is False
@@ -191,6 +195,8 @@ def test_a1_4_resolved_metadata_reaches_json_and_csv():
         assert rows[0]["resolved.anchor_target"] == "pre_encoder"
         assert rows[0]["resolved.anchor_pre_encoder_layers"] == "0"
         assert rows[0]["resolved.anchor_lambda_h"] == "0.1"
+        assert rows[0]["resolved.anchor_lambda_pre"] == "1.0"
+        assert rows[0]["resolved.anchor_pre_encoder_head"] == "True"
         assert rows[0]["resolved.anchor_detach_target"] == "True"
         assert rows[0]["resolved.anchor_norm"] == "layernorm"
         assert rows[0]["resolved.anchor_teacher_enabled"] == "False"

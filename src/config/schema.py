@@ -76,6 +76,7 @@ SET_ONLY_KEYS = {
     "set_diversity",
     "multivector_basis",
     "candidate_fiber",
+    "multiresolution",
     "seq2seq",
     "hybrid",
 }
@@ -188,6 +189,8 @@ def validate_config(cfg: dict) -> None:
             "target",
             "pre_encoder_layers",
             "lambda_h",
+            "lambda_pre",
+            "pre_encoder_head",
             "detach_target",
             "norm",
             "teacher",
@@ -227,6 +230,37 @@ def validate_config(cfg: dict) -> None:
         raise ConfigError(
             "candidate_fiber must be endpoint_window, all_past, or window_plus_landmarks"
         )
+    if model_cfg.get("multiresolution") is not None:
+        multi_cfg = model_cfg["multiresolution"]
+        if not isinstance(multi_cfg, dict):
+            raise ConfigError("model.multiresolution must be a mapping")
+        unexpected_multi = set(multi_cfg.keys()) - {"enabled", "groups"}
+        if unexpected_multi:
+            raise ConfigError(
+                f"Unexpected model.multiresolution keys: {sorted(unexpected_multi)}"
+            )
+        groups = multi_cfg.get("groups", [])
+        if groups is not None:
+            if not isinstance(groups, list):
+                raise ConfigError("model.multiresolution.groups must be a list")
+            for idx, group in enumerate(groups):
+                if not isinstance(group, dict):
+                    raise ConfigError(
+                        f"model.multiresolution.groups[{idx}] must be a mapping"
+                    )
+                unexpected_group = set(group.keys()) - {
+                    "name",
+                    "num_heads",
+                    "window_size",
+                    "stride",
+                    "w",
+                    "s",
+                }
+                if unexpected_group:
+                    raise ConfigError(
+                        "Unexpected model.multiresolution.groups"
+                        f"[{idx}] keys: {sorted(unexpected_group)}"
+                    )
 
     if "family" in cfg.get("data", {}):
         raise ConfigError("data.family is not allowed; use model.implementation only")

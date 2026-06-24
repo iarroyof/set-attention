@@ -50,8 +50,14 @@ artifacts. The local copy is a working mirror. Git operations should prefer blue
 | 2 | `docs/revision_source_of_truth_definitions.md` | Code-backed definitions and values: M formula, candidate fiber, landmark indices, pooling alpha, router min_temp, adapter resolution. Never fill these from prose memory. |
 | 3 | `Context For Revision Agent after NeurIPS2026 LLM feedback.md` | Execution environment, blue-demon SSH/Docker workflow, repo sync rules, credential paths, Phase A/B tracking discipline, causality finding. |
 | 4 | **`audit/phase_a_status.md`** | **Master Phase A status tracker.** Rows for every A0–A5 sub-task: status (done/running/pending), run counts, audit file pointer, notes. Also contains the incident log and blocking dependency chain. **This is how you determine what to do next.** |
-| 5 | `docs/example_paper_working_agent.tex` | Current LaTeX working draft. Read before any Phase B writing. |
+| 5 | `out/final_paper_bundle/overleaf_ready/example_paper.tex` | **Current NeurIPS paper source.** Read before any paper writing. Build with `scripts/compile_paper_bundle.sh`. |
 | 6 | `configs/hyperparameters.md` | Public config contract: canonical YAML keys, defaults, range checks. |
+
+Do **not** use `docs/example_paper_working_agent.tex`, `docs/example_paper_from_zip.tex`, or
+`docs/example_paper_patched.tex` as current manuscript sources. They are stale ICML-template
+drafts retained only as historical files. Current paper edits belong in
+`out/final_paper_bundle/overleaf_ready/example_paper.tex` unless the user explicitly says
+otherwise.
 
 ---
 

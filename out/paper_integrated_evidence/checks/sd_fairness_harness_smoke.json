@@ -1,13 +1,13 @@
 {
   "anchor_reference_counts": {
-    "anchor_pre_encoder_params": 3548928,
+    "anchor_pre_encoder_and_head_params": 3598080,
     "inference_minus_token_params": 3546240,
     "matched_dense_token_params": 10941696,
     "set_dictionary_inference_params": 14487936,
-    "set_dictionary_train_params": 18036864
+    "set_dictionary_train_params": 18086016
   },
   "checks": {
-    "pre_encoder_excluded_from_inference_count": true,
+    "pre_encoder_head_excluded_from_inference_count": true,
     "thin_anchor_exact_under_span_ablation": true,
     "token_mlp_disabled_for_anchor_span": true
   },
@@ -17,10 +17,10 @@
   ],
   "small_smoke": {
     "inference_peak_vram_mib": 17.5126953125,
-    "normal_loss": 5.503087997436523,
-    "span_ablated_loss": 5.339049339294434,
-    "span_ablation_delta_loss": -0.16403865814208984,
-    "train_peak_vram_mib": 16.8193359375
+    "normal_loss": 5.325502872467041,
+    "span_ablated_loss": 5.268815517425537,
+    "span_ablation_delta_loss": -0.056687355041503906,
+    "train_peak_vram_mib": 17.03857421875
   },
   "status": "pass"
 }

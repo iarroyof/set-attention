@@ -71,6 +71,30 @@ def test_option1_candidate_fiber_uses_strict_endpoint_window():
         assert all(t - 8 < endpoint <= t for endpoint in endpoints)
 
 
+def test_all_past_candidate_fiber_uses_all_sealed_sets():
+    bank = build_window_bank(
+        seq_len=24,
+        window_size=8,
+        stride=4,
+        device=torch.device("cpu"),
+        causality_mode="strict_past",
+        candidate_fiber="all_past",
+    )
+    candidates = _candidate_lists(bank)
+
+    assert bank.set_endpoints.tolist() == [7, 11, 15, 19, 23]
+    assert candidates[0] == []
+    assert candidates[6] == []
+    assert candidates[7] == [0]
+    assert candidates[11] == [0, 1]
+    assert candidates[15] == [0, 1, 2]
+    assert candidates[23] == [0, 1, 2, 3, 4]
+
+    for t, sets in enumerate(candidates):
+        endpoints = bank.set_endpoints[sets].tolist() if sets else []
+        assert all(endpoint <= t for endpoint in endpoints)
+
+
 def test_reference_strict_past_set_counts():
     assert num_sets_for_length(512, 16, 8, causality_mode="strict_past") == 63
     assert num_sets_for_length(2048, 16, 8, causality_mode="strict_past") == 255

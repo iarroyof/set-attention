@@ -144,6 +144,7 @@ def build_window_bank(
     stride: int,
     device: torch.device,
     causality_mode: str = "noncausal",
+    candidate_fiber: str = "endpoint_window",
 ) -> Bank:
     if window_size <= 0 or stride <= 0:
         raise ValueError("window_size and stride must be positive")
@@ -172,12 +173,24 @@ def build_window_bank(
         set_indices[j, : len(indices)] = torch.tensor(indices, device=device)
 
     endpoints = [indices[-1] for indices in set_indices_list if indices]
+    if candidate_fiber not in {"endpoint_window", "all_past"}:
+        raise ValueError("candidate_fiber must be 'endpoint_window' or 'all_past'")
+
     token_sets: list[list[int]] = [[] for _ in range(seq_len)]
     if mode == "strict_past":
         for t in range(seq_len):
-            lower = t - window_size
-            token_sets[t] = [j for j, endpoint in enumerate(endpoints) if lower < endpoint <= t]
+            if candidate_fiber == "endpoint_window":
+                lower = t - window_size
+                token_sets[t] = [
+                    j for j, endpoint in enumerate(endpoints) if lower < endpoint <= t
+                ]
+            else:
+                token_sets[t] = [
+                    j for j, endpoint in enumerate(endpoints) if endpoint <= t
+                ]
     else:
+        if candidate_fiber != "endpoint_window":
+            raise ValueError("candidate_fiber is only supported for strict_past banks")
         for j, indices in enumerate(set_indices_list):
             for idx in indices:
                 token_sets[idx].append(j)

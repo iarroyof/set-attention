@@ -122,7 +122,10 @@ def train_one_epoch(
         input_ids = input_ids.to(device)
         labels = labels.to(device)
         optimizer.zero_grad(set_to_none=True)
-        logits = model(input_ids)
+        try:
+            logits = model(input_ids, labels=labels)
+        except TypeError:
+            logits = model(input_ids)
         loss = torch.nn.functional.cross_entropy(
             logits.view(-1, logits.size(-1)), labels.view(-1)
         )
@@ -155,10 +158,26 @@ def evaluate(
     model: nn.Module,
     dataloader: DataLoader,
     device: torch.device,
+    unigram_counts: torch.Tensor | None = None,
 ) -> dict:
     model.eval()
+    if hasattr(model, "reset_probe_metrics"):
+        model.reset_probe_metrics()
     total_loss = 0.0
     total_tokens = 0
+    bucket_loss: dict[str, float] = {
+        "loss_early_freq": 0.0,
+        "loss_early_rare": 0.0,
+        "loss_late_freq": 0.0,
+        "loss_late_rare": 0.0,
+    }
+    bucket_tokens: dict[str, int] = {key: 0 for key in bucket_loss}
+    counts_device = unigram_counts.to(device) if unigram_counts is not None else None
+    rarity_threshold = None
+    if counts_device is not None:
+        nonzero = counts_device[counts_device > 0]
+        if nonzero.numel() > 0:
+            rarity_threshold = torch.median(nonzero.to(dtype=torch.float32))
     for input_ids, labels in dataloader:
         input_ids = input_ids.to(device)
         labels = labels.to(device)
@@ -168,8 +187,38 @@ def evaluate(
         )
         total_loss += loss.item() * labels.numel()
         total_tokens += labels.numel()
+        if counts_device is not None and rarity_threshold is not None:
+            per_token_loss = torch.nn.functional.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                labels.view(-1),
+                reduction="none",
+            ).view_as(labels)
+            seq_len = labels.shape[1]
+            pos = torch.arange(seq_len, device=device).view(1, seq_len)
+            early = pos < (seq_len // 2)
+            target_counts = counts_device.index_select(0, labels.reshape(-1)).view_as(labels)
+            frequent = target_counts.to(dtype=torch.float32) >= rarity_threshold
+            masks = {
+                "loss_early_freq": early & frequent,
+                "loss_early_rare": early & ~frequent,
+                "loss_late_freq": ~early & frequent,
+                "loss_late_rare": ~early & ~frequent,
+            }
+            for key, mask in masks.items():
+                n = int(mask.sum().item())
+                if n <= 0:
+                    continue
+                bucket_loss[key] += float(per_token_loss.masked_select(mask).sum().item())
+                bucket_tokens[key] += n
     loss_avg = total_loss / max(total_tokens, 1)
-    return {"loss": loss_avg}
+    metrics = {"loss": loss_avg}
+    for key, total in bucket_loss.items():
+        n = bucket_tokens[key]
+        if n > 0:
+            metrics[key] = total / n
+    if hasattr(model, "get_probe_metrics"):
+        metrics.update(model.get_probe_metrics(reset=True))
+    return metrics
 
 
 def train_one_epoch_seq2seq(

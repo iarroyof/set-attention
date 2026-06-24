@@ -106,7 +106,10 @@ def measure_peak_vram_mib(
     torch.cuda.reset_peak_memory_stats(device)
     if training:
         model.train()
-        logits = model(input_ids)
+        try:
+            logits = model(input_ids, labels=labels)
+        except TypeError:
+            logits = model(input_ids)
         loss = F.cross_entropy(logits.reshape(-1, logits.shape[-1]), labels.reshape(-1))
         if hasattr(model, "get_auxiliary_losses"):
             for name, value in model.get_auxiliary_losses().items():
@@ -206,7 +209,7 @@ def run_smoke() -> dict[str, object]:
         "checks": {
             "thin_anchor_exact_under_span_ablation": thin_anchor_exact,
             "token_mlp_disabled_for_anchor_span": small.token_mlp_enabled is False,
-            "pre_encoder_excluded_from_inference_count": (
+            "pre_encoder_head_excluded_from_inference_count": (
                 set_train_params - set_inference_params == anchor_pre_encoder_params
             ),
         },
@@ -220,7 +223,7 @@ def run_smoke() -> dict[str, object]:
         "anchor_reference_counts": {
             "set_dictionary_inference_params": set_inference_params,
             "set_dictionary_train_params": set_train_params,
-            "anchor_pre_encoder_params": anchor_pre_encoder_params,
+            "anchor_pre_encoder_and_head_params": anchor_pre_encoder_params,
             "matched_dense_token_params": token_params,
             "inference_minus_token_params": set_inference_params - token_params,
         },
@@ -249,12 +252,12 @@ def write_outputs(result: dict[str, object]) -> None:
         "Harness checks:",
         f"- Thin-anchor span ablation exact: {result['checks']['thin_anchor_exact_under_span_ablation']}",
         f"- Token MLP disabled for anchor_span: {result['checks']['token_mlp_disabled_for_anchor_span']}",
-        f"- Pre-encoder excluded from inference count: {result['checks']['pre_encoder_excluded_from_inference_count']}",
+        f"- Pre-encoder/head excluded from inference count: {result['checks']['pre_encoder_head_excluded_from_inference_count']}",
         "",
         "Anchor-reference parameter counts:",
         f"- Set-dictionary inference params: {counts['set_dictionary_inference_params']}",
         f"- Set-dictionary train params: {counts['set_dictionary_train_params']}",
-        f"- Anchor pre-encoder params: {counts['anchor_pre_encoder_params']}",
+        f"- Anchor pre-encoder/head params: {counts['anchor_pre_encoder_and_head_params']}",
         f"- Matched dense token params: {counts['matched_dense_token_params']}",
         f"- Inference minus token params: {counts['inference_minus_token_params']}",
         "",

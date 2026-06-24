@@ -36,8 +36,12 @@ Open these first in any new chat/session:
 - `docs/ska_pat_feedback_revision_plan_v2_6_locked.md` -- this locked plan, now with the v2.7 baseline-control amendment.
 - `docs/revision_source_of_truth_definitions.md` -- code-backed source of truth for current definitions and values.
 - `Context For Revision Agent after NeurIPS2026 LLM feedback.md` -- execution environment, blue-demon workflow, repo-sync rules, and causality finding.
-- `docs/example_paper_working_agent.tex` -- current LaTeX working draft.
+- `out/final_paper_bundle/overleaf_ready/example_paper.tex` -- current NeurIPS paper source. Build with `scripts/compile_paper_bundle.sh`.
 - `configs/hyperparameters.md` -- public config contract.
+
+Do not use `docs/example_paper_working_agent.tex`, `docs/example_paper_from_zip.tex`, or
+`docs/example_paper_patched.tex` as current paper sources. They are stale ICML-template
+drafts retained only as historical files.
 
 Do not use older pasted plans as authoritative after this file exists. Older plans are historical context only. If a status tracker says A4.2 is a "long-context slice", interpret that as the completed long-context slice; convergence remains pending unless a `>=30` epoch artifact exists.
 

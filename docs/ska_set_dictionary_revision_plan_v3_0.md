@@ -113,13 +113,23 @@ predictive** target:
 
 ```text
 L_anchor = (1/L) * sum_t || LN(span_t) - sg(LN(h_t*)) ||_2^2
-h_t*     = hidden state of a SHALLOW CAUSAL token pre-encoder (1–2 layers) used ONLY to produce the
-           target; sg = stop-gradient; LN on both sides.
+h_t*     = hidden state of a SHALLOW CAUSAL token pre-encoder (1–2 layers); sg = stop-gradient on the
+           target; LN on both sides.
 ```
 
-- The pre-encoder is a **training-time auxiliary**: it is excluded from the inference model and from
-  inference param/VRAM/FLOP accounting. It is the lightweight, in-model alternative to a full external
-  teacher.
+- **CRITICAL — the pre-encoder MUST be trained to be predictive (this was the SD-6 failure).** Give it
+  its own causal LM head and an auxiliary next-token CE loss `L_CE_pre`; the span then distills from the
+  detached, *trained* hidden state. If the pre-encoder receives no gradient — detached target **and** not
+  in the forward path **and** no own loss, as in the first SD-6 build — then `h_t*` is a fixed RANDOM
+  projection and the anchor loss is inert: `recon_error_norm` parks at √2 ≈ 1.414 (cosine ≈ 0) and the
+  rescue is never actually tested. `detach_target=true` is correct **only because** `L_CE_pre`
+  independently trains the teacher; without `L_CE_pre`, detaching freezes the teacher at init.
+  - Optional fast sanity variant (parameter-free predictive target): `h_t* = detach(emb(x_{t+1}))`, the
+    next-token embedding. If `recon_error_norm` drops here but not with the pre-encoder, the pre-encoder
+    is still untrained.
+- The pre-encoder (and its LM head) is a **training-time auxiliary**: excluded from the inference model
+  and from inference param/VRAM/FLOP accounting. It is the lightweight, in-model alternative to a full
+  external teacher.
 - Do **not** anchor to `token_mlp(emb+pos)` or to `emb+pos`: those targets measure pooling
   invertibility, not predictive usefulness, and were rejected for unfair token-attention alignment.
 - **External teacher + KL logit distillation is explicitly deferred to Future Work** (cost). Leave a
@@ -131,8 +141,14 @@ h_t*     = hidden state of a SHALLOW CAUSAL token pre-encoder (1–2 layers) use
 Primary objective stays CE. Total loss:
 
 ```text
-L = L_CE + lambda_h * L_anchor + lambda_div * L_div
+L = L_CE + lambda_pre * L_CE_pre + lambda_h * L_anchor + lambda_div * L_div
 ```
+
+with `lambda_pre ~ 1.0` (the pre-encoder is a small shallow LM; it should train freely). **Anchor
+validity guard (DoD): an anchoring run is interpretable only if `recon_error_norm` falls meaningfully
+below the √2 ≈ 1.414 random-vector baseline (target: < ~1.2 with a downward trend). A flat
+`recon_error_norm ≈ 1.4` means the target is non-predictive — treat the run as confounded, not as
+evidence of a capacity limit.**
 
 ### D-div (optional): anti-collapse on the set Gram
 
@@ -212,7 +228,9 @@ Mirror the v2.7 "matched backend control" discipline. Before reporting any PPL w
 | `anchor.target` | str | `pre_encoder` | only `pre_encoder` active; `teacher` reserved/disabled |
 | `anchor.pre_encoder_layers` | int | 2 | 1–2; causal; training-only; dropped at inference |
 | `anchor.lambda_h` | float | 0.1 | >= 0 |
-| `anchor.detach_target` | bool | true | stop-gradient on `h_t*` |
+| `anchor.lambda_pre` | float | 1.0 | >= 0; weight of the pre-encoder's own next-token CE (`L_CE_pre`). **Must be > 0 when `anchor.enabled` — `0` leaves the teacher untrained (SD-6 confound)** |
+| `anchor.pre_encoder_head` | bool | true | the pre-encoder has its own causal LM head trained by `L_CE_pre`; required for a predictive target |
+| `anchor.detach_target` | bool | true | stop-gradient on `h_t*` (valid only because `L_CE_pre` trains the teacher) |
 | `anchor.norm` | str | `layernorm` | LN both sides before MSE |
 | `anchor.teacher.enabled` | bool | false | **deferred**; must stay false this branch |
 | `set_diversity.lambda_div` | float | 0.0 | >= 0; reuses existing loss |
@@ -253,23 +271,186 @@ Staged ladder (dense backend, `r=1`, 3 seeds), per topology:
 |---|---|---|---|
 | Ref | existing `direct` artifacts (reused, **no rerun**) + token baseline 781.1 | — | — |
 | S1 | `output_residual_mode=anchor_span`, `anchor.enabled=false`, CE only | reused `direct` + 781.1 | **adopt `anchor_span` only if** it betters old `direct` AND moves closer to 781.1 |
-| S2 | S1 + `anchor.enabled=true` (shallow causal pre-encoder, `lambda_h=0.1`) | S1 | does predictive anchoring help? |
+| S2 | S1 + `anchor.enabled=true` (shallow causal pre-encoder **trained via `L_CE_pre`, `lambda_pre=1.0`, `pre_encoder_head=true`**, `lambda_h=0.1`, `detach_target=true`) | S1 | does predictive anchoring help? (only valid if `recon_error_norm` falls below √2) |
 
 Follow-ups on the S2 winner only: `lambda_h=1.0`, then `set_diversity.lambda_div>0`. Introduce
 multivector `r=2` **only** if S2 reconstruction error floors high (D-multivec). Do not run the full
 cross-product.
+
+### S1 outcome (SD-5, DONE) and SD-6 pre-registered decider
+
+**S1 result (null, clean).** Dense `r=1`, CE only: `(4,2)` PPL `1297.9 ± 10.2` vs old `empty_only` ref
+`1273.6` (+24, modestly worse); `(16,8)` PPL `1510.9 ± 82.8` vs ref `1422.8` (neutral, within noise);
+token baseline `781.1`. **Span ablation = +41k–46k PPL** (above uniform ~33k): prediction is carried
+**entirely** by the `C̄≈2` set span with **zero token bypass** (fairness impeccable), so the model is
+genuinely set-mediated but overfiltering-bound. The thin anchor is **inert under CE-only** (it should
+earn its place only at S2). **S1 fails the adoption gate** → do NOT adopt `anchor_span` as a standalone
+win; `direct`/`empty_only` remain the paper defaults.
+
+**SD-6 = S2 is a pre-registered anchoring-rescue test, not automatic continuation.** Launch S2
+(`anchor.enabled=true`, shallow causal pre-encoder, `lambda_h=0.1`) and classify by the
+`anchor/recon_error_norm` trajectory together with `val/ppl` vs S1, per topology:
+
+- **Branch A — signal-limited (continue):** `recon_error_norm` decreases materially across epochs
+  (trends below ~`0.5` with negative last-3-epoch slope) **AND** `val/ppl` improves over S1 toward
+  `781.1` beyond the combined 3-seed 95% CI. → proceed to **SD-7** (`lambda_h=1.0`, then `lambda_div>0`).
+- **Branch B — capacity-limited (pivot):** `recon_error_norm` floors high (stays above ~`0.5`, last-3-
+  epoch slope ≈ 0) **AND** `val/ppl` stays within S1's 3-seed CI. → **stop the `lambda_h` sweep**; pivot
+  to **SD-8** = D-fiber `all_past` (CE-only first), **not** `r=2`. Widening the candidate fiber attacks
+  the `C̄≈2` rank ceiling that S1 implicates as the binding constraint; `r=2` is only a secondary
+  floor test after `all_past`.
+
+Do not launch `lambda_h=1.0` or any multivector/fiber follow-up before the decider classifies S2.
+Honest end-state: if S2 (Branch B, **with a trained target** — see below) **and** `all_past` both null
+with a high recon floor, the defensible conclusion is that the compression bottleneck is fundamental at
+this scale — report it as a negative result, not an execution failure.
+
+> **⚠️ SD-6 confound + SD-6.5 (2026-06-17).** The first S2 run (SD-6) shipped a pre-encoder with **no
+> `L_CE_pre`** and a detached target, so the teacher stayed at random init: `recon_error_norm` parked at
+> √2 ≈ 1.4 (cosine ≈ 0), the anchoring was inert, and the **Branch-B "capacity-limited" verdict it
+> produced is void** — the decider above never ran on a valid signal. S1 (CE-only) and SD-1…4 are
+> unaffected (the anchor path only exists when `anchor.enabled=true`), so **only S2 reruns.** **SD-6.5**
+> = build D-anchor-loss as now specified (`pre_encoder_head=true`, `lambda_pre=1.0`, keep
+> `detach_target=true`), rerun the S2 `(16,8)`+`(4,2)` ladder, and apply the **anchor validity guard**
+> (`recon_error_norm` must fall below ~`1.2` or the run is confounded, not capacity-limited) **before**
+> reading the Branch A/B decider. SD-7/SD-8 stay blocked behind a valid SD-6.5.
 
 **Metrics per run**: `val/ppl`, inference VRAM, train VRAM, time/epoch, normalized reconstruction
 error `||LN(span_t)-LN(h_t*)|| / ||LN(h_t*)||`, routing entropy, router top-1, pooling `n_eff`,
 gradient ratios `rho_p, rho_a, rho_pa`, set-Gram spectral entropy, span-ablation Δppl (§5.3).
 
 **Decision gate (DoD)**: a variant is a positive result iff §4 + §5 pass AND `val/ppl` improves over
-V0 by a margin exceeding 3-seed CI at its comparison topology AND reconstruction error decreases. Record
-nulls explicitly (do not discard). The recon-error-vs-ppl relationship across V0–V4 is the headline
-diagnostic: it separates "insufficient learning signal" (anchoring closes the gap) from "irreducible
-bottleneck" (recon floors high, multivector needed) from "routing collapse" (entropy/top-1).
+S1 by a margin exceeding the combined 3-seed CI at its comparison topology AND reconstruction error
+decreases. Record nulls explicitly (do not discard). The recon-error-vs-ppl relationship across S1→S2
+(and any SD-8 fiber/multivector follow-up) is the headline diagnostic: it separates "insufficient
+learning signal" (anchoring closes the gap, Branch A) from "irreducible bottleneck / capacity"
+(recon floors high → wider fiber, Branch B) from "routing collapse" (entropy/top-1).
 
 ---
+
+## 7b. SD-9 — multi-resolution (mixed-blur) frontier test
+
+A within-family multi-scale variant: at one depth the 8 heads are split into a **fine group**
+`(w,s)=(2,1)` (L/M≈1, near-token, detail-preserving) and a **coarse/blurred group** `(4,2)` (L/M≈2),
+pooled and routed in parallel, then concatenated. `%blur` = the coarse-head fraction. Cheap first
+implementation: two parallel set streams with `H_fine`/`H_coarse` heads, concatenated before the head
+(per-head-group banks inside one block are the cleaner long-term form). CE-only, anchor disabled,
+`endpoint_window` fiber, 3 seeds. **Backend differs by scale** (each uses its feasible backend, as the
+project always did): dense exact at short, landmark at long.
+
+- **Short context** — L=512 on **blue-demon**, **dense exact backend, batch=16**: mixed-25 (6 fine +
+  2 coarse), fine `(2,1)`/coarse `(4,2)`; plus the two uniform extremes all-fine `(2,1)` and all-coarse
+  `(4,2)` under the same contract.
+- **Long context** — **L=8192 on lizmark** (`iarroyof@192.168.241.205`, 48 GiB), matching the *verified*
+  latest long-context experiment (A8.3 `set_linear_landmark`, `audit/A8_3_l8192_linear_followup.md`):
+  **landmark backend, `landmark_coverage=0.25`, batch=1, lr 1e-4, 10 epochs**. mixed-65 (3 fine +
+  5 coarse) using the same `(2,1)/(4,2)` fine/coarse ratios; plus the two uniform extremes, all with the
+  landmark backend. Run **concurrently** with the short arm. (L=2048 is the blue-demon regime and is NOT
+  the lizmark arm.)
+- **Baseline / question (set-vs-set, NOT token attention):** does the mix sit *below* the line joining
+  all-fine and all-coarse on the **PPL–peak-VRAM** plane (a Pareto win)? That is the only claim SD-9
+  tests; a win is attributable to multi-resolution mixing within the set family, not to beating token
+  attention (the fine heads already approach token attention — see §"murky fairness" discussion).
+- **Feasibility / backend (DoD):** long context MUST use the landmark backend — dense O(M²) is
+  infeasible at L=8192 (M≈4095), which is exactly why A8 used landmark on lizmark. Smoke first on
+  lizmark; monitor peak VRAM; do not silently fall back like SD-8. **Verify lizmark credentials** (NOT
+  in `../blue-demon.txt`, which is blue-demon only — same user `iarroyof`; confirm the password) and
+  sync repo + docker image per the A8 lizmark pattern (`scripts/run_a8_l8192_linear_followup_lizmark.sh`,
+  `scripts/run_a8_largeL_smoke_lizmark.sh`).
+- **Expectation (pre-registered):** a modest frontier improvement over uniform, not parity with token
+  attention, with the usual memory erosion from the fine heads. Record nulls explicitly. SD-9 informs
+  whether (b) `contextualize-before-pool` is worth opening; it does not by itself resolve the
+  pooling-stage ceiling.
+
+**SD-9 RESULT (DONE 2026-06-20).** Registered verdict = not Pareto vs interpolation, BUT mixed
+Pareto-**dominates the all-fine endpoint** on both PPL and VRAM at both contexts. Short: all-fine
+912.9/13933 → mixed-25 862.1/13790 (super-additive; span-abl Δ rises, coarse heads carry more used
+prediction). Long L=8192: all-fine 1033.1/27928 → mixed-65 1009.0/20193 (−24 PPL **and** −28% VRAM).
+Multi-scale hypothesis supported; the long-context coarse-head win de-risks SD-10.
+
+## 7c. SD-10 — causal latent-dictionary that re-reads (the strong form of option b)
+
+Goal: replace the one-shot lossy pool with a learned per-layer **read cross-attention**, make the latent
+basis the residual-highway object, and **generate** token states by decoding the refined basis. Targets
+the diagnosed pooling-stage ceiling directly. Framing is **compressed long-range memory** (M ≪ L), not a
+short-context replacement for attention — keep that discipline or the result is uninterpretable (see §2,
+and the "murky fairness / rediscover token attention" discussion).
+
+**STAGING (per user 2026-06-20).** The FULL redesign here — learned/un-materialized latents, dropping the
+identity residual, generating token states ONLY as atom combinations — has open, possibly circuit-opening
+questions (seeding; whether raw `E[x]` as KV/query/identity opens undesirable shortcuts) and is
+**deferred (SD-11, conditional).** The verified-safe ENTRY is **§7e SD-10a**: add per-layer re-read as a
+*minimal additive change on the current winner* (pool stays the seed, route unchanged, the verified-weak
+`anchor_span` identity unchanged), isolating the one causal hypothesis (re-read vs pool-once) without the
+murky parts. Open SD-11 only if SD-10a is positive.
+
+Forward (causal; reuses strict-past endpoints `eₘ` for both masks):
+```
+Hₜ = E[xₜ] + P[t]                       cheap input features (NOT a refined token stream)
+Z⁰ = seed latents, M ≪ L, endpoints eₘ
+per layer k:                            latents RE-READ the input every layer
+  Z' = Z + ReadXAttn(Q=LN Z, KV=H ; mask latent m ← token j iff j ≤ eₘ)
+  Z''= Z' + SelfAttn(LN Z' ; causal over eₘ)
+  Z^{k+1} = Z'' + FFN(LN Z'')
+hₜ = DecodeXAttn(Q=q(Hₜ), KV=Z^K ; mask token t ← latent m iff eₘ ≤ t) + Hₜ
+yₜ = LMhead(hₜ)
+```
+
+Module spec / reuse:
+- `ReadXAttn` = new cross-attention sub-layer added to the set block (latent queries, token keys/values),
+  replacing `bank.pool`. The set block becomes a Perceiver/ISAB block. Causal read mask from `eₘ`.
+- `SelfAttn` over latents = the existing `SetAttentionBlock` self-attention (causal over `eₘ`).
+- `DecodeXAttn` = the existing candidate-masked router, reframed as token-query ← latent decode (mask
+  `eₘ ≤ t`); largely unchanged.
+- Seed latents: start with a coarse pool of `E[x]` (input-conditioned) or learned latents + a cheap
+  read at layer 0. `Hₜ` thin-identity residual stays (circuit closed; `anchor_span`-style).
+
+DoD obligations:
+- **Causal-composition proof + numerical probe:** `hₜ ← latents{eₘ≤t} ← tokens{j≤eₘ≤t}` ⇒ depends only on
+  `x_{≤t}`. Reuse the SD-2 future-perturbation probe on the read and decode cross-attentions.
+- **Cost/efficiency:** O(L·M·K); the claim is a quality–memory win at **long context** (M ≪ L). Evaluate
+  on lizmark L=8192 (landmark-class), against the A8.3 long-context refs and the SD-9 long-context rows,
+  and on compressed-memory/recall tasks (needle, associative recall, long-doc continuation), NOT only
+  short-context PPL.
+- **Fairness:** report inference params/VRAM; at M≈L it approaches token attention — state it; the
+  contribution is the compressed-memory regime, not short-context parity.
+- Gate: draft only for now; launch decision after SD-9 write-up and explicit user go.
+
+## 7d. SD-9.5 — mechanism probes on the current winner (cheap, do FIRST)
+
+Pre-registered probes on the SD-9 mixed model (verified current implementation). Load SD-9 checkpoints if
+saved; else retrain the 3 mixed seeds with the eval instrumentation (reuse SD-9 configs).
+
+- **Per-head-group span-ablation:** extend the existing span-ablation hook to zero the FINE-group routed
+  contribution and the COARSE-group contribution *separately*. Report ΔPPL per group, overall + stratified.
+  Prediction: coarse-group ablation hurts long-range/global tokens more; fine hurts local.
+- **Effective-range probe:** per group report routing reach — mean `|t − center(eₘ)|` weighted by routing
+  prob — plus routing entropy/top-1. Prediction: coarse reach ≫ fine.
+- **Token-type stratified loss (proxy):** split val loss by (i) position bucket (early vs late context),
+  (ii) target rarity (frequent vs rare). Test whether the coarse-head gain concentrates where aggregated
+  long-range context matters.
+- **Scale-L sweep (lizmark, landmark, batch 1, smoke first):** mixed-65 + all-fine + all-coarse at
+  L ∈ {16384, 32768}. Report PPL + peak VRAM; **test whether mixed's VRAM advantage over all-fine grows
+  with L** (quantitative compressed-memory claim). seed 0 first, extend if budget allows.
+- Output `audit/SD_9_5_probes.md` (3 attributions + scale-L table); sizes the SD-10a opportunity, feeds the
+  write-up.
+
+## 7e. SD-10a — minimal re-read ablation (one isolated test, gated entry to SD-10/§7c)
+
+The circuit-safe test of the SD-10 hypothesis: add per-layer **ReadXAttn** to the set block on top of the
+*verified winner*, changing nothing else.
+
+- **Change:** in each set-attention layer, set states cross-attend to the token source `H = h₀` with the
+  causal read mask (latent m ← token j iff `j ≤ eₘ`), *before* the existing set self-attention. Seed stays
+  `Z⁰ = pool(h₀)` (NOT learned latents); route unchanged; `anchor_span` identity `f = h₀ + r` unchanged.
+  Flag `set_reread.enabled` (default false). Reuse `eₘ` for the mask.
+- **Safety (addresses the user concern):** the murky parts (learned/un-materialized latents, dropping the
+  identity, never materializing tokens) are NOT touched. `h₀` is the verified-weak thin anchor (SD-5
+  span-ablation), so reusing it as read source/identity is an input interface, not a predictive bypass.
+- **DoD:** extend the SD-2 future-perturbation probe + nonzero-gradient check to `ReadXAttn`; run ONE
+  comparison — winner (pool-once) vs +re-read — at the SD-9 short mixed `(2,1)/(4,2)` config, 3 seeds,
+  dense, CE-only. **Verdict:** does re-read lower PPL / raise the set path's carried prediction vs
+  pool-once? Yes → open SD-11 (full §7c redesign); No → pooling ceiling not fixed by re-read; stop, write up.
 
 ## 8. Tracking, provenance, and engineering patterns
 

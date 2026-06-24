@@ -63,13 +63,17 @@ This table uses the **canonical naming**:
 | `model.anchor.target` | Anchor target source | `pre_encoder` | `pre_encoder` only |
 | `model.anchor.pre_encoder_layers` | Shallow causal token pre-encoder depth | `2` | `1` or `2` |
 | `model.anchor.lambda_h` | Anchor loss weight | `0.1` | `>= 0` |
+| `model.anchor.lambda_pre` | Pre-encoder next-token CE weight (`L_CE_pre`) | `1.0` | `>= 0`; must be `> 0` when `anchor.enabled=true` |
+| `model.anchor.pre_encoder_head` | Enable the pre-encoder's own causal LM head | `true` | Required when `anchor.enabled=true`; training-only and excluded from inference accounting |
 | `model.anchor.detach_target` | Stop gradients through anchor target | `true` | `true`, `false` |
 | `model.anchor.norm` | Normalization before anchor MSE | `layernorm` | `layernorm` |
 | `model.anchor.teacher.enabled` | External teacher anchor path | `false` | Deferred; must remain `false` |
 | `model.set_diversity.lambda_div` | Set diversity regularizer weight | `0.0` | `>= 0` |
 | `model.multivector_basis.enabled` | Multi-vector basis floor-test knob | `false` | Deferred; must remain `false` |
 | `model.multivector_basis.r` | Value sub-vectors per atom per head | `1` | `1–4`; stays `1` while disabled |
-| `model.candidate_fiber` | Candidate fiber policy | `endpoint_window` | `endpoint_window`; `all_past` and `window_plus_landmarks` are deferred |
+| `model.candidate_fiber` | Candidate fiber policy | `endpoint_window` | `endpoint_window`, `all_past`; `window_plus_landmarks` is deferred |
+| `model.multiresolution.enabled` | Enable parallel set streams with different topologies inside one set-only LM | `false` | `true`, `false`; experimental SD-9 path |
+| `model.multiresolution.groups` | Parallel set stream definitions | `[]` | List of `{name, num_heads, window_size, stride}`; group head counts must sum to `model.num_heads` |
 | `model.hybrid.pattern` | Layer pattern for `hybrid_token_set` LM; `T` means token-attention layer and `S` means set layer | Required for `hybrid_token_set` | String of `T`/`S` with length `model.num_layers` |
 | `model.hybrid.set_topologies` | Per-set-layer topology list for `hybrid_token_set`; one entry per `S` in `model.hybrid.pattern` | Required for `hybrid_token_set` | List of `{window_size, stride}` mappings |
 | `model.d_phi` | Set feature / adapter dimension | `null`, resolved to `model.d_model` | `null` or positive integer |
@@ -99,8 +103,10 @@ This table uses the **canonical naming**:
 | `stride <= window_size` | Set‑only models | Must hold |
 | `set_causality_mode=strict_past` | Autoregressive set-only LM | Drops partial trailing windows; candidates are endpoint sets `{m: t-window_size < endpoint_m <= t}`; set self-attention masking is derived from this mode |
 | `output_residual_mode` | Strict-past set-only LM | `direct` uses `h_t^(0)+r_t`; `empty_only` uses `h_t^(0)` only for `C_t=0` and otherwise `r_t`; `none` uses only `r_t`; `anchor_span` uses `emb(x_t)+pos_t+span_t` and requires `token_mlp.enabled=false` |
-| `anchor.enabled=true` | Set-dictionary anchoring | Constructs a shallow causal token pre-encoder for training-time target generation; `anchor.teacher.enabled` must remain `false` |
-| `candidate_fiber` | Set-dictionary routing support | Only `endpoint_window` is implemented for SD-2; wider causal fibers are deferred |
+| `anchor.enabled=true` | Set-dictionary anchoring | Constructs a shallow causal token pre-encoder with its own LM head and `L_CE_pre`; `anchor.lambda_pre>0`, `anchor.pre_encoder_head=true`, and `anchor.teacher.enabled=false` are required |
+| `candidate_fiber` | Set-dictionary routing support | `endpoint_window` uses sealed endpoints in the local window; `all_past` uses every sealed past set (`endpoint_m <= t`); `window_plus_landmarks` is deferred |
+| `multiresolution.enabled=true` | Set-only LM | Builds one set stream per `model.multiresolution.groups` entry, sharing token embeddings/token MLP and concatenating routed stream outputs before the LM head; each group's `d_phi` and set width are proportional to `num_heads` |
+| `multiresolution.groups` | Set-only LM | Head counts must sum to `model.num_heads`; every group needs positive `window_size` and `stride`, `stride <= window_size <= data.seq_len`; proportional `d_model`, `set_state_dim`, and `d_phi` shares must be integral |
 | `hybrid_token_set` topology | Hybrid LM | `model.hybrid.pattern` length must equal `model.num_layers`; `model.hybrid.set_topologies` length must equal the number of `S` layers; every topology requires positive `window_size` and `stride`, with `stride <= window_size <= data.seq_len` |
 | `router_topk` required | `router_type=learned` | `1 <= router_topk <= max_sets` |
 | `router.min_temp` | `router_type=learned` | Must be numeric and `> 0`; default `0.5` |

@@ -188,6 +188,21 @@ def test_output_residual_mode_config_validation():
     validate_config(normalized)
     validate_compatibility(normalized)
 
+    cfg["model"]["candidate_fiber"] = "all_past"
+    normalized = normalize_config(cfg)
+    validate_config(normalized)
+    validate_compatibility(normalized)
+
+    cfg["model"]["candidate_fiber"] = "window_plus_landmarks"
+    normalized = normalize_config(cfg)
+    validate_config(normalized)
+    try:
+        validate_compatibility(normalized)
+    except ConfigError as exc:
+        assert "window_plus_landmarks is deferred" in str(exc)
+    else:
+        raise AssertionError("window_plus_landmarks should remain deferred")
+
 
 def test_geometry_only_learned_router_batches_descriptors():
     torch.manual_seed(2026)

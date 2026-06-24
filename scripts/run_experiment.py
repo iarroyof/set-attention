@@ -24,7 +24,7 @@ from train.loop import (
     train_one_epoch,
     train_one_epoch_seq2seq,
 )  # noqa: E402
-from train.metrics_impl import bleu_score, rouge_l_f1  # noqa: E402
+from train.metrics_impl import bleu_score, perplexity, rouge_l_f1  # noqa: E402
 from train.metrics_schema import detect_task  # noqa: E402
 
 
@@ -158,6 +158,7 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
         set_diversity=model_cfg.get("set_diversity"),
         multivector_basis=model_cfg.get("multivector_basis"),
         candidate_fiber=model_cfg.get("candidate_fiber", "endpoint_window"),
+        multiresolution=model_cfg.get("multiresolution"),
     )
 
 
@@ -183,6 +184,8 @@ def attach_resolved_metadata(cfg: dict, model: torch.nn.Module) -> None:
         "anchor_target": "NA",
         "anchor_pre_encoder_layers": "NA",
         "anchor_lambda_h": "NA",
+        "anchor_lambda_pre": "NA",
+        "anchor_pre_encoder_head": "NA",
         "anchor_detach_target": "NA",
         "anchor_norm": "NA",
         "anchor_teacher_enabled": "NA",
@@ -190,6 +193,9 @@ def attach_resolved_metadata(cfg: dict, model: torch.nn.Module) -> None:
         "multivector_basis_enabled": "NA",
         "multivector_basis_r": "NA",
         "candidate_fiber": "NA",
+        "multiresolution_enabled": "NA",
+        "multiresolution_groups": "NA",
+        "multiresolution_num_groups": "NA",
     }
     resolved_defaults.update(resolved)
     cfg["resolved"] = resolved_defaults
@@ -240,6 +246,81 @@ def build_dataloaders(data_cfg: dict) -> tuple[DataLoader, DataLoader, int]:
     return train_loader, val_loader, train_ds.vocab_size
 
 
+def build_unigram_counts(dataset, vocab_size: int) -> torch.Tensor:
+    counts = torch.zeros(int(vocab_size), dtype=torch.long)
+    samples = getattr(dataset, "samples", None)
+    if samples is not None:
+        for _, labels in samples:
+            counts += torch.bincount(labels.reshape(-1), minlength=vocab_size)
+        return counts
+    for _, labels in dataset:
+        counts += torch.bincount(labels.reshape(-1), minlength=vocab_size)
+    return counts
+
+
+def maybe_evaluate_span_ablation(
+    model: torch.nn.Module,
+    val_loader: DataLoader,
+    device: torch.device,
+    val_metrics: dict,
+) -> dict:
+    if not hasattr(model, "set_span_ablation"):
+        return {}
+    if getattr(model, "output_residual_mode", None) != "anchor_span":
+        return {}
+    previous = bool(getattr(model, "span_ablation_enabled", False))
+    try:
+        model.set_span_ablation(True)
+        ablated = evaluate(model, val_loader, device)
+    finally:
+        model.set_span_ablation(previous)
+    ablated_loss = float(ablated["loss"])
+    base_loss = float(val_metrics["loss"])
+    ablated_ppl = perplexity(ablated_loss)
+    base_ppl = perplexity(base_loss)
+    return {
+        "span_ablation_loss": ablated_loss,
+        "span_ablation_ppl": ablated_ppl,
+        "span_ablation_delta_loss": ablated_loss - base_loss,
+        "span_ablation_delta_ppl": ablated_ppl - base_ppl,
+    }
+
+
+def maybe_evaluate_group_span_ablation(
+    model: torch.nn.Module,
+    val_loader: DataLoader,
+    device: torch.device,
+    val_metrics: dict,
+) -> dict:
+    if not hasattr(model, "set_span_ablation_mode"):
+        return {}
+    if not bool(getattr(model, "multiresolution_enabled", False)):
+        return {}
+    if getattr(model, "output_residual_mode", None) != "anchor_span":
+        return {}
+    groups = [str(m["name"]) for m in getattr(model, "multiresolution_group_metadata", [])]
+    wanted = [name for name in ("fine", "coarse") if name in groups]
+    if not wanted:
+        return {}
+    previous = str(getattr(model, "span_ablation_mode", "none"))
+    base_loss = float(val_metrics["loss"])
+    base_ppl = perplexity(base_loss)
+    metrics = {}
+    try:
+        for group in wanted:
+            model.set_span_ablation_mode(group)
+            ablated = evaluate(model, val_loader, device)
+            ablated_loss = float(ablated["loss"])
+            ablated_ppl = perplexity(ablated_loss)
+            metrics[f"span_ablation_{group}_loss"] = ablated_loss
+            metrics[f"span_ablation_{group}_ppl"] = ablated_ppl
+            metrics[f"span_ablation_{group}_delta_loss"] = ablated_loss - base_loss
+            metrics[f"span_ablation_{group}_delta_ppl"] = ablated_ppl - base_ppl
+    finally:
+        model.set_span_ablation_mode(previous)
+    return metrics
+
+
 def build_seq2seq_dataloaders(data_cfg: dict, shared_vocab: bool) -> tuple[DataLoader, DataLoader, dict]:
     streaming = bool(data_cfg.get("streaming", True))
     train_ds, val_ds = get_seq2seq_datasets(
@@ -284,6 +365,7 @@ def main() -> None:
     device = torch.device(args.device)
 
     task = detect_task(cfg)
+    unigram_counts = None
     if task == "seq2seq":
         shared_vocab = bool(cfg.get("model", {}).get("seq2seq", {}).get("shared_vocab", True))
         train_loader, val_loader, vocab = build_seq2seq_dataloaders(cfg["data"], shared_vocab)
@@ -352,6 +434,7 @@ def main() -> None:
             cfg["model"]["vocab_size"] = vocab_size
         model = build_model(cfg["model"]).to(device)
         attach_resolved_metadata(cfg, model)
+        unigram_counts = build_unigram_counts(train_loader.dataset, vocab_size)
     wandb_tags = [t for t in args.wandb_tags.split(",") if t]
     logger = ExperimentLogger(
         config=cfg,
@@ -412,7 +495,13 @@ def main() -> None:
                     set_diversity_weight=set_diversity_weight,
                     set_diversity_mode=set_diversity_mode,
                 )
-                val_metrics = evaluate(model, val_loader, device)
+                val_metrics = evaluate(model, val_loader, device, unigram_counts=unigram_counts)
+                val_metrics.update(
+                    maybe_evaluate_span_ablation(model, val_loader, device, val_metrics)
+                )
+                val_metrics.update(
+                    maybe_evaluate_group_span_ablation(model, val_loader, device, val_metrics)
+                )
             set_diagnostics = model.get_diagnostics() if hasattr(model, "get_diagnostics") else None
             logger.log_epoch(epoch, train_metrics, val_metrics, set_diagnostics)
             print(

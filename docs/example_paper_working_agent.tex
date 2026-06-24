@@ -2679,13 +2679,122 @@ perplexity.  The current SKA gap is therefore not explained by a single missing
 capacity knob; it is more likely a combination of routing optimization,
 generalization, and interface conditioning.
 
+\subsection{Causal Set-Dictionary Branch: Pooling-Stage Ceiling}
+\label{sec:results-set-dictionary}
+
+The set-dictionary branch isolates a more specific failure mode in the dense
+set-only family.  These runs use the same LR-normalized dense budget as above,
+but replace the output interface by a causal dictionary over sealed sets.  The
+branch was deliberately gated: the S1 anchor-span baseline is CE-only; the S2
+rerun fixes the anchor target by training a causal pre-encoder head; SD-8 then
+maximizes the causal fiber with \texttt{all\_past}; and SD-8.1 over-provisions
+the atom and set-state width to $d_\phi=d_s=768$ for the favorable $(4,2)$
+topology.  Table~\ref{tab:sd-branch-mechanism} and
+Figure~\ref{fig:sd-branch-ceiling} summarize the result.
+
+\begin{table*}[t]
+\centering
+\caption{Causal set-dictionary branch at $L=512$, dense backend, three seeds.
+Peak VRAM is reported when the audited package recorded it.  Source artifacts:
+\texttt{sd5\_s1\_anchor\_span\_dense\_summary.tsv},
+\texttt{sd6\_5\_s2\_anchoring\_fixed\_summary.tsv},
+\texttt{sd8\_all\_past\_dense\_routerdense\_summary.tsv}, and
+\texttt{sd8\_all\_past\_dense\_dphi768\_w4s2\_comparison.tsv}.}
+\label{tab:sd-branch-mechanism}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcccl}
+\toprule
+Row & Intervention & Topology & Val. PPL $\downarrow$ & Peak VRAM MiB $\downarrow$ & Mechanistic readout \\
+\midrule
+Dense token reference & Direct token attention & -- & $781.1 \pm 37.1$ & 13407 & Matched dense token path remains the quality reference. \\
+Set dense reference & \texttt{empty\_only}, favorable near-2 compression & $(4,2)$ & 1273.6 & 11807 & Best pre-branch dense set reference at this compression. \\
+S1 & \texttt{anchor\_span}, CE-only & $(4,2)$ & $1297.9 \pm 10.2$ & -- & Span ablation $\Delta$PPL $46.4$k; the thin anchor is inert. \\
+S1 & \texttt{anchor\_span}, CE-only & $(16,8)$ & $1510.9 \pm 82.8$ & -- & Span ablation $\Delta$PPL $41.3$k; prediction is span-carried. \\
+S2 fixed & Trained causal anchor, $\lambda_h=0.1$ & $(4,2)$ & $1289.0 \pm 65.9$ & -- & Valid target: final cosine $\approx0.30$, but PPL remains inside S1 CI. \\
+S2 fixed & Trained causal anchor, $\lambda_h=0.1$ & $(16,8)$ & $1510.4 \pm 32.8$ & -- & Valid target: final cosine $\approx0.31$, again no adoption win. \\
+SD-8 & Maximal causal fiber, \texttt{all\_past} & $(4,2)$ & $1288.6 \pm 15.2$ & 11914 & Fiber is no longer locally starved; PPL is still flat. \\
+SD-8 & Maximal causal fiber, \texttt{all\_past} & $(16,8)$ & $1363.9 \pm 8.7$ & -- & Larger topology improves, but remains far above dense token PPL. \\
+SD-8.1 & \texttt{all\_past}, $d_\phi=d_s=768$ & $(4,2)$ & $1241.5 \pm 44.5$ & 12764 & Width helps by $47.1$ PPL vs SD-8, but still trails token attention by $460.4$ PPL. \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+\begin{figure*}[t]
+\centering
+\begin{subfigure}{0.48\textwidth}
+\centering
+\scriptsize
+\begin{tabular}{lrc}
+\toprule
+Model, $(4,2)$ & PPL & Relative scale \\
+\midrule
+Dense token & 781 & \rule{20mm}{2.5pt} \\
+Set \texttt{empty\_only} & 1274 & \rule{33mm}{2.5pt} \\
+S2 trained anchor & 1289 & \rule{33mm}{2.5pt} \\
+SD-8 \texttt{all\_past} & 1289 & \rule{33mm}{2.5pt} \\
+SD-8.1 $d_\phi=d_s=768$ & 1242 & \rule{32mm}{2.5pt} \\
+\bottomrule
+\end{tabular}
+\caption{Perplexity ceiling.}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\textwidth}
+\centering
+\scriptsize
+\begin{tabular}{lccccc}
+\toprule
+S2 anchor cosine & ep. 1 & ep. 2 & ep. 5 & ep. 8 & ep. 10 \\
+\midrule
+$(4,2)$ & 0.32 & 0.38 & 0.35 & 0.31 & 0.30 \\
+$(16,8)$ & 0.36 & 0.40 & 0.35 & 0.31 & 0.31 \\
+\bottomrule
+\end{tabular}
+\caption{Trained-anchor plateau.}
+\end{subfigure}
+\caption{Set-dictionary mechanism summary.  Left: the strongest branch result
+narrows the gap but remains $+460.4$ PPL worse than the dense token reference
+while using 12764 MiB versus 13407 MiB peak VRAM.  Right: the fixed S2 anchor is
+valid rather than random; cosine is derived from the normalized reconstruction
+error as $1-\|h-z\|^2/2$ and plateaus near $0.30$.}
+\label{fig:sd-branch-ceiling}
+\end{figure*}
+
+The branch gives a clean negative mechanism.  The fixed S2 run removes the
+SD-6 confound: the pre-encoder has its own next-token head, receives gradient,
+passes the causal leakage probe, and produces a non-random target.  Yet the
+anchor settles at cosine $\approx0.30$ and does not beat the S1 baseline beyond
+the pre-registered three-seed confidence gate.  This rules out the explanation
+that the anchor failed only because its teacher was random; a trained causal
+target exists, but the pooled state does not adopt it strongly enough.
+
+The SD-8 and SD-8.1 controls remove two additional objections.  With
+\texttt{all\_past}, every previous token can contribute to each candidate
+fiber, so the result is not merely a too-short endpoint window.  The $(16,8)$
+topology improves to $1363.9$ PPL, but the favorable $(4,2)$ topology remains
+flat at $1288.6$ PPL, with large span-ablation deltas indicating that prediction
+is still carried by the broad span rather than by a recovered token-resolution
+state.  Doubling both atom and set-state width to $768$ improves $(4,2)$ to
+$1241.5$ PPL, but this over-provisioned dictionary is still $460.4$ PPL worse
+than the dense token baseline while consuming most of the same peak VRAM
+budget.  Thus trained anchoring, maximal causal fiber, and wider atoms all
+converge on the same diagnosis: the present implementation is limited at the
+pooling stage.  Once raw token evidence has been compressed into sealed set
+states, downstream dictionary routing can expose and stress the limitation, but
+it does not recover the token-level predictive state under this budget.
+
 \paragraph{Summary.}
 The revised experiments establish a conservative empirical picture.  The
 strict-past SKA implementation is causal, configurable, and memory-efficient at
 long context, but matched token-attention controls remain stronger on
 perplexity.  The capacity ablations rule out the simplest explanations that
 the gap is merely due to too-small $d_\phi$, too-small set-state width, or too
-shallow set processing.
+shallow set processing.  The causal set-dictionary branch sharpens this into a
+publishable mechanism result: valid trained anchors, maximal causal fibers, and
+over-provisioned atom width all improve or validate pieces of the system, but
+they converge on a pooling-stage ceiling rather than closing the token-attention
+quality gap.
 \bibliography{example_paper}
 \bibliographystyle{icml2026}
 
