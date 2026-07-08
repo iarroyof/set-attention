@@ -32,6 +32,30 @@ def _infer_attention_family(backend: str | None) -> str | None:
 
 def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     model = cfg.get("model", {})
+    data_cfg = cfg.setdefault("data", {})
+    training_cfg = cfg.setdefault("training", {})
+    logging_cfg = cfg.setdefault("logging", {})
+
+    if data_cfg.get("dataset") == "mqar":
+        cfg["task"] = "mqar"
+        data_cfg["task"] = "mqar"
+
+    data_cfg.setdefault("num_workers", 0)
+    training_cfg.setdefault("deterministic", False)
+    training_cfg.setdefault("strict_deterministic", False)
+    training_cfg.setdefault("benchmark_mode", False)
+    checkpoint_cfg = training_cfg.get("checkpoint")
+    if checkpoint_cfg is None:
+        checkpoint_cfg = {}
+    if isinstance(checkpoint_cfg, dict):
+        checkpoint_cfg.setdefault("save_final", False)
+        checkpoint_cfg.setdefault("save_every_epochs", 0)
+        checkpoint_cfg.setdefault("directory", None)
+        checkpoint_cfg.setdefault("resume_from", None)
+        checkpoint_cfg.setdefault("eval_only_from", None)
+    training_cfg["checkpoint"] = checkpoint_cfg
+    if isinstance(logging_cfg, dict):
+        logging_cfg.setdefault("metric_columns", [])
 
     legacy_family = model.pop("family", None)
     decoder_family = model.pop("decoder_family", None)
@@ -173,7 +197,6 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
             multiresolution_cfg.setdefault("enabled", False)
             multiresolution_cfg.setdefault("groups", [])
         model["multiresolution"] = multiresolution_cfg
-        data_cfg = cfg.get("data", {})
         task = cfg.get("task")
         if task is None:
             if data_cfg.get("seq_dataset"):
@@ -189,7 +212,9 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
             cfg.setdefault("_warnings", []).append(message)
             warnings.warn(message, DeprecationWarning, stacklevel=2)
         if "set_causality_mode" not in model:
-            default_causality_mode = "strict_past" if task == "lm" else "noncausal"
+            default_causality_mode = (
+                "strict_past" if task in {"lm", "mqar"} else "noncausal"
+            )
             if legacy_causal is not None:
                 default_causality_mode = "strict_past" if bool(legacy_causal) else "noncausal"
             model["set_causality_mode"] = default_causality_mode
@@ -202,4 +227,7 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
             token_mlp.setdefault("enabled", True)
 
     cfg["model"] = model
+    cfg["data"] = data_cfg
+    cfg["training"] = training_cfg
+    cfg["logging"] = logging_cfg
     return cfg

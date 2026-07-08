@@ -178,4 +178,3 @@ If you want, I can:
 - add `geom_bias_in_scores` flag to prevent geometry double-counting
 - implement a real Soft-trimmed Boltzmann pooling algorithm
 - add tests for fusion and router descriptor behavior
-

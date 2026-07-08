@@ -1,39 +1,65 @@
 # SKA — Causal Set-Dictionary Revision Plan (v3.0 LOCKED)
 
+> **Current authority note (2026-06-30):** this file is the architecture and
+> completed SD-ladder design record. New research execution is governed by
+> `docs/set_dictionary_research_main_plan.md`,
+> `audit/phase_sd_status.md`, and the assigned task in `docs/agent_plans/`.
+> The branch and candidate-gather prerequisites described below are already
+> complete and must not be repeated.
+
 Status: locked for the **set-dictionary branch only**. Supersedes decision **D1 (R1 direct
 embedding residual)** of `docs/ska_pat_feedback_revision_plan_v2_6_locked.md` (v2.7) for work
-on this branch. All other v2.7 locked decisions (Option-1 strict-past, T1 tail policy, landmark
-backend, config stack, LR-norm + anchor topology references, provenance discipline) remain in
-force and are NOT changed here.
+on this branch. At the time of the v3.0 lock, all other v2.7 decisions remained in force. The
+2026-06-30 amendment below subsequently changes only the active experiment backend policy; the
+strict-past, tail, architecture, config, reference, and provenance decisions remain locked.
 
-Prerequisite is **experimental, not a git merge**. The candidate-gather (Redundancy-1) code already
-lives in `paper/final-results-bundle` (default `router_score_mode`); A9 validated it (DONE) but showed
-**no short-context VRAM win at `L=512`** — expected, because at small `M` the router tensor is not the
-peak driver (see §1). Its remaining R1 confirmation is (a) a per-seed dense-vs-gather `allclose`
-exactness test and (b) a long-context (`L=2048/8192`) VRAM re-measure. Commit candidate-gather first as
-`a9/candidate-gather-router` off `origin/paper/final-results-bundle`, then create
-**`set-dictionary/anchor-span`** off that tip. No merge to `main` while the paper is in progress.
+## Current experimental amendment (updated 2026-06-30)
+
+The architecture, causality, fairness, and completed SD-1--SD-9 ladder in this document remain the
+design record. The active experiment backend policy has changed:
+
+- The current matrix is **exact dense only**: multiresolution set dictionary versus matched dense token.
+- The five-seed paper rows are `{b0,b25,b50,b75,b100}` plus exact token at every supported island;
+  `docs/sd_dense_paper5_matrix.md` is authoritative for cells and live launch provenance.
+- Coverage-scaled landmark (`landmark_coverage=0.25`) is removed from active execution because it scales
+  its landmark count with `M` and does not provide the intended linear/sub-quadratic implementation.
+- Completed landmark rows are retained as historical quality/reference artifacts only. Do not use them
+  for a linear-efficiency claim and do not launch new landmark rows without explicit user approval.
+- The scientific comparison contract is `docs/sd_dense_matched_comparison_plan.md`; live state and
+  operating instructions are in `audit/phase_sd_status.md` and `audit/SD_9_7_handoff.md`.
+- Exact token controls must load `configs/paper_lr_norm/baseline_dense_exact.yaml`. The 2026-06-29
+  incident where exact rows inherited landmark `backend_params` occurred before model construction and
+  did not affect completed set rows; see `audit/incident_sd_dense_token_exact_backend_params.md`.
+
+Where the original §§7b/7d protocol below says landmark is required or active, read it as the historical
+preregistered/executed SD-9 protocol, not current launch guidance. This amendment has precedence for new
+experiments. The older v2.7 locked plan is architecture/provenance history only for this branch.
+
+Historical prerequisite record: candidate-gather (Redundancy-1) was validated
+before this branch and showed no short-context VRAM win at `L=512`. The
+`set-dictionary/anchor-span` branch was subsequently created and is the active
+branch. These prerequisite operations are complete; do not repeat their old
+branch-creation or commit sequence.
 
 ---
 
 ## 0. Required context files — read in this order (onboarding)
 
-1. `set_attention_agent_onboarding.md` — vendor-agnostic onboarding instrument (roles, env, trackers).
-2. `docs/ska_pat_feedback_revision_plan_v2_6_locked.md` — prior locked plan (still in force except D1).
-3. `docs/revision_source_of_truth_definitions.md` — code-backed definitions/values (M, candidate fiber, landmark indices, pooling alpha, router min_temp).
-4. **This file** — supersedes D1 for the branch; defines the set-dictionary architecture, losses, variants, DoD.
-5. `Context For Revision Agent after NeurIPS2026 LLM feedback.md` — execution env, blue-demon workflow, causality finding.
-6. `configs/hyperparameters.md` — public config contract; extend it with the new keys in §6.
-7. `audit/phase_sd_status.md` — **new** master tracker for this branch (create on first session; same protocol as `audit/phase_a_status.md`).
+1. `docs/set_dictionary_research_main_plan.md` — current program authority.
+2. `audit/phase_sd_status.md` — current live state.
+3. `docs/agent_plans/<assigned-task>.md` — current task contract.
+4. `docs/set_dictionary_model_provenance_for_math_agent.md` — executed architecture.
+5. `docs/revision_source_of_truth_definitions.md` — code-backed definitions/values.
+6. **This file** — completed design ladder and historical protocol.
 
-Do not fill project-specific values from memory; always read them from files 2–3 and 6.
+Do not fill project-specific values from memory. The older v2.7 plan is historical provenance only.
 
 ---
 
 ## 1. Motivation (one paragraph)
 
-The reported experiments show matched token-attention baselines beat Set Attention (SKA) on
-WikiText-2 PPL at every tested operating point; SKA only wins on long-context VRAM. The audit
+The pre-set-dictionary experiments showed matched token-attention baselines beating Set Attention
+(SKA) on WikiText-2 PPL at their tested operating points. The audit
 attributes the near-token VRAM overhead to carrying **both** a token stream and a set stream plus
 routing tensors (Redundancy 2), and the hybrid pilot shows repeated set compression overfilters
 (Redundancy 3). This branch reframes the set states as a **causal learned dictionary** (representer-
@@ -243,12 +269,12 @@ them, and in the CSV fingerprint so runs do not collide.
 
 ---
 
-## 7. Experiment ladder — reuse already-run baselines for free, reliable comparison
+## 7. Historical completed experiment ladder
 
 Shared budget (fixed, identical to the matched-control budget so existing baselines apply):
 `WikiText-2, L=512, batch=16, D=384, d_ff=1536, 6 layers, 8 heads, learned router, router_topk=16,
-tau_r=1.0, tau_pool=0.1, lr=1e-4, 10 epochs, 3 seeds`, dense backend first; extend to sparse/landmark
-only after dense shows signal. GPU split per onboarding (dense→GPU0; sparse+linear→GPU1).
+tau_r=1.0, tau_pool=0.1, lr=1e-4, 10 epochs, 3 seeds`. This section records the completed ladder and
+does not authorize sparse/landmark extensions.
 
 The matched **dense token baseline is topology-independent at this budget** (token attention has no
 `w,s`): `val/ppl = 781.1` (multi-seed, already run). So the set-dictionary model is comparable to it at
@@ -330,13 +356,17 @@ learning signal" (anchoring closes the gap, Branch A) from "irreducible bottlene
 
 ## 7b. SD-9 — multi-resolution (mixed-blur) frontier test
 
+> Historical preregistration and completed result. The short exact-dense arm remains active evidence.
+> The landmark long arm is historical reference evidence under the 2026-06-29 amendment and must not be
+> resumed or used to claim linear scaling.
+
 A within-family multi-scale variant: at one depth the 8 heads are split into a **fine group**
 `(w,s)=(2,1)` (L/M≈1, near-token, detail-preserving) and a **coarse/blurred group** `(4,2)` (L/M≈2),
 pooled and routed in parallel, then concatenated. `%blur` = the coarse-head fraction. Cheap first
 implementation: two parallel set streams with `H_fine`/`H_coarse` heads, concatenated before the head
 (per-head-group banks inside one block are the cleaner long-term form). CE-only, anchor disabled,
-`endpoint_window` fiber, 3 seeds. **Backend differs by scale** (each uses its feasible backend, as the
-project always did): dense exact at short, landmark at long.
+`endpoint_window` fiber, 3 seeds. **The historical backend differed by scale**: dense exact at short,
+landmark at long.
 
 - **Short context** — L=512 on **blue-demon**, **dense exact backend, batch=16**: mixed-25 (6 fine +
   2 coarse), fine `(2,1)`/coarse `(4,2)`; plus the two uniform extremes all-fine `(2,1)` and all-coarse
@@ -345,18 +375,15 @@ project always did): dense exact at short, landmark at long.
   latest long-context experiment (A8.3 `set_linear_landmark`, `audit/A8_3_l8192_linear_followup.md`):
   **landmark backend, `landmark_coverage=0.25`, batch=1, lr 1e-4, 10 epochs**. mixed-65 (3 fine +
   5 coarse) using the same `(2,1)/(4,2)` fine/coarse ratios; plus the two uniform extremes, all with the
-  landmark backend. Run **concurrently** with the short arm. (L=2048 is the blue-demon regime and is NOT
+  landmark backend. It was run **concurrently** with the short arm. (L=2048 was the blue-demon regime and was NOT
   the lizmark arm.)
 - **Baseline / question (set-vs-set, NOT token attention):** does the mix sit *below* the line joining
   all-fine and all-coarse on the **PPL–peak-VRAM** plane (a Pareto win)? That is the only claim SD-9
   tests; a win is attributable to multi-resolution mixing within the set family, not to beating token
   attention (the fine heads already approach token attention — see §"murky fairness" discussion).
-- **Feasibility / backend (DoD):** long context MUST use the landmark backend — dense O(M²) is
-  infeasible at L=8192 (M≈4095), which is exactly why A8 used landmark on lizmark. Smoke first on
-  lizmark; monitor peak VRAM; do not silently fall back like SD-8. **Verify lizmark credentials** (NOT
-  in `../blue-demon.txt`, which is blue-demon only — same user `iarroyof`; confirm the password) and
-  sync repo + docker image per the A8 lizmark pattern (`scripts/run_a8_l8192_linear_followup_lizmark.sh`,
-  `scripts/run_a8_largeL_smoke_lizmark.sh`).
+- **Historical feasibility/backend guard:** the executed SD-9 long arm used landmark because exact dense
+  was infeasible at `L=8192` for that preregistered B1 operating point. This records why the historical
+  artifact exists; it is not permission to resume landmark execution under the current amendment.
 - **Expectation (pre-registered):** a modest frontier improvement over uniform, not parity with token
   attention, with the usual memory erosion from the fine heads. Record nulls explicitly. SD-9 informs
   whether (b) `contextualize-before-pool` is worth opening; it does not by itself resolve the
@@ -418,6 +445,9 @@ DoD obligations:
 
 ## 7d. SD-9.5 — mechanism probes on the current winner (cheap, do FIRST)
 
+> Historical probe protocol. Dense short mechanism probes remain usable; landmark scale-L rows and OOMs
+> are archived observations, not the active scale plan.
+
 Pre-registered probes on the SD-9 mixed model (verified current implementation). Load SD-9 checkpoints if
 saved; else retrain the 3 mixed seeds with the eval instrumentation (reuse SD-9 configs).
 
@@ -429,7 +459,7 @@ saved; else retrain the 3 mixed seeds with the eval instrumentation (reuse SD-9 
 - **Token-type stratified loss (proxy):** split val loss by (i) position bucket (early vs late context),
   (ii) target rarity (frequent vs rare). Test whether the coarse-head gain concentrates where aggregated
   long-range context matters.
-- **Scale-L sweep (lizmark, landmark, batch 1, smoke first):** mixed-65 + all-fine + all-coarse at
+- **Historical scale-L sweep (lizmark, landmark, batch 1):** mixed-65 + all-fine + all-coarse at
   L ∈ {16384, 32768}. Report PPL + peak VRAM; **test whether mixed's VRAM advantage over all-fine grows
   with L** (quantitative compressed-memory claim). seed 0 first, extend if budget allows.
 - Output `audit/SD_9_5_probes.md` (3 attributions + scale-L table); sizes the SD-10a opportunity, feeds the

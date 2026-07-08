@@ -9,4 +9,8 @@ On the set-attention project the user is wary of proposing architectural modific
 
 **Why:** with many experiments run, it's easy to lose track of what actually moved the metric vs what was speculative; untested architecture bolted on speculatively wastes compute and muddies attribution.
 
-**How to apply:** lead with a verified-vs-proposed ledger when recommending next steps. Distinguish measurement/scaling of an already-verified model (safe, can't hurt perf) from genuine architecture changes (untested → unknown). Mark untested architecture as HOLD requiring explicit per-task go, not auto-gated. Default to consolidating the verified winner ([[set-attention-research-direction]] — SD-9 multi-resolution is the only clear win) + write-up over launching new architecture. Only the multi-resolution mix clearly helped; anchoring didn't, wider fiber/atom-width gave plateauing partial gains. Re-read (SD-10a) / full latent (SD-11) are untested hypotheses, held.
+**How to apply:** lead with a verified-vs-proposed ledger when recommending next steps. Distinguish
+measurement/scaling of the existing exact-dense multiresolution model from genuine architecture
+changes. The active work is the five-seed regular blur matrix `{b0,b25,b50,b75,b100}` plus matched
+token controls. Re-read (SD-10a), full latent (SD-11), landmark, sparse, fixed-k, and Nyström work are
+untested/inactive hypotheses and require explicit user approval.

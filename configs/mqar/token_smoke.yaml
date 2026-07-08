@@ -1,0 +1,48 @@
+stage: mqar_smoke
+task: mqar
+
+model:
+  implementation: baseline_token
+  attention_family: dense
+  backend: exact
+  architecture: transformer_lm
+  vocab_size: 8192
+  d_model: 64
+  num_heads: 4
+  num_layers: 2
+  dim_feedforward: 128
+  dropout: 0.0
+  max_seq_len: 128
+  causal: true
+
+data:
+  dataset: mqar
+  vocab_size: 8192
+  seq_len: 128
+  num_kv_pairs: 16
+  power_a: 0.01
+  random_non_queries: true
+  num_train_examples: 32
+  num_val_examples: 16
+  batch_size: 4
+  num_workers: 0
+
+training:
+  seed: 0
+  epochs: 1
+  max_updates: 1
+  lr: 0.0003
+  deterministic: true
+  benchmark_mode: false
+  strict_deterministic: false
+  evaluate_group_ablation: false
+  output_dir: out/mqar_smoke
+  checkpoint:
+    save_final: false
+
+logging:
+  metric_columns:
+    - val/lag/lag_1_32_accuracy
+    - val/lag/lag_1_32_query_count
+    - val/lag/lag_33_128_accuracy
+    - val/lag/lag_33_128_query_count

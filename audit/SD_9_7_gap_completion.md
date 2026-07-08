@@ -1,5 +1,9 @@
 # SD-9.7 Gap Completion Log
 
+Status: HISTORICAL landmark-era log. All pending/running actions below were canceled or superseded by the
+exact-dense pivot. Do not execute them. Current state is `audit/phase_sd_status.md`; current operating
+instructions are `audit/SD_9_7_handoff.md`.
+
 Timestamp: 2026-06-23 13:09 (raptor-mini agent)
 
 Summary

@@ -1,5 +1,9 @@
 # SD-9 Multi-Resolution Frontier Test
 
+> **Mixed historical/current evidence.** The short exact-dense result remains reference evidence. The
+> long landmark arm is historical only. Current cells and claims are governed by
+> `docs/sd_dense_paper5_matrix.md` and `audit/phase_sd_status.md`.
+
 Date: 2026-06-20
 Status: PASS validation package, negative Pareto verdict
 

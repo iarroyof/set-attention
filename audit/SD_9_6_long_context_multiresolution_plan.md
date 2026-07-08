@@ -1,5 +1,8 @@
 # SD-9.6 Long-Context Multiresolution Plan
 
+> **Historical landmark-era plan. Do not execute.** Current experiments are exact dense and live in
+> `docs/sd_dense_paper5_matrix.md`; current status is `audit/phase_sd_status.md`.
+
 Date: 2026-06-20
 
 Purpose: extend SD-9/SD-9.5 from short `L=512` and lizmark-owned `L=8192+` scale probes into a controlled open-upper-interval long-context ladder on blue-demon, then define the 5-seed cross-family follow-up needed for paper-grade comparisons.

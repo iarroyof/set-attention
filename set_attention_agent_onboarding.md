@@ -5,7 +5,12 @@ at the start of any session to onboard onto the NeurIPS 2026 set-attention paper
 
 The prompt is designed to be valid at *any point* in the project lifecycle.
 Current run status, completed phases, and active PIDs are NOT hardcoded here —
-they live in `audit/phase_a_status.md`, which you will read as step 4 below.
+they live in the applicable tracker: `audit/phase_a_status.md` for the original revision and
+`audit/phase_sd_status.md` for the set-dictionary branch.
+
+> **Current default scope (2026-07-02):** `set-dictionary/anchor-span`, corrected exact-dense five-seed matrix.
+> Original Phase A and landmark/sparse/Nyström plans are historical unless the user explicitly reopens
+> them.
 
 ---
 
@@ -31,11 +36,12 @@ tracker to find out exactly where the project stands right now.
 | Windows local (Cowork/virtiofs) | `D:\UserFolders\Documents\GitHub\set-attention` |
 | WSL local mount | `/mnt/d/UserFolders/Documents/GitHub/set-attention` |
 | Remote experiment server | `iarroyof@192.168.241.149:~/set-attention` (`blue-demon`) |
-| GitHub | branch `origin/paper/final-results-bundle` |
+| Large-memory experiment server | `iarroyof@192.168.241.205:~/set-attention` (`lizmark`) |
+| GitHub | active local branch `set-dictionary/anchor-span`; no push/merge without approval |
 
-Blue-demon is the **authoritative source of truth** for completed experiments and generated
-artifacts. The local copy is a working mirror. Git operations should prefer blue-demon
-(see context file for the workaround when the local `.git/` mount is read-only).
+The local workspace is the canonical documentation/analysis mirror. Blue-demon and lizmark are
+authoritative for the experiment cells assigned to them by the current matrix; neither remote host is
+the sole source of truth.
 
 ---
 
@@ -46,12 +52,20 @@ artifacts. The local copy is a working mirror. Git operations should prefer blue
 
 | # | File | What it contains |
 |---|---|---|
-| 1 | `docs/ska_pat_feedback_revision_plan_v2_6_locked.md` | **Locked** PAT feedback revision plan. Architectural decisions (Option-1, R1, T1, landmark backend). Full Phase A and B task breakdown with DoD. Supersedes all older pasted plans. |
-| 2 | `docs/revision_source_of_truth_definitions.md` | Code-backed definitions and values: M formula, candidate fiber, landmark indices, pooling alpha, router min_temp, adapter resolution. Never fill these from prose memory. |
-| 3 | `Context For Revision Agent after NeurIPS2026 LLM feedback.md` | Execution environment, blue-demon SSH/Docker workflow, repo sync rules, credential paths, Phase A/B tracking discipline, causality finding. |
-| 4 | **`audit/phase_a_status.md`** | **Master Phase A status tracker.** Rows for every A0–A5 sub-task: status (done/running/pending), run counts, audit file pointer, notes. Also contains the incident log and blocking dependency chain. **This is how you determine what to do next.** |
-| 5 | `out/final_paper_bundle/overleaf_ready/example_paper.tex` | **Current NeurIPS paper source.** Read before any paper writing. Build with `scripts/compile_paper_bundle.sh`. |
-| 6 | `configs/hyperparameters.md` | Public config contract: canonical YAML keys, defaults, range checks. |
+| 1 | `docs/set_dictionary_research_main_plan.md` | Current program authority, dependencies, memory tiers, and work ownership. |
+| 2 | **`audit/phase_sd_status.md`** | Current live jobs, PIDs, logs, incidents, and next operational gate. |
+| 3 | `docs/agent_plans/<assigned-task>.md` | Exact protocol and deliverables for the active task. |
+| 4 | `docs/set_dictionary_dev_agent_prompt.md` | Standing branch guards and implementation discipline. |
+| 5 | `docs/sd_dense_paper5_matrix.md` | Current MRP-1 exact-dense matrix while its queues run. |
+| 6 | `docs/set_dictionary_model_provenance_for_math_agent.md` | Executed forward path and formal-model provenance. |
+| 7 | `docs/revision_source_of_truth_definitions.md` | Code-backed definitions and values. |
+| 8 | `Context For Revision Agent after NeurIPS2026 LLM feedback.md` | Current environment, host ownership, and monitoring policy. |
+| 9 | `out/final_paper_bundle/overleaf_ready/example_paper.tex` | Current manuscript source; not experiment-launch authority. |
+| 10 | `configs/hyperparameters.md` | Config capability contract; availability is not launch approval. |
+
+The older `docs/ska_pat_feedback_revision_plan_v2_6_locked.md` and `audit/phase_a_status.md` document
+the original revision campaign. Read them only for historical provenance or when the user explicitly
+reopens Phase A. They do not authorize landmark, sparse, or Nyström work on the active branch.
 
 Do **not** use `docs/example_paper_working_agent.tex`, `docs/example_paper_from_zip.tex`, or
 `docs/example_paper_patched.tex` as current manuscript sources. They are stale ICML-template
@@ -65,12 +79,21 @@ otherwise.
 
 After reading the files above, follow this decision procedure:
 
-1. **Open `audit/phase_a_status.md`.** Find the first row whose Status is not `✅ DONE`.
-2. **Check its prerequisites.** The dependency chain in the tracker shows what must pass first. Do not start a phase whose predecessor audit file does not have `Status: PASS`.
-3. **If a phase is `🔄 RUNNING`**: check the log on blue-demon (the tracker row will contain the log path and the relevant bat/script). Determine if it is still running or has finished. If finished, run the corresponding `_sync` bat file to collect artifacts, run the summarizer, and verify the manifest. Then update the tracker row to `✅ DONE`.
-4. **If a phase is `⏳ PENDING`**: create the run script + summarizer following the established pattern (see existing scripts in `scripts/run_a3_*.sh` and `scripts/summarize_a3_*.py` as templates). Use the two-bat pattern: `run_<phase>_launch.bat` to start the sweep on blue-demon detached via nohup, `run_<phase>_sync.bat` to collect artifacts after completion. Update the tracker when you launch and again when you confirm PASS.
-5. **If all Phase A tasks are `✅ DONE`**: proceed to Phase B. Read `out/final_paper_bundle/checks/current_plan.md` and `progress_log.md` to determine the Phase B state.
-6. **After every action that changes project state**, update `audit/phase_a_status.md` (see tracking protocol in section 7).
+1. Open `audit/phase_sd_status.md` and `docs/sd_dense_paper5_matrix.md`.
+2. If a queue is running, follow the recorded monitoring policy. Do not infer completion or launch a
+   second queue.
+3. If the user requests status, check each assigned host once, pull only newly completed artifacts,
+   validate, and have the current tracker write owner update the tracker.
+4. If the matrix is complete, analyze it before proposing any new architecture or backend.
+5. After every state change, update the task-local subplan/audit and submit a
+   tracker handoff; the shared-tracker owner updates
+   `audit/phase_sd_status.md` and any shared matrix document.
+6. For Lizmark MRP-1 rows, require strict exclusive per-cell GPU admission.
+   Do not accept any co-resident result. The stopped external container is
+   owned by the registered post-grid handoff and must not be started manually.
+
+Use the original `audit/phase_a_status.md` procedure only after an explicit user request to resume that
+campaign.
 
 ---
 
@@ -91,14 +114,20 @@ $SSHPASS ssh "$REMOTE" \
 $SSHPASS scp local/path/script.py "$REMOTE:$REMOTE_REPO/scripts/script.py"
 ```
 
+Before any remote source/config/script sync, check once for
+`run_sd_grid.sh` and `run_experiment.py`. If either is active, stop: do not
+copy source into that host, do not pull over its working tree, and do not
+launch another queue. Artifact-only pulls are allowed when explicitly
+requested and must not modify executable source.
+
 ### Container runtime
 | Item | Value |
 |---|---|
 | Docker service | `set-attention` |
 | Container working dir | `/workspace` |
 | Python | `/usr/bin/python` (3.11.0rc1) |
-| PyTorch | 2.5.1+cu124, CUDA available, 2× RTX 4090 |
-| GPU split convention | GPU 0 → dense family; GPU 1 → sparse + linear families |
+| PyTorch | container image supplies PyTorch/CUDA; blue has 2× RTX 4090, lizmark 2× RTX 6000 Ada |
+| GPU split convention | one exact-dense worker per GPU under the current host-specific grid |
 | WandB | `WANDB_MODE=offline` |
 | HuggingFace | `HF_DATASETS_OFFLINE=1`, `HF_HUB_OFFLINE=1` |
 | pytest | not installed in container; use direct function execution for tests |
@@ -113,7 +142,7 @@ wsl -d Ubuntu-24.04 -u iarroyof -e bash -lc "bash /mnt/d/UserFolders/Documents/G
 pause
 ```
 
-Key rules:
+Legacy Windows-launcher rules, used only if the original Phase-A workflow is explicitly reopened:
 - Always include `-u iarroyof` — without it, WSL may run as root and `$HOME` resolves to `/root`.
 - Use `$HOME` (not `~`) inside double-quoted bash strings.
 - Two-bat convention: `run_<phase>_launch.bat` starts the sweep (nohup + detach); `run_<phase>_sync.bat` runs the summarizer and syncs artifacts after runs finish.
@@ -124,38 +153,46 @@ exist. Use direct `Read` calls with known paths rather than Glob for discovery o
 
 ---
 
-## 6. Locked Architectural and Config Decisions
+## 6. Current Branch Decisions
 
-These are frozen. Do not change them without an explicit user instruction and a new
-locked-plan document superseding `docs/ska_pat_feedback_revision_plan_v2_6_locked.md`.
+These govern `set-dictionary/anchor-span`. Capability exposed elsewhere in the code does not override
+this table.
 
 | Decision | Locked value |
 |---|---|
 | Causality fix | Option-1: endpoint strict-past routing (`set_causality_mode=strict_past`) |
-| Token access | R1: direct embedding residual — `final_t = h_t^(0) + r_t` |
+| Output path | `output_residual_mode=anchor_span` |
 | Tail policy | T1: drop partial trailing windows — `M = floor((L-w)/s) + 1` |
-| Linear backend | landmark only; `landmark_coverage=0.25`; linspace-rounded indices |
+| Active backend | exact dense only for set and token |
+| Blur matrix | `{b0,b25,b50,b75,b100}` plus exact token at every supported island |
+| Token MLP / anchor | both disabled; CE-only |
+| Candidate fiber | `endpoint_window` |
+| Inactive backends | landmark, sparse, fixed-k, and Nyström require explicit user approval |
 | Config stack | `normalize.py → schema.py → compatibility.py`; no pydantic |
-| Nyström | deprecated; hard-fails construction; active YAMLs moved to `configs/_deprecated/` |
+| Nyström | deprecated; historical brainstorms are archived |
 | Inference cache | proposed design only; do not claim current code has a KV cache |
-| LR-norm headline reference | `D=384, d_ff=1536, w=16, s=8, M=63` at `L=512` |
-| Anchor topology reference | `D=384, d_ff=1536, w=16, s=4, M=125` at `L=512` |
-| Git branch | `paper/final-results-bundle` |
+| Current model shape | `D=384`, `d_ff=1536`, 6 layers, 8 heads |
+| Git branch | `set-dictionary/anchor-span` |
 
 ---
 
 ## 7. Status Tracking Protocol (mandatory — do not skip)
 
-This project uses two parallel trackers, one per phase:
+This project uses separate trackers by scope:
 
 | Tracker | File | Use |
 |---|---|---|
-| Phase A | `audit/phase_a_status.md` | All A0–A5 task/run statuses, incidents, dependency chain |
+| Set dictionary | `audit/phase_sd_status.md` | Current exact-dense jobs, incidents, and next gate |
+| Original Phase A | `audit/phase_a_status.md` | Historical A0–A5 campaign; reopen only explicitly |
 | Phase B | `out/final_paper_bundle/checks/current_plan.md` + `progress_log.md` | Paper writing actions, build state, figure insertions |
 
 **Rules:**
 - Read the relevant tracker at the start of every session before taking any action.
-- Update the tracker after every status transition: pending → running (record launch time, PID, ETA, log path), running → done (record validated_runs, audit file path), or any failure.
+- Only the tracker write owner named in `audit/phase_sd_status.md` updates that
+  shared file. Other task agents update their subplan/task audit and submit the
+  durable handoff. The owner records every pending → running transition
+  (launch time, PID, ETA, log path), running → done transition
+  (validated_runs, audit path), and failure.
 - Never start a phase without confirming its predecessor's audit file says `Status: PASS`.
 - Never end a session without recording what you launched, completed, or failed.
 - On any DoD failure: stop; write `audit/incident_<phase>_<task>_<YYYYMMDD>.md`; add a row to the Incidents table in `audit/phase_a_status.md`; fix once if safe; rerun the full affected DoD set; escalate if the same incident repeats, if the spec is contradicted, or if A2+ runtime exceeds budget.
@@ -164,13 +201,17 @@ This project uses two parallel trackers, one per phase:
 
 ## 8. Recurring Engineering Patterns
 
-### New experiment sweep (any phase)
-1. Create `scripts/run_<phase>_<sweep>.sh` — runs on blue-demon, Docker exec, two GPU workers (dense on 0, sparse+linear on 1), `record_prelaunch()` at top, `nohup` not needed here (called via launch script).
-2. Create `scripts/summarize_<phase>_<sweep>.py` — validates CSVs + JSONs, checks `strict_past`, checks landmark coverage, verifies finite values, writes TSVs + manifest JSON + audit markdown to `out/paper_integrated_evidence/` and `audit/`.
-3. Create `scripts/_run_<phase>_launch.sh` — local WSL script: `mkdir -p` log dirs on blue-demon, SCP run script, start via `nohup ... &`, print PID.
-4. Create `scripts/_run_<phase>_steps.sh` — local WSL script: SCP summarizer, run it in container, SCP 4 artifacts back, verify manifest with Python.
-5. Create `run_<phase>_launch.bat` and `run_<phase>_sync.bat` in repo root.
-6. Record PID + ETA in `audit/phase_a_status.md` when launching; update to DONE after sync.
+### Current exact-dense experiment matrix
+1. Use `scripts/run_sd_grid.sh`; do not create an ad hoc launcher.
+2. Select only a documented `GRID_PROFILE` and run a host dry-run first.
+3. Scan only the registered output namespace. A corrected seed cell is
+   reusable only when requested/applied/torch seeds match and deterministic
+   provenance passes; legacy replicate labels never fill corrected cells.
+4. Run one grid driver per host and one worker per GPU.
+5. Validate exact backend, absent token `backend_params`, no data limit, 10
+   epochs, five applied seeds, deterministic flags, experiment/diagnostics
+   contracts, peak VRAM, family-specific diagnostics, and clean logs.
+6. Record PID, ETA, log, and transition in `audit/phase_sd_status.md`.
 
 ### scan_logs() pattern (copy into every summarizer)
 ```python
@@ -207,5 +248,6 @@ def scan_logs() -> list[str]:
 ---
 
 *This prompt is a stable onboarding instrument. It does not encode project state.
-All live state is in `audit/phase_a_status.md` (Phase A) and
+Live set-dictionary state is in `audit/phase_sd_status.md`; original Phase-A history is in
+`audit/phase_a_status.md`; Phase-B state is in
 `out/final_paper_bundle/checks/current_plan.md` (Phase B).*

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -150,7 +151,7 @@ class SetOnlyLM(nn.Module):
         self.grad_probe_interval = 200
         self._forward_step = 0
         self._grad_probe_active = False
-        self._grad_probe_tensors: dict[str, torch.Tensor] = {}
+        self._grad_probe_tensors: dict[str, object] = {}
         self._last_set_embeddings: torch.Tensor | None = None
         self.window_size = window_size
         self.stride = stride
@@ -512,6 +513,7 @@ class SetOnlyLM(nn.Module):
                     d_model=stream_dim,
                     num_heads=stream_heads,
                     landmark_coverage=backend_params.get("landmark_coverage", 0.25),
+                    num_landmarks=backend_params.get("num_landmarks"),  # fixed k -> genuinely O(M*k); takes precedence over coverage
                     dropout=self.attn_dropout,
                     allow_token_token=self.allow_token_token,
                 )
@@ -586,6 +588,10 @@ class SetOnlyLM(nn.Module):
 
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
         self.diagnostics = SetDiagnostics()
+        self.multiresolution_diagnostics: dict[str, SetDiagnostics] = {
+            str(meta["name"]): SetDiagnostics()
+            for meta in self.multiresolution_group_metadata
+        }
         if feature_mode != "geometry_only" and not self.multiresolution_enabled:
             phi_dim = d_phi
             d_head = self.set_state_dim // num_heads
@@ -1033,8 +1039,18 @@ class SetOnlyLM(nn.Module):
         batch, seq_len = input_ids.shape
         routed_parts: list[torch.Tensor] = []
         primary_router_out: RouterOutput | None = None
-        self._grad_probe_active = False
+        self._grad_probe_active = bool(
+            self.training
+            and self.grad_probe_interval > 0
+            and (self._forward_step % self.grad_probe_interval == 0)
+        )
+        self._forward_step += 1
         self._grad_probe_tensors = {}
+        if self._grad_probe_active:
+            token_states.retain_grad()
+            self._grad_probe_tensors["token_pre_pool"] = token_states
+            self._grad_probe_tensors["set_post_pool"] = {}
+            self._grad_probe_tensors["set_post_blocks"] = {}
 
         for stream, meta in zip(
             self.multiresolution_streams,
@@ -1060,12 +1076,19 @@ class SetOnlyLM(nn.Module):
                 ),
             )
             set_states = stream["set_input_proj"](set_states)
+            group_name = str(meta["name"])
+            group_diagnostics = self.multiresolution_diagnostics[group_name]
+            if self._grad_probe_active:
+                set_states.retain_grad()
+                post_pool = self._grad_probe_tensors["set_post_pool"]
+                if isinstance(post_pool, dict):
+                    post_pool[group_name] = set_states
             if self.training and self.pooling_mode == "soft_trimmed_boltzmann":
                 stats_getter = getattr(pooling_module, "get_last_stats", None)
                 if stats_getter is not None:
                     pooling_stats = stats_getter()
                     if pooling_stats:
-                        self.diagnostics.update_with_pooling_stats(pooling_stats)
+                        group_diagnostics.update_with_pooling_stats(pooling_stats)
 
             features, sig_for_gating = self._build_features_for_bank(
                 input_ids=input_ids,
@@ -1110,6 +1133,11 @@ class SetOnlyLM(nn.Module):
             )
             for block in stream["blocks"]:
                 set_states = block(set_states, geom_bias, content_bias, sig_mask, guard_seq_len)
+            if self._grad_probe_active:
+                set_states.retain_grad()
+                post_blocks = self._grad_probe_tensors["set_post_blocks"]
+                if isinstance(post_blocks, dict):
+                    post_blocks[group_name] = set_states
 
             router = stream["router"]
             if isinstance(router, UniformRouter):
@@ -1119,7 +1147,6 @@ class SetOnlyLM(nn.Module):
                 if desc_router is not None and desc_router.dim() == 2:
                     desc_router = desc_router.unsqueeze(0).expand(batch, -1, -1)
                 router_out = router(token_states, set_states, desc_router, bank.token_to_sets)
-            group_name = str(meta["name"])
             routed_part = router_out.token_repr
             if self.span_ablation_mode == group_name:
                 routed_part = torch.zeros_like(routed_part)
@@ -1133,12 +1160,7 @@ class SetOnlyLM(nn.Module):
             if primary_router_out is None:
                 primary_router_out = router_out
             if self.training:
-                prev_active = getattr(self.diagnostics, "_prev_active", None)
-                if prev_active is not None and prev_active.shape[0] != router_out.num_sets:
-                    self.diagnostics._prev_active = None
-                    self.diagnostics._prev_bank_indices = None
-                    self.diagnostics._prev_bank_indices_h = None
-                self.diagnostics.update_with_router_state(
+                group_diagnostics.update_with_router_state(
                     bank_indices=router_out.bank_indices,
                     num_sets=router_out.num_sets,
                     router_probs=router_out.probs,
@@ -1391,9 +1413,66 @@ class SetOnlyLM(nn.Module):
         return self.lm_head(token_repr)
 
     def get_diagnostics(self) -> dict[str, float]:
+        if self.multiresolution_enabled:
+            self.diagnostics.reset()
+            by_group: dict[str, dict[str, float]] = {}
+            group_heads = {
+                str(meta["name"]): int(meta["num_heads"])
+                for meta in self.multiresolution_group_metadata
+            }
+            stats: dict[str, float] = {}
+            for name, diagnostics in self.multiresolution_diagnostics.items():
+                group_stats = diagnostics.get_epoch_stats()
+                diagnostics.reset()
+                by_group[name] = group_stats
+                for key, value in group_stats.items():
+                    suffix = key.removeprefix("ausa/")
+                    stats[f"ausa/{name}/{suffix}"] = value
+
+            all_keys = sorted({key for group in by_group.values() for key in group})
+            for key in all_keys:
+                values = [
+                    (float(group_heads[name]), float(group[key]))
+                    for name, group in by_group.items()
+                    if key in group
+                    and isinstance(group[key], (int, float))
+                    and math.isfinite(float(group[key]))
+                ]
+                if not values:
+                    continue
+                if key.endswith("_min"):
+                    stats[key] = min(value for _, value in values)
+                elif key.endswith("_max"):
+                    stats[key] = max(value for _, value in values)
+                elif key.endswith("_count"):
+                    stats[key] = sum(value for _, value in values)
+                else:
+                    total_weight = sum(weight for weight, _ in values)
+                    stats[key] = sum(weight * value for weight, value in values) / total_weight
+            self._reset_gradient_probe_schedule()
+            return stats
         stats = self.diagnostics.get_epoch_stats()
         self.diagnostics.reset()
+        self._reset_gradient_probe_schedule()
         return stats
+
+    def _reset_gradient_probe_schedule(self) -> None:
+        # Diagnostics are emitted once per epoch. Re-arm the probe so validation
+        # forwards cannot shift every probe opportunity outside the next epoch.
+        self._forward_step = 0
+        self._grad_probe_active = False
+        self._grad_probe_tensors = {}
+
+    def update_parameter_diagnostics(self) -> None:
+        if not self.multiresolution_enabled:
+            return
+        for stream, meta in zip(
+            self.multiresolution_streams,
+            self.multiresolution_group_metadata,
+        ):
+            name = str(meta["name"])
+            router_params = dict(stream["router"].named_parameters())
+            self.multiresolution_diagnostics[name].update_router_params(router_params)
 
     def get_last_set_embeddings(self) -> torch.Tensor | None:
         return self._last_set_embeddings
@@ -1404,6 +1483,35 @@ class SetOnlyLM(nn.Module):
         t_h = self._grad_probe_tensors.get("token_pre_pool")
         t_z0 = self._grad_probe_tensors.get("set_post_pool")
         t_zl = self._grad_probe_tensors.get("set_post_blocks")
+        if self.multiresolution_enabled:
+            if (
+                not torch.is_tensor(t_h)
+                or not isinstance(t_z0, dict)
+                or not isinstance(t_zl, dict)
+            ):
+                self._grad_probe_active = False
+                self._grad_probe_tensors = {}
+                return
+
+            def _gnorm(t: torch.Tensor) -> float:
+                if t.grad is None:
+                    return float("nan")
+                return float(t.grad.detach().norm().item())
+
+            grad_h = _gnorm(t_h)
+            for name, diagnostics in self.multiresolution_diagnostics.items():
+                post_pool = t_z0.get(name)
+                post_blocks = t_zl.get(name)
+                if not torch.is_tensor(post_pool) or not torch.is_tensor(post_blocks):
+                    continue
+                diagnostics.update_with_gradient_probe(
+                    grad_h=grad_h,
+                    grad_z0=_gnorm(post_pool),
+                    grad_zl=_gnorm(post_blocks),
+                )
+            self._grad_probe_active = False
+            self._grad_probe_tensors = {}
+            return
         if t_h is None or t_z0 is None or t_zl is None:
             self._grad_probe_active = False
             self._grad_probe_tensors = {}

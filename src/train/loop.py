@@ -4,6 +4,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from models.set_only.losses import set_diversity_loss
+from train.metrics_impl import masked_lm_loss_and_counts
 
 DEFAULT_SET_DIVERSITY_MODE = "position_contrastive"
 
@@ -70,6 +71,11 @@ def _update_diagnostics(model: nn.Module) -> None:
             model.collect_grad_diagnostics()
         except Exception:
             pass
+    if hasattr(model, "update_parameter_diagnostics"):
+        try:
+            model.update_parameter_diagnostics()
+        except Exception:
+            pass
     if hasattr(model, "diagnostics") and hasattr(model, "router"):
         try:
             router_params = dict(model.router.named_parameters())
@@ -118,6 +124,8 @@ def train_one_epoch(
     total_tokens = 0
     grad_norm_sum = 0.0
     grad_norm_steps = 0
+    total_correct = 0
+    optimizer_steps = 0
     for input_ids, labels in dataloader:
         input_ids = input_ids.to(device)
         labels = labels.to(device)
@@ -126,8 +134,9 @@ def train_one_epoch(
             logits = model(input_ids, labels=labels)
         except TypeError:
             logits = model(input_ids)
-        loss = torch.nn.functional.cross_entropy(
-            logits.view(-1, logits.size(-1)), labels.view(-1)
+        loss, valid_tokens, correct = masked_lm_loss_and_counts(
+            logits,
+            labels,
         )
         loss, aux_metrics = _maybe_add_model_auxiliary_losses(model, loss)
         loss = _maybe_add_set_diversity_loss(
@@ -143,11 +152,19 @@ def train_one_epoch(
         grad_norm_sum += _grad_norm(model)
         grad_norm_steps += 1
         optimizer.step()
-        total_loss += loss.item() * labels.numel()
-        total_tokens += labels.numel()
+        total_loss += loss.item() * valid_tokens
+        total_tokens += valid_tokens
+        total_correct += correct
+        optimizer_steps += 1
     loss_avg = total_loss / max(total_tokens, 1)
     grad_norm = grad_norm_sum / grad_norm_steps if grad_norm_steps else None
-    metrics = {"loss": loss_avg, "grad_norm": grad_norm}
+    metrics = {
+        "loss": loss_avg,
+        "accuracy": total_correct / max(total_tokens, 1),
+        "valid_tokens": total_tokens,
+        "grad_norm": grad_norm,
+        "_optimizer_steps": optimizer_steps,
+    }
     if "aux_metrics" in locals():
         metrics.update(aux_metrics)
     return metrics
@@ -165,6 +182,7 @@ def evaluate(
         model.reset_probe_metrics()
     total_loss = 0.0
     total_tokens = 0
+    total_correct = 0
     bucket_loss: dict[str, float] = {
         "loss_early_freq": 0.0,
         "loss_early_rare": 0.0,
@@ -182,27 +200,35 @@ def evaluate(
         input_ids = input_ids.to(device)
         labels = labels.to(device)
         logits = model(input_ids)
-        loss = torch.nn.functional.cross_entropy(
-            logits.view(-1, logits.size(-1)), labels.view(-1)
+        loss, valid_tokens, correct = masked_lm_loss_and_counts(
+            logits,
+            labels,
         )
-        total_loss += loss.item() * labels.numel()
-        total_tokens += labels.numel()
+        total_loss += loss.item() * valid_tokens
+        total_tokens += valid_tokens
+        total_correct += correct
         if counts_device is not None and rarity_threshold is not None:
             per_token_loss = torch.nn.functional.cross_entropy(
                 logits.view(-1, logits.size(-1)),
                 labels.view(-1),
+                ignore_index=-100,
                 reduction="none",
             ).view_as(labels)
             seq_len = labels.shape[1]
             pos = torch.arange(seq_len, device=device).view(1, seq_len)
             early = pos < (seq_len // 2)
-            target_counts = counts_device.index_select(0, labels.reshape(-1)).view_as(labels)
+            valid_targets = labels.ne(-100)
+            safe_labels = labels.masked_fill(~valid_targets, 0)
+            target_counts = counts_device.index_select(
+                0,
+                safe_labels.reshape(-1),
+            ).view_as(labels)
             frequent = target_counts.to(dtype=torch.float32) >= rarity_threshold
             masks = {
-                "loss_early_freq": early & frequent,
-                "loss_early_rare": early & ~frequent,
-                "loss_late_freq": ~early & frequent,
-                "loss_late_rare": ~early & ~frequent,
+                "loss_early_freq": early & frequent & valid_targets,
+                "loss_early_rare": early & ~frequent & valid_targets,
+                "loss_late_freq": ~early & frequent & valid_targets,
+                "loss_late_rare": ~early & ~frequent & valid_targets,
             }
             for key, mask in masks.items():
                 n = int(mask.sum().item())
@@ -211,7 +237,11 @@ def evaluate(
                 bucket_loss[key] += float(per_token_loss.masked_select(mask).sum().item())
                 bucket_tokens[key] += n
     loss_avg = total_loss / max(total_tokens, 1)
-    metrics = {"loss": loss_avg}
+    metrics = {
+        "loss": loss_avg,
+        "accuracy": total_correct / max(total_tokens, 1),
+        "valid_tokens": total_tokens,
+    }
     for key, total in bucket_loss.items():
         n = bucket_tokens[key]
         if n > 0:

@@ -2,11 +2,21 @@
 
 This document records the code-backed definitions and values that should be treated as source-of-truth for revision writing. It is intentionally narrow: definitions here come from the current repo implementation and current paper configs, not from prose assumptions.
 
+Current experiment-scope note (2026-06-30): the implementation still exposes `exact`, `local_band`, and
+`landmark`, but the active set-dictionary comparison uses **exact only**. Backend availability in this
+document is a code/schema statement, not authorization to launch that backend. Coverage-scaled landmark
+results are historical reference evidence and must not be described as linear/sub-quadratic scaling.
+Current cells are defined by `docs/sd_dense_paper5_matrix.md`.
+
 Revision-plan pointer:
 
-- The locked PAT feedback revision plan is `docs/ska_pat_feedback_revision_plan_v2_6_locked.md`.
-- As of the v2.7 amendment, final reviewer-facing backend-family comparisons require matched token-backend controls: `baseline_sparse_local_band` and `baseline_linear_landmark`, in addition to the existing dense `baseline_token`. Completed dense-baseline-only A2/A3/A4 artifacts remain valid but must be labeled as such until these controls are added.
-- Phase A run/task status (what is done, running, or pending across A0–A5) is tracked in `audit/phase_a_status.md`. Read it before starting any Phase A work; update it after every status change.
+- Current program authority is `docs/set_dictionary_research_main_plan.md`,
+  followed by `audit/phase_sd_status.md` and the assigned task under
+  `docs/agent_plans/`.
+- `docs/sd_dense_paper5_matrix.md` remains the MRP-1 cell authority while its
+  queues are active.
+- The v2.7 PAT plan and `audit/phase_a_status.md` are historical original-campaign records. Their
+  sparse/landmark tasks are not active branch requirements.
 - Phase B (paper writing) action tracking uses `out/final_paper_bundle/checks/current_plan.md` and `out/final_paper_bundle/checks/progress_log.md`.
 - A1.1 implements the locked autoregressive LM bank topology: partial trailing windows are dropped in `set_causality_mode=strict_past`, so the LR-norm headline reference has `M = floor((512 - 16) / 8) + 1 = 63`.
 - The historical clipped-window topology remains available as `set_causality_mode=noncausal` for noncausal/bidirectional use.
@@ -18,9 +28,28 @@ Active evidence boundary:
 - Legacy-only locations include `out/paper_bundle/`, `out/paper_complements_bundle/`, `out/paper_complements/`, older `out/metrics/paper_action*` artifacts, and old dense-only mechanism plots generated before the A1 strict-past correction.
 - Use the terms "post-A1 causal LM", "causal LM", or "strict-past causal LM"; do not use the old typo for causal status.
 
-## Canonical Paper Configuration
+## Current Exact-Dense Set-Dictionary Configuration
 
-The post-parity set-only LM configuration used by the LR-normalized dense set runs is:
+The active paper matrix fixes:
+
+| Quantity | Value |
+|---|---|
+| Backend | exact dense for set and token |
+| Shape | `D=384`, `d_ff=1536`, 6 layers, 8 heads |
+| Fine group | `(w,s)=(2,1)` |
+| Coarse group | `(w,s)=(4,2)` |
+| Blur rows | `{b0,b25,b50,b75,b100}` |
+| Output policy | `anchor_span` |
+| Token MLP / anchor | disabled / disabled |
+| Objective / fiber | CE-only / `endpoint_window` |
+| Training | full WikiText-2, 10 epochs, LR `1e-4`, five seeds |
+
+Exact island ownership and batch/length values live in `docs/sd_dense_paper5_matrix.md`.
+
+## Historical LR-Normalized Reference Configuration
+
+The following table describes the older post-parity LR-normalized reference runs. It is retained for
+provenance and is not the active set-dictionary launch configuration:
 
 | Quantity | Value | Source |
 | --- | --- | --- |
@@ -258,6 +287,10 @@ Code provenance:
 
 `model.output_residual_mode` is a named set-only LM output policy applied after routing and before the LM head.
 
+- `anchor_span` is the active set-dictionary policy. It uses the thin,
+  non-contextual anchor `h_t^(0)=e(x_t)+p_t` plus the projected routed span.
+  With the active config, the token MLP and trained-anchor path are disabled,
+  so all dependence on earlier tokens must factor through the routed span.
 - `direct` is the default and preserves the A1-A6 implementation: in `strict_past`, the LM head receives `h_t^(0) + r_t`, with `r_t=0` when `C_t=0`.
 - `empty_only` is a calibration mode for token-limit and compression-limit experiments: in `strict_past`, the LM head receives `h_t^(0)` only when the supplied candidate fiber is empty, and receives `r_t` when `C_t>0`.
 - `none` removes the final token residual in `strict_past` and uses only `r_t`.
@@ -268,6 +301,8 @@ For strict-past endpoint routing with 1-indexed positions and first endpoint `e_
 Code provenance:
 
 - Normalized config default `model.output_residual_mode = direct`: `src/config/normalize.py`.
+- Active set-dictionary config explicitly selects `anchor_span`:
+  `configs/set_dictionary/sd9_multiresolution.yaml`.
 - Schema/compatibility validation: `src/config/schema.py` and `src/config/compatibility.py`.
 - Runtime behavior and metadata: `src/models/set_only/set_only_lm.py`.
 - Runner/logger propagation: `scripts/run_experiment.py` and `src/train/experiment_logger.py`.
@@ -351,14 +386,19 @@ Diagnostics consume the supplied candidate fiber/mask. In `strict_past`, that fi
 There is no code symbol named `Lambda` for method selection. In current configs and validators, the concrete attention operator is selected by:
 
 - `model.attention_family` in `{dense, sparse, linear}`;
-- `model.backend` in `{exact, local_band, landmark}` for active revision runs; `nystrom` is rejected by active config validation, and other legacy/deprecated schema values such as `linformer` and `sparse_topk` may still appear outside the active paper path;
+- `model.backend` in `{exact, local_band, landmark}` for the implemented revision schema; the current
+  set-dictionary experiment matrix selects `exact` only. `nystrom` is rejected by active config validation,
+  and other legacy/deprecated schema values such as `linformer` and `sparse_topk` may still appear outside
+  the active paper path;
 - `model.backend_params` for backend-specific controls.
 
 Current mappings used by configs:
 
 - dense: `backend=exact`;
 - sparse: `backend=local_band`, with `backend_params.radius`;
-- linear: `backend=landmark`, with `backend_params.landmark_coverage` for the active revision path. `nystrom` and `linformer` are legacy/deprecated schema values and are not treated as active tested backends in this revision.
+- historical linear-family label: `backend=landmark`, with `backend_params.landmark_coverage`. This
+  coverage-scaled implementation is not active in the current set-dictionary matrix and must not be
+  interpreted as asymptotically linear. `nystrom` and `linformer` are legacy/deprecated schema values.
 
 Code provenance:
 

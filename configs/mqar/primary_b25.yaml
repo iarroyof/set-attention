@@ -1,0 +1,115 @@
+stage: mqar_primary_registered
+task: mqar
+
+model:
+  implementation: set_only
+  attention_family: dense
+  backend: exact
+  architecture: transformer_lm
+  vocab_size: 8192
+  d_model: 384
+  num_heads: 8
+  num_layers: 6
+  dim_feedforward: 1536
+  dropout: 0.1
+  max_seq_len: 2048
+  window_size: 2
+  stride: 1
+  set_causality_mode: strict_past
+  output_residual_mode: anchor_span
+  allow_token_token: false
+  candidate_fiber: endpoint_window
+  multiresolution:
+    enabled: true
+    groups:
+      - name: fine
+        num_heads: 6
+        window_size: 2
+        stride: 1
+      - name: coarse
+        num_heads: 2
+        window_size: 4
+        stride: 2
+  pooling:
+    mode: soft_trimmed_boltzmann
+    tau: 0.1
+    q: 0.85
+  pooling_multihead: false
+  d_phi: 384
+  set_state_dim: 384
+  adapter_type: auto
+  feature_mode: hashed_counts
+  feature_params:
+    num_bins: 128
+    hash_seed: 13
+    normalize: true
+  geometry:
+    enabled: true
+    apply_as_bias: true
+    apply_in_phi_attn: true
+  router_type: learned
+  router_topk: 16
+  router_temperature: 1.0
+  router:
+    min_temp: 0.5
+    score_mode: candidate_gather
+  router_multihead: true
+  token_mlp:
+    enabled: false
+  anchor:
+    enabled: false
+    target: pre_encoder
+    pre_encoder_layers: 2
+    lambda_h: 0.1
+    lambda_pre: 1.0
+    pre_encoder_head: true
+    detach_target: true
+    norm: layernorm
+    teacher:
+      enabled: false
+  set_diversity:
+    lambda_div: 0.0
+  multivector_basis:
+    enabled: false
+    r: 1
+
+data:
+  dataset: mqar
+  vocab_size: 8192
+  seq_len: 2048
+  num_kv_pairs: 256
+  power_a: 0.01
+  random_non_queries: true
+  num_train_examples: 100000
+  num_val_examples: 3000
+  batch_size: 1
+  num_workers: 0
+
+training:
+  seed: 0
+  epochs: 1
+  max_updates: 20000
+  lr: 0.0003
+  deterministic: true
+  benchmark_mode: false
+  strict_deterministic: false
+  evaluate_group_ablation: true
+  output_dir: out/mqar_primary
+  checkpoint:
+    save_final: true
+
+logging:
+  metric_columns:
+    - val/lag/lag_1_32_accuracy
+    - val/lag/lag_1_32_query_count
+    - val/lag/lag_33_128_accuracy
+    - val/lag/lag_33_128_query_count
+    - val/lag/lag_129_512_accuracy
+    - val/lag/lag_129_512_query_count
+    - val/lag/lag_513_1024_accuracy
+    - val/lag/lag_513_1024_query_count
+    - val/lag/lag_1025_2047_accuracy
+    - val/lag/lag_1025_2047_query_count
+    - val/ablation/status
+    - val/ablation/fine_delta_accuracy
+    - val/ablation/coarse_delta_accuracy

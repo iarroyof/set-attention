@@ -149,8 +149,28 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
         data_cfg = cfg.get("data", {})
         if data_cfg.get("seq_dataset"):
             task = "seq2seq"
+        elif data_cfg.get("dataset") == "mqar":
+            task = "mqar"
         elif data_cfg.get("dataset"):
             task = "lm"
+
+    training_cfg = cfg.get("training", {})
+    checkpoint_cfg = training_cfg.get("checkpoint", {}) or {}
+    resume_from = checkpoint_cfg.get("resume_from")
+    eval_only_from = checkpoint_cfg.get("eval_only_from")
+    require(
+        not (resume_from and eval_only_from),
+        "training.checkpoint.resume_from and eval_only_from are mutually exclusive",
+    )
+    if training_cfg.get("strict_deterministic"):
+        require(
+            training_cfg.get("deterministic") is True,
+            "strict_deterministic requires training.deterministic=true",
+        )
+        require(
+            training_cfg.get("benchmark_mode") is False,
+            "strict_deterministic requires training.benchmark_mode=false",
+        )
 
     seq_len = cfg.get("data", {}).get("seq_len") or model.get("max_seq_len") or 0
     window_size = model.get("window_size", 32) or 32
@@ -162,7 +182,12 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
         )
     set_causality_mode = model.get(
         "set_causality_mode",
-        "strict_past" if task == "lm" and impl in {"set_only", "hybrid_token_set"} else "noncausal",
+        (
+            "strict_past"
+            if task in {"lm", "mqar"}
+            and impl in {"set_only", "hybrid_token_set"}
+            else "noncausal"
+        ),
     )
     max_sets = _max_sets(
         int(seq_len),
@@ -178,9 +203,14 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
     warn_landmark_min = _env_int("SET_ATTENTION_WARN_MIN_LANDMARKS", 10)
     warn_landmark_ratio = _env_float("SET_ATTENTION_WARN_LANDMARK_RATIO", 0.5)
 
-    if task == "lm" and impl not in {"baseline_token", "set_only", "hybrid_token_set"}:
+    if task in {"lm", "mqar"} and impl not in {
+        "baseline_token",
+        "set_only",
+        "hybrid_token_set",
+    }:
         raise ConfigError(
-            "LM only supports implementation=baseline_token, set_only, or hybrid_token_set"
+            "causal LM tasks only support implementation=baseline_token, "
+            "set_only, or hybrid_token_set"
         )
 
     if task == "seq2seq" and impl not in {
@@ -316,8 +346,19 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
             "set_only: multiresolution.groups must be a non-empty list when enabled",
         )
         total_group_heads = 0
+        group_names: set[str] = set()
         for idx, group in enumerate(multiresolution_groups):
             require(isinstance(group, dict), f"set_only: multiresolution.groups[{idx}] must be a mapping")
+            group_name = str(group.get("name", f"group{idx}")).strip()
+            require(
+                bool(group_name),
+                f"set_only: multiresolution.groups[{idx}].name must be non-empty",
+            )
+            require(
+                group_name not in group_names,
+                f"set_only: duplicate multiresolution group name {group_name!r}",
+            )
+            group_names.add(group_name)
             group_heads = _require_positive_int(
                 group.get("num_heads"),
                 f"set_only: multiresolution.groups[{idx}].num_heads",
@@ -491,10 +532,10 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
         candidate_fiber in {"endpoint_window", "all_past"},
         "set_only: candidate_fiber=window_plus_landmarks is deferred",
     )
-    if task == "lm" and impl in {"set_only", "hybrid_token_set"}:
+    if task in {"lm", "mqar"} and impl in {"set_only", "hybrid_token_set"}:
         require(
             set_causality_mode == "strict_past",
-            "set/hybrid causal LM requires set_causality_mode=strict_past",
+            "set/hybrid causal tasks require set_causality_mode=strict_past",
         )
 
     if impl == "hybrid_token_set":

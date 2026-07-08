@@ -3,10 +3,34 @@ from __future__ import annotations
 from typing import List
 
 import torch
+import torch.nn.functional as F
 
 
 def perplexity(loss: float) -> float:
     return float(torch.exp(torch.tensor(loss)).item())
+
+
+def masked_lm_loss_and_counts(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    ignore_index: int = -100,
+) -> tuple[torch.Tensor, int, int]:
+    flat_logits = logits.reshape(-1, logits.shape[-1])
+    flat_targets = targets.reshape(-1)
+    valid = flat_targets.ne(ignore_index)
+    valid_count = int(valid.sum().item())
+    if valid_count == 0:
+        return flat_logits.sum() * 0.0, 0, 0
+    loss_sum = F.cross_entropy(
+        flat_logits,
+        flat_targets,
+        ignore_index=ignore_index,
+        reduction="sum",
+    )
+    predictions = flat_logits.argmax(dim=-1)
+    correct = int((predictions.eq(flat_targets) & valid).sum().item())
+    return loss_sum / valid_count, valid_count, correct
 
 
 def bleu_score(preds: List[str], refs: List[str]) -> float:

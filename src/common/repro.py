@@ -1,3 +1,4 @@
+import os
 import random
 
 import numpy as np
@@ -10,7 +11,25 @@ except Exception:  # pragma: no cover
     _HAS_TORCH = False
 
 
-def set_seed(seed: int, deterministic: bool = False, benchmark_mode: bool = False) -> None:
+def set_seed(
+    seed: int,
+    deterministic: bool = False,
+    benchmark_mode: bool = False,
+    strict_deterministic: bool = False,
+) -> None:
+    if strict_deterministic and not deterministic:
+        raise ValueError("strict_deterministic requires deterministic=True")
+    workspace_config = None
+    if strict_deterministic:
+        workspace_config = os.environ.setdefault(
+            "CUBLAS_WORKSPACE_CONFIG",
+            ":4096:8",
+        )
+        if workspace_config not in {":4096:8", ":16:8"}:
+            raise ValueError(
+                "strict deterministic CUDA requires "
+                "CUBLAS_WORKSPACE_CONFIG=:4096:8 or :16:8"
+            )
     random.seed(seed)
     np.random.seed(seed)
     if _HAS_TORCH:
@@ -19,13 +38,17 @@ def set_seed(seed: int, deterministic: bool = False, benchmark_mode: bool = Fals
             torch.cuda.manual_seed_all(seed)
 
         if deterministic or benchmark_mode:
-            try:
-                torch.use_deterministic_algorithms(True, warn_only=True)
-            except Exception:
-                pass
+            torch.use_deterministic_algorithms(
+                True,
+                warn_only=not strict_deterministic,
+            )
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = not deterministic and benchmark_mode
+            if strict_deterministic and hasattr(torch.backends, "cuda"):
+                torch.backends.cuda.matmul.allow_tf32 = False
+                torch.backends.cudnn.allow_tf32 = False
         else:
+            torch.use_deterministic_algorithms(False)
             torch.backends.cudnn.deterministic = False
             torch.backends.cudnn.benchmark = True
 

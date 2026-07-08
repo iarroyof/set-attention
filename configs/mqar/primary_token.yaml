@@ -1,0 +1,54 @@
+stage: mqar_primary_registered
+task: mqar
+
+model:
+  implementation: baseline_token
+  attention_family: dense
+  backend: exact
+  architecture: transformer_lm
+  vocab_size: 8192
+  d_model: 384
+  num_heads: 8
+  num_layers: 6
+  dim_feedforward: 1536
+  dropout: 0.1
+  max_seq_len: 2048
+  causal: true
+
+data:
+  dataset: mqar
+  vocab_size: 8192
+  seq_len: 2048
+  num_kv_pairs: 256
+  power_a: 0.01
+  random_non_queries: true
+  num_train_examples: 100000
+  num_val_examples: 3000
+  batch_size: 1
+  num_workers: 0
+
+training:
+  seed: 0
+  epochs: 1
+  max_updates: 20000
+  lr: 0.0003
+  deterministic: true
+  benchmark_mode: false
+  strict_deterministic: false
+  evaluate_group_ablation: false
+  output_dir: out/mqar_primary
+  checkpoint:
+    save_final: true
+
+logging:
+  metric_columns:
+    - val/lag/lag_1_32_accuracy
+    - val/lag/lag_1_32_query_count
+    - val/lag/lag_33_128_accuracy
+    - val/lag/lag_33_128_query_count
+    - val/lag/lag_129_512_accuracy
+    - val/lag/lag_129_512_query_count
+    - val/lag/lag_513_1024_accuracy
+    - val/lag/lag_513_1024_query_count
+    - val/lag/lag_1025_2047_accuracy
+    - val/lag/lag_1025_2047_query_count

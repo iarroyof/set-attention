@@ -1,32 +1,89 @@
 ---
 name: set-attention-research-direction
-description: Current Set Attention LM research state, paper location, and the SVM-basis redesign direction
+description: Current exact-dense multiresolution set-dictionary direction
 metadata:
   type: project
+  updated: 2026-07-07
 ---
 
-Canonical paper source: `out/final_paper_bundle/overleaf_ready/example_paper.tex` (NeurIPS style, "Set Attention"). `docs/example_paper_working_agent.tex` and `checks/snapshots/*` are older copies.
+# Current Research Direction
 
-Real causal LM model: `src/models/set_only/set_only_lm.py` (NOT the older `heads/ska.py`/`heads/set_level.py` prototypes). Router with candidate-gather is `src/models/set_only/router.py` (`LearnedRouter`, default `score_mode="candidate_gather"`).
+The active branch is `set-dictionary/anchor-span`. Current experiments compare multiresolution
+set-dictionary attention with matched token attention using the **exact dense backend only**.
 
-Headline result (as of 2026-06): matched token-attention baselines beat Set Attention (SKA) on WikiText-2 PPL at every tested operating point; SKA only wins on long-context VRAM. Overfiltering/bottleneck suspected.
+## Active Evidence
 
-Three redundancies: (1) dense `[B,H,L,M]` router — FIX = candidate-gather. A9 DONE/validated 2026-06: at L=512 NO VRAM win (slight +27..+118 MiB) and mixed PPL (-42..+56 vs A7 dense means) — but PPL deltas are within seed noise (paper CIs ±37-135) and gather is mathematically exact (softmax over candidates ≡ softmax over M with -inf mask). VRAM null is EXPECTED: at small M the gather intermediate [B,H,L,cand,d_phi] can exceed dense [B,H,L,M]; gather's real win is LONG context (large M). DECISION: do NOT revert; keep `router_score_mode` configurable; keep DENSE as default for headline tables until a per-seed dense-vs-gather allclose test confirms exactness; re-measure gather VRAM at L=2048/8192. A9 proves short-context peak is dominated by the dual token+set stream (R2), which MOTIVATES the set-dictionary branch. Order: R1=gather→long ctx, R2=set-dictionary→short ctx. Branch: commit candidate-gather as `a9/candidate-gather-router` off origin/paper/final-results-bundle; then `set-dictionary/anchor-span` off that tip. (2) dual token+set streams: `token_states` is materialized once then used 3x (pooled to sets, router query, direct residual `token_states+routed_repr`). (3) repeated set compression overfilters (TTTTSS > TSTSTS > TTSSSS, all poor).
+- Full WikiText-2, 10 epochs, LR `1e-4`, `D=384`, `d_ff=1536`, 6 layers, 8 heads.
+- Set rows use `anchor_span`, token MLP off, anchor off, CE-only, endpoint-window.
+- The paper matrix uses blur rows `{b0,b25,b50,b75,b100}` plus exact token at every supported
+  `(L,batch)` island.
+- Legacy labels `seed=0..4` were not applied to RNG state. Those artifacts are
+  unpaired stochastic replicates only. The confirmation matrix reruns every
+  supported cell with actual seeds `0..4` in `sd_grid_seeded_v1`; no legacy
+  artifact satisfies a corrected seed.
+- The corrected first pass has finished on both hosts. Blue has 120/120
+  strict endpoint-valid rows. Lizmark has 135/135 core rows, but only 120 were
+  endpoint-valid; the 15 mixed `L3584,B4` rows (`b25/b50/b75`, seeds 0--4)
+  required replacement because endpoint gradient diagnostics were `NA`.
+- The 15 replacement rows were launched on lizmark on 2026-07-07 after stopping
+  the external container again, archiving the invalid first-pass records, and
+  confirming a dry run with 15 plans and 120 skips. Replacement driver PID
+  `3940226`, workers `3940654/3940655`, log
+  `logs/sd_grid_lizmark_paper5_seeded_v1_replacements_20260707.log`.
+- Corrected aggregation is fail-closed on experiment/diagnostics contracts,
+  native batch, applied seed, full-data status, and duplicate IDs. Fine/coarse
+  training diagnostics are separate; archived partial/fail-fast attempts are
+  outside `out/paper_mechanisms`.
+- MRP-1 is replacement-running, not closed. The next registered action is to
+  wait for the replacement driver to finish, then pull artifacts and rerun the
+  strict scanner.
+- MRP-0 passed Blue container validation on 2026-07-07. The validation covered
+  focused tests, duplicate strict token/b25 smokes, checkpoint replay, and
+  eval-only immutability. Run one-step full-shape preflights before any
+  selected retraining launch.
+- MRP-6A is PASS, MRP-6B is analytic PASS, MRP-6C is analytic PASS, and
+  MRP-6D canonical TeX integration passed clean build. Empirical
+  specialization wording still waits for MRP-3.
+- MRP-3 generator/trainer infrastructure is ready and passed Blue container
+  tests, dry-run, launch-guard, and a tiny CPU smoke. Calibration, primary
+  MQAR, MRP-2, and MRP-5 still require MRP-1 closure and explicit launch
+  approval.
+- B3 and B4 are separate optimization islands; never pool their PPL values.
+- L4096/B4 token, b0, and b25 are repeated 3/3 legacy OOM outcomes that predate
+  the 2026-07-02 contention incident. Their old launchers lack external-process
+  telemetry, so they are observed legacy feasibility outcomes rather than
+  retrospectively certified exclusive-capacity measurements.
+- The primary defensible result is a mixed-resolution quality/memory frontier and an exact-dense
+  memory-feasibility extension, not universal PPL superiority over token attention.
 
-Active design direction (causal set-dictionary; representer-theorem intuition, NOT literal SVM): keep input embedding TABLE E but delete the token activation TOWER. Forward prediction path = thin anchor A_t (= emb+pos only, no token_mlp, no cross-layer update — strictly weaker than token-attn residual, so fair) + multi-head SPAN over the set basis (= existing router output `routed_repr`, `set_only_lm.py:579`). Framing MUST stay "set-mediated token-level causal prediction" (predict p(x_{t+1}|x_<=t)), never "set-level prediction." Naming: "causal dictionary atoms", not "support vectors".
+Live matrix and status:
 
-SD progress (2026-06): SD-1 D-causal DONE (causal derived from set_causality_mode; legacy `causal` warns, can't override strict_past). SD-3 fairness harness DONE (`scripts/audit_sd_fairness.py`, span-ablation hook). SD-5 S1 ladder DONE = clean NULL: (4,2) PPL 1297.9 (std 10) vs ref 1273.6 = +24 modestly worse; (16,8) 1510.9 (std 83) vs 1422.8 = neutral (within noise); token baseline 781.1. KEY: span-ablation = +41k-46k PPL (above uniform ~33k) -> prediction carried ENTIRELY by the C̄≈2 set span, ZERO token bypass (fairness impeccable, opposite of paper's `direct` problem), but squarely overfiltering-bound. Thin anchor is DEAD WEIGHT under CE-only (should earn keep only at S2). DECISION: do NOT adopt anchor_span standalone (gate failed, keep direct/empty_only as paper defaults); proceed to SD-6=S2 anchoring rescue as PRE-REGISTERED test. Decider = `anchor/recon_error_norm`: drops+PPL→781 = signal was limiter (continue); floors high+PPL stalls = rank/capacity at C̄≈2 is limiter -> pivot to D-fiber `all_past` (wider fiber), CE-only first, before touching r. Likely outcome: capacity (fiber width) is the binding constraint, so treat S2 mostly as the diagnostic that routes to D-fiber. Honest end-state: if S2 + all_past both null with high recon floor, the compression bottleneck is fundamental at this scale (legitimate negative result).
+- `docs/set_dictionary_research_main_plan.md`
+- `docs/agent_plans/`
+- `docs/sd_dense_paper5_matrix.md`
+- `audit/phase_sd_status.md`
+- `audit/SD_9_7_handoff.md`
+- `audit/SD_dense_matched_results.md`
+- `audit/SD_dense_frontier_extension.md`
 
-SD-6 S2 DONE (2026-06-17, full 6/6 validated): anchoring did NOT rescue. `recon_error_norm` floors at ~1.36-1.39 (>1 = span barely matches the predictive pre-encoder target) and is FLAT (slope ~-0.002/epoch) at BOTH topologies -> the anchor loss does not reduce reconstruction error. Verdict: (16,8)=Branch B capacity-limited (PPL 1510.9->1437.2, Δ-73.7 within CI 122, not significant); (4,2)=MIXED (PPL 1297.9->1276.6, Δ-21.3 beats tight CI 17.8 BUT recon high+flat = marginal regularization, not a real rescue). Artifacts: `audit/SD_6_s2_anchoring.md`, `out/paper_integrated_evidence/tables/sd6_s2_anchoring_*.tsv`.
+## Inactive Or Historical
 
-**SD-6 VERDICT CONFOUNDED (code audit 2026-06-17): the capacity conclusion is INVALID.** Root cause: `CausalPreEncoder` (`set_only_lm.py:26`) has no head/loss, is NOT in the forward path, and `_update_anchor_loss` does `target.detach()` (line 586-587) with `loop.py:48-64` only summing aux losses — so the pre-encoder gets ZERO gradient and stays at random init. `h*` = fixed RANDOM causal projection of emb+pos. recon_error_norm≈1.39≈√2 is the uncorrelated-vectors value (cosine≈0.03), i.e. the span was trained to match NOISE. The anchoring rescue was never validly tested; the (4,2) -21 PPL is mild noise-regularization. NO future leakage (pre-encoder is causal + sg). FIX = SD-6.5: give CausalPreEncoder its own causal LM CE head (lambda_pre~1.0), keep detach_target=true, training-only; rerun S2; only THEN is the capacity-vs-signal decider valid and SD-8 justified. SD-7/SD-8 blocked behind SD-6.5. Cheap sanity variant: target=detach(emb(x_{t+1})). Lesson: a "predictive" distillation target is only predictive if the teacher is actually trained — verify the teacher receives gradient.
+- Coverage-scaled landmark (`landmark_coverage=0.25`) is quadratic up to a constant factor because
+  landmark count scales with `M`. It is historical quality/reference evidence only.
+- Nyström, fixed-k landmark, sparse, SD-10a, SD-11, re-read, all-past, and multivector work are not
+  active and require explicit user approval.
+- Do not execute archived brainstorms, legacy status snapshots, or landmark-era handoffs.
+- The pre-2026-06-30 research synthesis is preserved at
+  `memory/archive/set-attention-research-direction_legacy_through_20260625.md`.
 
-SD-6.5 (fixed anchor, trained pre-encoder, endpoint) DONE 2026-06-18: fix WORKED — recon dropped 1.39→1.18 (cosine 0.03→0.30), guard (<1.2) passed, so the pipeline is now VALID. But PPL still flat (both Branch B, valid this time): (16,8) 1510.9→1510.4, (4,2) 1297.9→1289.0. So a genuinely predictive signal arrives but the span absorbs only cos≈0.30 of it → capacity-limited, validly. SD-8 (all_past = MAXIMAL causal fiber, CE-only, dense router after candidate-gather OOM'd on (4,2)) DONE 2026-06-18: (16,8) 1510→1363.9 (−146, helps the compressed topology) but plateaus far above token 781.1; (4,2) 1288.6 flat. CONCLUSION (capacity branch topped out): widening fiber to the max still can't match token attention, and `window_plus_landmarks ⊂ all_past` / `r=2` can't close the ~500-700 gap → don't run them for quality. KEY DIAGNOSIS: bottleneck is UPSTREAM at POOLING — atoms summarize raw emb+pos (token_mlp off, no token tower), so token-resolution predictive detail was never in them; routing/anchoring/fiber-width can't recover what pooling discarded (evidence: cos≈0.30 ceiling + all_past plateau). NEXT (user decision): (a) write up the clean negative/diagnostic result, or (b) NEW branch `contextualize-before-pool` = pool the SD-6.5 causal pre-encoder's contextualized states into atoms instead of raw emb+pos (reintroduces token-side compute → own fairness framing; drifts toward token-attn + pooled memory). SD ladder STOPPED for review; no commits.
+## Paper Framing
 
-SD-8.1 (user-requested capacity probe, 2026-06-18): doubled dictionary atom width (set_state_dim/d_phi 384→768) at (4,2) all_past CE-only. PPL 1288.6→1241.5 (−47.1) for +850 MiB. CONFIRMATORY not a path: frontier ≈18 MiB/PPL ⇒ closing the 460 gap to token 781.1 needs ~8 GB more (>token's own 13.4 GB) = self-defeating; returns diminish; set_state_dim=768 is already WIDER than the matched token D=384 yet still +460 behind (a matched D=768 control widens the gap); compression reframing fails (+59% PPL for ~5% memory). Strengthens upstream-pooling diagnosis. DECISION: do NOT sweep width; capacity branch confirmed topped out. Standing choice unchanged: (a) write up negative/diagnostic result, or (b) contextualize-before-pool new branch.
+Use “set-mediated token-level causal prediction” and “causal dictionary atoms.” The intended headline
+is that moderate blur can improve the exact-dense set frontier and extend the feasible context boundary
+while retaining quality. Do not claim that the coverage landmark implementation is linear or
+sub-quadratic.
 
-SD-9 (user-approved, before (b)): multi-resolution / mixed-blur set attention — heads split into fine (2,1) + coarse/blurred (4,2) groups at same depth; %blur = coarse-head fraction. Short L=512 25% coarse (6 fine+2 coarse) on blue-demon (DENSE exact, batch16); long on lizmark (iarroyof@192.168.241.205, 48GiB) at L=8192 65% coarse (3 fine+5 coarse) with LANDMARK backend (coverage 0.25, batch1) matching A8.3 (audit/A8_3_l8192_linear_followup.md) — lizmark's VERIFIED regime is L=8192 landmark, NOT L=2048 (L=2048 is blue-demon's). Concurrent. Backend differs by scale (dense short / landmark long).
-
-SD-9 DONE 2026-06-20 (9/9 short blue-demon, 9/9 long lizmark). Result: registered verdict "not Pareto vs interpolation" BUT the stronger achievable comparison is POSITIVE — mixed Pareto-DOMINATES the all-fine endpoint on BOTH axes at BOTH contexts. Short: all-fine 912.9 PPL/13933 MiB → mixed-25 (6 fine+2 coarse) 862.1/13790 (−51 PPL, −143 MiB, super-additive: beats best endpoint; span-abl Δ rises 58368→64489 = coarse heads carry MORE used prediction). Long L=8192 landmark: all-fine 1033.1/27928 → mixed-65 (3 fine+5 coarse) 1009.0/20193 (−24 PPL AND −28% VRAM). all-coarse short 1267.8, long 1431.4. So coarse/blurred heads = complementary low-freq/long-range signal, beneficial not just cheaper; long-context win is the strongest SD result and de-risks SD-10 (compressed-memory regime). Multi-scale hypothesis SUPPORTED. Actionable next tests: scale L (16k/32k, expect mixed VRAM gap to grow), global-dependency/recall/needle tasks, per-head-group ablation + receptive-field probes, learned fine/coarse gate. SD-10 = causal latent re-read dictionary (see plan §7c). Baseline = two uniform extremes (all-fine, all-coarse) per context → PPL–VRAM Pareto check. CE-only, dense exact, endpoint_window, 3 seeds. Question is SET-vs-SET (does mixing beat the fine↔coarse interpolation), NOT a token-attention claim (fine heads≈token attn). Feasibility: L=2048 (2,1)→M≈2047, dense set-attn O(M²) → smoke first + reduce batch if OOM. lizmark creds NOT in ../blue-demon.txt (only blue-demon's) — verify same password; sync repo+docker image per A8 lizmark pattern. Cheap impl = two parallel set streams concatenated. Pre-registered expectation: modest frontier nudge, not parity. SD-9 informs whether (b) is worth opening.
-
-LOCKED plan written: `docs/ska_set_dictionary_revision_plan_v3_0.md` (supersedes ONLY D1/R1 of v2.7 locked plan, for the set-dictionary branch; branch off AFTER candidate-gather/Redundancy-1 merges). Decisions: (a) collapse causal flags — remove user `causal` arg, derive `self.causal=(set_causality_mode=="strict_past")`. (b) thin anchor restores token-resolution dof so anchoring loss isn't floored; expressivity stays in the multihead span. (3) anchor target = shallow CAUSAL token pre-encoder (1-2 layers, training-only, dropped at inference), NOT emb+pos self-anchor (rejected: measures pooling invertibility, unfair). (4) dropped user's gated-additive Variant 3 (reintroduces bypass). (5) external teacher + KL distillation DEFERRED to future work (cost), stub disabled. Aux loss L = L_CE + lambda_h*L_anchor + lambda_div*L_div. Optional multivector basis (r sub-values/atom) OFF by default = floor test. Operating point = "anchor topology reference" D=384,d_ff=1536,w=16,s=4,M=125,L=512. DoD gates: numerical leakage probe + fairness audit (span-ablation at eval MUST collapse PPL or it's a bypass). New tracker `audit/phase_sd_status.md`. Canonical onboarding doc: `set_attention_agent_onboarding.md`.
+The next registered program adds only natural AR-hit slicing, standalone
+synthetic MQAR, and one tokenizer-matched PG-19 transfer study. Formal work
+replaces the legacy single-stream/direct-residual appendix with a
+multiresolution `anchor_span` theory. See the canonical main plan for gates.

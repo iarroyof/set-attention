@@ -6,6 +6,13 @@ from typing import List, Tuple
 import torch
 from torch.utils.data import Dataset, IterableDataset
 
+from data.ordered_text import (
+    OrderedTextProvenance,
+    OrderedTextProvenanceBuilder,
+    build_ordered_text_provenance,
+    vocabulary_digest,
+    vocabulary_tokens,
+)
 from set_attention.data.hf_cache import ensure_hf_cache
 from set_attention.data.wikitext import iter_wikitext_lines, load_wikitext_lines, tokenize_lines, load_wikitext_hf_dataset
 
@@ -42,9 +49,19 @@ class Wikitext2Dataset(Dataset):
         else:
             self.stoi, self.itos = vocab
 
+        vocab_tokens = vocabulary_tokens(self.stoi)
+        vocab_sha256 = vocabulary_digest(vocab_tokens)
+        self.vocabulary_tokens = vocab_tokens
+        self.provenance = build_ordered_text_provenance(
+            dataset="wikitext2",
+            split=split,
+            records=(line.split() for line in lines),
+            seq_len=seq_len,
+            vocabulary_sha256=vocab_sha256,
+        )
         ids = [self.stoi.get(tok, self.stoi["<unk>"]) for tok in tokens]
         self.samples = []
-        for start in range(0, max(0, len(ids) - seq_len - 1), seq_len):
+        for start in range(0, max(0, len(ids) - seq_len), seq_len):
             chunk = ids[start : start + seq_len + 1]
             if len(chunk) != seq_len + 1:
                 continue
@@ -63,23 +80,41 @@ class Wikitext2Dataset(Dataset):
         return len(self.stoi)
 
 
-def _build_vocab_stream(
+def _scan_stream(
     dataset: str,
     split: str,
     cache_dir: Path,
+    seq_len: int,
     limit: int | None = None,
-) -> Tuple[dict, dict]:
-    vocab = list(SPECIAL_TOKENS)
-    seen = set(vocab)
+    vocab_pair: tuple[dict, dict] | None = None,
+) -> tuple[dict, dict, list[str], OrderedTextProvenance]:
+    vocab_list = list(SPECIAL_TOKENS)
+    seen = set(vocab_list)
+    if vocab_pair is not None:
+        stoi, itos = vocab_pair
+        vocab_list = vocabulary_tokens(stoi)
+        seen = set(vocab_list)
+    builder = OrderedTextProvenanceBuilder()
     ds = load_wikitext_hf_dataset(dataset, cache_dir, streaming=True)
     for line in iter_wikitext_lines(dataset, split, cache_dir, limit=limit, dataset_obj=ds):
-        for tok in line.split():
-            if tok not in seen:
-                seen.add(tok)
-                vocab.append(tok)
-    stoi = {tok: idx for idx, tok in enumerate(vocab)}
-    itos = {idx: tok for tok, idx in stoi.items()}
-    return stoi, itos
+        record = line.split()
+        builder.add_record(record)
+        if vocab_pair is None:
+            for tok in record:
+                if tok not in seen:
+                    seen.add(tok)
+                    vocab_list.append(tok)
+    if vocab_pair is None:
+        stoi = {tok: idx for idx, tok in enumerate(vocab_list)}
+        itos = {idx: tok for tok, idx in stoi.items()}
+    vocab_sha256 = vocabulary_digest(vocab_list)
+    provenance = builder.finalize(
+        dataset=dataset,
+        split=split,
+        seq_len=seq_len,
+        vocabulary_sha256=vocab_sha256,
+    )
+    return stoi, itos, vocab_list, provenance
 
 
 class Wikitext2IterableDataset(IterableDataset):
@@ -95,12 +130,19 @@ class Wikitext2IterableDataset(IterableDataset):
         self.seq_len = seq_len
         self.limit = limit
         self.cache_dir = ensure_hf_cache(cache_root)
-        if vocab is None:
-            self.stoi, self.itos = _build_vocab_stream(
-                "wikitext2", split, self.cache_dir, limit=limit
-            )
-        else:
-            self.stoi, self.itos = vocab
+        (
+            self.stoi,
+            self.itos,
+            self.vocabulary_tokens,
+            self.provenance,
+        ) = _scan_stream(
+            "wikitext2",
+            split,
+            self.cache_dir,
+            seq_len,
+            limit=limit,
+            vocab_pair=vocab,
+        )
 
     def __iter__(self):
         ds = load_wikitext_hf_dataset("wikitext2", self.cache_dir, streaming=True)

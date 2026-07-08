@@ -17,6 +17,7 @@ from train.metrics_schema import (
     BASELINE_DIAGNOSTICS,
     EFFICIENCY_METRICS,
     SET_DIAGNOSTICS,
+    MULTIRESOLUTION_GROUP_DIAGNOSTICS,
     TASK_METRICS,
     UNIVERSAL_METRICS,
     canonical_dataset_name,
@@ -458,11 +459,21 @@ class ExperimentLogger:
         columns += cfg_fields
         columns += ATTENTION_TAGS
         columns += TASK_METRICS.get(self.task, [])
+        columns += [
+            column
+            for column in _get_cfg_value(
+                self.cfg,
+                "logging.metric_columns",
+                [],
+            )
+            if column not in columns
+        ]
         columns += UNIVERSAL_METRICS
         columns += EFFICIENCY_METRICS
         columns += SET_DIAGNOSTICS
+        columns += MULTIRESOLUTION_GROUP_DIAGNOSTICS
         columns += BASELINE_DIAGNOSTICS
-        return columns
+        return list(dict.fromkeys(columns))
 
     def log_model_complexity(self, model: torch.nn.Module) -> None:
         param_count = sum(p.numel() for p in model.parameters())
@@ -498,7 +509,7 @@ class ExperimentLogger:
             for key, value in bundle.items():
                 metrics[f"{prefix}/{key}"] = value
 
-        if self.task == "lm":
+        if self.task in {"lm", "mqar"}:
             if metrics.get("train/ppl") is None and metrics.get("train/loss") is not None:
                 metrics["train/ppl"] = perplexity(metrics["train/loss"])
             if metrics.get("val/ppl") is None and metrics.get("val/loss") is not None:
@@ -510,7 +521,11 @@ class ExperimentLogger:
             "efficiency/samples_per_second": samples_per_second,
         }
 
-        if self.task == "lm" and metrics.get("val/ppl") is not None and elapsed > 0:
+        if (
+            self.task in {"lm", "mqar"}
+            and metrics.get("val/ppl") is not None
+            and elapsed > 0
+        ):
             efficiency["efficiency/ppl_per_second"] = metrics["val/ppl"] / elapsed
         if self.task == "seq2seq" and metrics.get("val/bleu") is not None and elapsed > 0:
             efficiency["efficiency/bleu_per_second"] = metrics["val/bleu"] / elapsed

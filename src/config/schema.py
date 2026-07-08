@@ -81,7 +81,7 @@ SET_ONLY_KEYS = {
     "hybrid",
 }
 
-LOGGING_KEYS = {"wandb", "csv"}
+LOGGING_KEYS = {"wandb", "csv", "metric_columns"}
 WANDB_KEYS = {"enable", "project", "tags", "run_name"}
 CSV_KEYS = {"path"}
 
@@ -265,6 +265,50 @@ def validate_config(cfg: dict) -> None:
     if "family" in cfg.get("data", {}):
         raise ConfigError("data.family is not allowed; use model.implementation only")
 
+    training_cfg = cfg["training"]
+    if not isinstance(training_cfg, dict):
+        raise ConfigError("training must be a mapping")
+    for key in ("deterministic", "strict_deterministic", "benchmark_mode"):
+        if key in training_cfg and not isinstance(training_cfg[key], bool):
+            raise ConfigError(f"training.{key} must be a boolean")
+    if training_cfg.get("strict_deterministic") and not training_cfg.get(
+        "deterministic"
+    ):
+        raise ConfigError(
+            "training.strict_deterministic=true requires "
+            "training.deterministic=true"
+        )
+    checkpoint_cfg = training_cfg.get("checkpoint", {})
+    if not isinstance(checkpoint_cfg, dict):
+        raise ConfigError("training.checkpoint must be a mapping")
+    unexpected_checkpoint = set(checkpoint_cfg) - {
+        "save_final",
+        "save_every_epochs",
+        "directory",
+        "resume_from",
+        "eval_only_from",
+    }
+    if unexpected_checkpoint:
+        raise ConfigError(
+            "Unexpected training.checkpoint keys: "
+            f"{sorted(unexpected_checkpoint)}"
+        )
+    if not isinstance(checkpoint_cfg.get("save_final", False), bool):
+        raise ConfigError("training.checkpoint.save_final must be a boolean")
+    save_every = checkpoint_cfg.get("save_every_epochs", 0)
+    if (
+        not isinstance(save_every, int)
+        or isinstance(save_every, bool)
+        or save_every < 0
+    ):
+        raise ConfigError(
+            "training.checkpoint.save_every_epochs must be an integer >= 0"
+        )
+    for key in ("directory", "resume_from", "eval_only_from"):
+        value = checkpoint_cfg.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ConfigError(f"training.checkpoint.{key} must be a string or null")
+
     if "logging" in cfg:
         if not isinstance(cfg["logging"], dict):
             raise ConfigError("logging must be a mapping")
@@ -285,3 +329,11 @@ def validate_config(cfg: dict) -> None:
             extra = set(csv_cfg.keys()) - CSV_KEYS
             if extra:
                 raise ConfigError(f"Unexpected logging.csv keys: {sorted(extra)}")
+        metric_columns = cfg["logging"].get("metric_columns", [])
+        if not isinstance(metric_columns, list) or not all(
+            isinstance(column, str) and column
+            for column in metric_columns
+        ):
+            raise ConfigError(
+                "logging.metric_columns must be a list of non-empty strings"
+            )

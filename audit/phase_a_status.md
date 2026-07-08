@@ -1,5 +1,9 @@
 # Phase A Status Tracker
 
+> **Historical original-campaign tracker.** Do not use this file to select current set-dictionary
+> work. Current state is `audit/phase_sd_status.md`; current cells are
+> `docs/sd_dense_paper5_matrix.md`.
+
 Last updated: 2026-06-16 by Codex after validating A9 candidate-gather router comparison.
 
 ## v2.7 Scope Amendment

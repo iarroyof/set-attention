@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 from pathlib import Path
 import sys
 
@@ -11,12 +13,23 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
 
 from config.load import load_config  # noqa: E402
+from config.experiment_contracts import validate_experiment_contract  # noqa: E402
+from common.repro import set_seed  # noqa: E402
+from data.ordered_text import dataset_provenance_bundle  # noqa: E402
 from data.wikitext2 import Wikitext2Dataset, Wikitext2IterableDataset  # noqa: E402
 from models.baseline_token import TransformerLM  # noqa: E402
 from models.hybrid_token_set_lm import HybridTokenSetLM  # noqa: E402
 from models.seq2seq import Seq2SeqTransformer  # noqa: E402
 from models.set_only import SetOnlyLM  # noqa: E402
 from set_attention.training.seq_loaders import get_seq2seq_datasets  # noqa: E402
+from set_attention.utils.repro_workers import make_worker_init_fn  # noqa: E402
+from train.checkpoints import (  # noqa: E402
+    build_checkpoint_payload,
+    load_checkpoint,
+    save_checkpoint,
+    sha256_file,
+    source_commit,
+)
 from train.experiment_logger import ExperimentLogger  # noqa: E402
 from train.loop import (
     evaluate,
@@ -162,7 +175,68 @@ def build_model(model_cfg: dict) -> torch.nn.Module:
     )
 
 
+def apply_training_seed(cfg: dict) -> None:
+    training_cfg = cfg.setdefault("training", {})
+    if "seed" not in training_cfg:
+        raise ValueError("training.seed is required and must be applied before construction")
+
+    requested_seed = int(training_cfg["seed"])
+    deterministic = bool(training_cfg.get("deterministic", False))
+    strict_deterministic = bool(
+        training_cfg.get("strict_deterministic", False)
+    )
+    benchmark_mode = bool(training_cfg.get("benchmark_mode", False))
+    if deterministic and benchmark_mode:
+        raise ValueError(
+            "training.deterministic=true is incompatible with "
+            "training.benchmark_mode=true"
+        )
+
+    set_seed(
+        requested_seed,
+        deterministic=deterministic,
+        benchmark_mode=benchmark_mode,
+        strict_deterministic=strict_deterministic,
+    )
+    training_cfg["seed"] = requested_seed
+    training_cfg["seed_applied"] = True
+    training_cfg["applied_seed"] = requested_seed
+    training_cfg["torch_initial_seed"] = int(torch.initial_seed())
+    training_cfg["deterministic"] = deterministic
+    training_cfg["strict_deterministic"] = strict_deterministic
+    training_cfg["benchmark_mode"] = benchmark_mode
+    training_cfg["cublas_workspace_config"] = os.environ.get(
+        "CUBLAS_WORKSPACE_CONFIG",
+        "NA",
+    )
+    data_cfg = cfg.setdefault("data", {})
+    data_cfg.setdefault("dataset_seed", requested_seed + 10_000)
+    data_cfg.setdefault("train_loader_seed", requested_seed + 20_000)
+    data_cfg.setdefault("validation_loader_seed", requested_seed + 30_000)
+
+    resolved = cfg.setdefault("resolved", {})
+    resolved.update(
+        {
+            "requested_seed": requested_seed,
+            "applied_seed": requested_seed,
+            "torch_initial_seed": int(torch.initial_seed()),
+            "deterministic": deterministic,
+            "strict_deterministic": strict_deterministic,
+            "benchmark_mode": benchmark_mode,
+            "cublas_workspace_config": training_cfg[
+                "cublas_workspace_config"
+            ],
+            "dataset_seed": int(data_cfg["dataset_seed"]),
+            "train_loader_seed": int(data_cfg["train_loader_seed"]),
+            "validation_loader_seed": int(
+                data_cfg["validation_loader_seed"]
+            ),
+        }
+    )
+
+
 def attach_resolved_metadata(cfg: dict, model: torch.nn.Module) -> None:
+    runtime_resolved = dict(cfg.get("resolved", {}))
     if hasattr(model, "get_resolved_metadata"):
         resolved = dict(model.get_resolved_metadata())
     else:
@@ -197,16 +271,47 @@ def attach_resolved_metadata(cfg: dict, model: torch.nn.Module) -> None:
         "multiresolution_groups": "NA",
         "multiresolution_num_groups": "NA",
     }
+    resolved_defaults.update(runtime_resolved)
     resolved_defaults.update(resolved)
     cfg["resolved"] = resolved_defaults
 
 
-def _make_loader(ds, batch_size: int, shuffle: bool):
+def _make_loader(
+    ds,
+    batch_size: int,
+    shuffle: bool,
+    *,
+    seed: int = 0,
+    num_workers: int = 0,
+):
     from torch.utils.data import IterableDataset
 
+    generator = torch.Generator()
+    generator.manual_seed(int(seed))
+    worker_init_fn = make_worker_init_fn(int(seed))
     if isinstance(ds, IterableDataset):
-        return DataLoader(ds, batch_size=batch_size, shuffle=False)
-    return DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
+        if int(num_workers) != 0:
+            raise ValueError(
+                "ordered iterable datasets require data.num_workers=0 "
+                "until worker sharding is provenance-aware"
+            )
+        return DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=False,
+            generator=generator,
+            worker_init_fn=worker_init_fn,
+            num_workers=0,
+        )
+    return DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        generator=generator,
+        worker_init_fn=worker_init_fn,
+        num_workers=max(0, int(num_workers)),
+        persistent_workers=False,
+    )
 
 
 def build_dataloaders(data_cfg: dict) -> tuple[DataLoader, DataLoader, int]:
@@ -223,7 +328,7 @@ def build_dataloaders(data_cfg: dict) -> tuple[DataLoader, DataLoader, int]:
         val_ds = Wikitext2IterableDataset(
             split="validation",
             seq_len=data_cfg["seq_len"],
-            limit=data_cfg.get("limit"),
+            limit=data_cfg.get("val_limit", data_cfg.get("limit")),
             cache_root=data_cfg.get("cache_root"),
             vocab=(train_ds.stoi, train_ds.itos),
         )
@@ -237,24 +342,43 @@ def build_dataloaders(data_cfg: dict) -> tuple[DataLoader, DataLoader, int]:
         val_ds = Wikitext2Dataset(
             split="validation",
             seq_len=data_cfg["seq_len"],
-            limit=data_cfg.get("limit"),
+            limit=data_cfg.get("val_limit", data_cfg.get("limit")),
             cache_root=data_cfg.get("cache_root"),
             vocab=(train_ds.stoi, train_ds.itos),
         )
-    train_loader = _make_loader(train_ds, data_cfg["batch_size"], shuffle=True)
-    val_loader = _make_loader(val_ds, data_cfg["batch_size"], shuffle=False)
+    train_loader = _make_loader(
+        train_ds,
+        data_cfg["batch_size"],
+        shuffle=True,
+        seed=int(data_cfg.get("train_loader_seed", 0)),
+        num_workers=int(data_cfg.get("num_workers", 0)),
+    )
+    val_loader = _make_loader(
+        val_ds,
+        data_cfg["batch_size"],
+        shuffle=False,
+        seed=int(data_cfg.get("validation_loader_seed", 1)),
+        num_workers=int(data_cfg.get("num_workers", 0)),
+    )
     return train_loader, val_loader, train_ds.vocab_size
 
 
 def build_unigram_counts(dataset, vocab_size: int) -> torch.Tensor:
     counts = torch.zeros(int(vocab_size), dtype=torch.long)
+
+    def add(labels: torch.Tensor) -> None:
+        valid = labels.reshape(-1)
+        valid = valid[valid >= 0]
+        if valid.numel() > 0:
+            counts.add_(torch.bincount(valid, minlength=vocab_size))
+
     samples = getattr(dataset, "samples", None)
     if samples is not None:
         for _, labels in samples:
-            counts += torch.bincount(labels.reshape(-1), minlength=vocab_size)
+            add(labels)
         return counts
     for _, labels in dataset:
-        counts += torch.bincount(labels.reshape(-1), minlength=vocab_size)
+        add(labels)
     return counts
 
 
@@ -336,8 +460,20 @@ def build_seq2seq_dataloaders(data_cfg: dict, shared_vocab: bool) -> tuple[DataL
         split_seed=int(data_cfg.get("split_seed", 42)),
         streaming=streaming,
     )
-    train_loader = _make_loader(train_ds, data_cfg["batch_size"], shuffle=True)
-    val_loader = _make_loader(val_ds, data_cfg["batch_size"], shuffle=False)
+    train_loader = _make_loader(
+        train_ds,
+        data_cfg["batch_size"],
+        shuffle=True,
+        seed=int(data_cfg.get("train_loader_seed", 0)),
+        num_workers=int(data_cfg.get("num_workers", 0)),
+    )
+    val_loader = _make_loader(
+        val_ds,
+        data_cfg["batch_size"],
+        shuffle=False,
+        seed=int(data_cfg.get("validation_loader_seed", 1)),
+        num_workers=int(data_cfg.get("num_workers", 0)),
+    )
     vocab = {
         "vocab_size": train_ds.vocab_size,
         "pad_id": train_ds.pad_id,
@@ -349,6 +485,135 @@ def build_seq2seq_dataloaders(data_cfg: dict, shared_vocab: bool) -> tuple[DataL
     return train_loader, val_loader, vocab
 
 
+def attach_dataset_provenance(
+    cfg: dict,
+    provenance: dict[str, object],
+) -> None:
+    data_cfg = cfg.setdefault("data", {})
+    data_cfg["dataset_digest"] = provenance["dataset_digest"]
+    data_cfg["tokenizer_name"] = provenance["tokenizer"]
+    data_cfg["tokenizer_digest"] = provenance["tokenizer_digest"]
+    train = provenance["train"]
+    validation = provenance["validation"]
+    if isinstance(train, dict):
+        data_cfg["train_token_count"] = train["token_count"]
+        data_cfg["train_record_offsets_digest"] = train[
+            "record_offsets_digest"
+        ]
+        data_cfg["train_sample_offsets_digest"] = train[
+            "sample_offsets_digest"
+        ]
+    if isinstance(validation, dict):
+        data_cfg["validation_token_count"] = validation["token_count"]
+        data_cfg["validation_record_offsets_digest"] = validation[
+            "record_offsets_digest"
+        ]
+        data_cfg["validation_sample_offsets_digest"] = validation[
+            "sample_offsets_digest"
+        ]
+    cfg.setdefault("resolved", {}).update(
+        {
+            "dataset_digest": provenance["dataset_digest"],
+            "tokenizer_digest": provenance["tokenizer_digest"],
+        }
+    )
+
+
+def checkpoint_path(cfg: dict, name: str) -> Path:
+    checkpoint_cfg = cfg["training"]["checkpoint"]
+    directory = checkpoint_cfg.get("directory")
+    if directory is None:
+        directory = Path(cfg["training"].get("output_dir", "out")) / "checkpoints"
+    return Path(directory) / name
+
+
+def append_checkpoint_manifest(
+    cfg: dict,
+    *,
+    path: Path,
+    digest: str,
+    epoch: int,
+    global_step: int,
+) -> None:
+    manifest = checkpoint_path(cfg, "manifest.jsonl")
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "path": str(path),
+        "sha256": digest,
+        "epoch": int(epoch),
+        "global_step": int(global_step),
+    }
+    with manifest.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def save_training_checkpoint(
+    *,
+    cfg: dict,
+    logger: ExperimentLogger,
+    model: torch.nn.Module,
+    dataset_provenance: dict[str, object],
+    epoch: int,
+    global_step: int,
+    optimizer: torch.optim.Optimizer,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    name: str,
+) -> tuple[Path, str]:
+    path = checkpoint_path(cfg, name)
+    payload = build_checkpoint_payload(
+        model=model,
+        config=cfg,
+        config_fingerprint=logger.config_fingerprint,
+        dataset_provenance=dataset_provenance,
+        epoch=epoch,
+        global_step=global_step,
+        optimizer=optimizer,
+        loaders={"train": train_loader, "validation": val_loader},
+    )
+    digest = save_checkpoint(payload, path)
+    append_checkpoint_manifest(
+        cfg,
+        path=path,
+        digest=digest,
+        epoch=epoch,
+        global_step=global_step,
+    )
+    print(f"checkpoint={path} sha256={digest}")
+    return path, digest
+
+
+def evaluate_lm_bundle(
+    model: torch.nn.Module,
+    val_loader: DataLoader,
+    device: torch.device,
+    unigram_counts: torch.Tensor | None,
+) -> dict:
+    val_metrics = evaluate(
+        model,
+        val_loader,
+        device,
+        unigram_counts=unigram_counts,
+    )
+    val_metrics.update(
+        maybe_evaluate_span_ablation(
+            model,
+            val_loader,
+            device,
+            val_metrics,
+        )
+    )
+    val_metrics.update(
+        maybe_evaluate_group_span_ablation(
+            model,
+            val_loader,
+            device,
+            val_metrics,
+        )
+    )
+    return val_metrics
+
+
 def main() -> None:
     args = parse_args()
     overrides = []
@@ -358,6 +623,8 @@ def main() -> None:
         else:
             overrides.append(group)
     cfg = load_config(args.config, overrides=overrides)
+    validate_experiment_contract(cfg)
+    apply_training_seed(cfg)
     if args.dry_run:
         print("Dry run: config validated. No data loaded or training run.")
         print(cfg)
@@ -365,7 +632,9 @@ def main() -> None:
     device = torch.device(args.device)
 
     task = detect_task(cfg)
+    cfg.setdefault("resolved", {})["source_commit"] = source_commit() or "NA"
     unigram_counts = None
+    dataset_provenance: dict[str, object] | None = None
     if task == "seq2seq":
         shared_vocab = bool(cfg.get("model", {}).get("seq2seq", {}).get("shared_vocab", True))
         train_loader, val_loader, vocab = build_seq2seq_dataloaders(cfg["data"], shared_vocab)
@@ -430,11 +699,58 @@ def main() -> None:
         attach_resolved_metadata(cfg, model)
     else:
         train_loader, val_loader, vocab_size = build_dataloaders(cfg["data"])
+        dataset_provenance = dataset_provenance_bundle(
+            train_loader.dataset,
+            val_loader.dataset,
+        )
+        attach_dataset_provenance(cfg, dataset_provenance)
         if cfg["model"].get("vocab_size", 0) in (0, None):
             cfg["model"]["vocab_size"] = vocab_size
         model = build_model(cfg["model"]).to(device)
         attach_resolved_metadata(cfg, model)
         unigram_counts = build_unigram_counts(train_loader.dataset, vocab_size)
+
+    checkpoint_cfg = cfg["training"]["checkpoint"]
+    checkpoint_requested = bool(
+        checkpoint_cfg.get("save_final")
+        or checkpoint_cfg.get("save_every_epochs")
+        or checkpoint_cfg.get("resume_from")
+        or checkpoint_cfg.get("eval_only_from")
+    )
+    if checkpoint_requested and dataset_provenance is None:
+        raise ValueError(
+            "checkpointed runs require ordered dataset provenance; "
+            "the current implementation supports causal LM datasets"
+        )
+
+    eval_only_from = checkpoint_cfg.get("eval_only_from")
+    resume_from = checkpoint_cfg.get("resume_from")
+    if eval_only_from:
+        cfg["training"]["eval_only"] = True
+        cfg["training"]["checkpoint"]["loaded_sha256"] = sha256_file(
+            eval_only_from
+        )
+        payload = load_checkpoint(
+            eval_only_from,
+            model=model,
+            map_location=device,
+            expected_model_config=cfg["model"],
+            expected_dataset_digest=str(
+                dataset_provenance["dataset_digest"]
+            ),
+            expected_tokenizer_digest=str(
+                dataset_provenance["tokenizer_digest"]
+            ),
+        )
+        cfg["training"]["checkpoint"]["loaded_epoch"] = int(payload["epoch"])
+        cfg["training"]["checkpoint"]["loaded_global_step"] = int(
+            payload["global_step"]
+        )
+    elif resume_from:
+        cfg["training"]["checkpoint"]["loaded_sha256"] = sha256_file(
+            resume_from
+        )
+
     wandb_tags = [t for t in args.wandb_tags.split(",") if t]
     logger = ExperimentLogger(
         config=cfg,
@@ -444,6 +760,34 @@ def main() -> None:
         wandb_enable=True if args.wandb else None,
     )
     logger.log_model_complexity(model)
+
+    if eval_only_from:
+        try:
+            logger.start_epoch(num_train_samples=0)
+            if task == "seq2seq":
+                raise ValueError(
+                    "eval-only checkpointing is not implemented for seq2seq"
+                )
+            val_metrics = evaluate_lm_bundle(
+                model,
+                val_loader,
+                device,
+                unigram_counts,
+            )
+            logger.log_epoch(
+                int(payload["epoch"]),
+                {},
+                val_metrics,
+                None,
+            )
+            print(
+                f"eval_only checkpoint={eval_only_from} "
+                f"val_loss={val_metrics['loss']:.4f}"
+            )
+        finally:
+            logger.finish()
+        return
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=float(cfg["training"]["lr"]))
     set_diversity_weight = float(
         cfg["model"].get("set_diversity", {}).get(
@@ -453,9 +797,35 @@ def main() -> None:
     )
     set_diversity_mode = str(cfg["training"].get("set_diversity_mode", "position_contrastive"))
 
-    epochs = cfg["training"]["epochs"]
+    epochs = int(cfg["training"]["epochs"])
+    start_epoch = 1
+    global_step = 0
+    if resume_from:
+        payload = load_checkpoint(
+            resume_from,
+            model=model,
+            map_location=device,
+            expected_model_config=cfg["model"],
+            expected_dataset_digest=str(
+                dataset_provenance["dataset_digest"]
+            ),
+            expected_tokenizer_digest=str(
+                dataset_provenance["tokenizer_digest"]
+            ),
+            optimizer=optimizer,
+            loaders={"train": train_loader, "validation": val_loader},
+            restore_training_state=True,
+        )
+        start_epoch = int(payload["epoch"]) + 1
+        global_step = int(payload["global_step"])
+        if start_epoch > epochs:
+            raise ValueError(
+                f"resume checkpoint epoch {payload['epoch']} already reaches "
+                f"training.epochs={epochs}"
+            )
+
     try:
-        for epoch in range(1, epochs + 1):
+        for epoch in range(start_epoch, epochs + 1):
             num_samples = None
             try:
                 num_samples = len(train_loader.dataset)
@@ -495,18 +865,49 @@ def main() -> None:
                     set_diversity_weight=set_diversity_weight,
                     set_diversity_mode=set_diversity_mode,
                 )
-                val_metrics = evaluate(model, val_loader, device, unigram_counts=unigram_counts)
-                val_metrics.update(
-                    maybe_evaluate_span_ablation(model, val_loader, device, val_metrics)
+                global_step += int(
+                    train_metrics.pop("_optimizer_steps", 0)
                 )
-                val_metrics.update(
-                    maybe_evaluate_group_span_ablation(model, val_loader, device, val_metrics)
+                val_metrics = evaluate_lm_bundle(
+                    model,
+                    val_loader,
+                    device,
+                    unigram_counts,
                 )
             set_diagnostics = model.get_diagnostics() if hasattr(model, "get_diagnostics") else None
             logger.log_epoch(epoch, train_metrics, val_metrics, set_diagnostics)
             print(
                 f"epoch={epoch} train_loss={train_metrics['loss']:.4f} "
                 f"val_loss={val_metrics['loss']:.4f}"
+            )
+            save_every = int(
+                checkpoint_cfg.get("save_every_epochs", 0)
+            )
+            if save_every > 0 and epoch % save_every == 0:
+                save_training_checkpoint(
+                    cfg=cfg,
+                    logger=logger,
+                    model=model,
+                    dataset_provenance=dataset_provenance,
+                    epoch=epoch,
+                    global_step=global_step,
+                    optimizer=optimizer,
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    name=f"epoch_{epoch:04d}.pt",
+                )
+        if checkpoint_cfg.get("save_final"):
+            save_training_checkpoint(
+                cfg=cfg,
+                logger=logger,
+                model=model,
+                dataset_provenance=dataset_provenance,
+                epoch=epochs,
+                global_step=global_step,
+                optimizer=optimizer,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                name="final.pt",
             )
     finally:
         logger.finish()

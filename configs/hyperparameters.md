@@ -2,9 +2,17 @@
 
 This table uses the **canonical naming**:
 
+Backend entries describe implemented config compatibility, not the currently approved experiment matrix.
+As of 2026-06-30, active `set-dictionary/anchor-span` comparisons use
+`attention_family=dense, backend=exact` only, with the matrix in
+`docs/sd_dense_paper5_matrix.md`. Landmark, sparse, fixed-k, and Nyström remain historical/deferred
+capabilities and are not active launch targets.
+
 - `implementation`: baseline vs set-only placement
 - `attention_family`: dense / sparse / linear
-- `backend`: exact / local_band / landmark for the active revision surface; legacy schema values `nystrom` and `linformer` are not active tested backends for this revision
+- `backend`: exact / local_band / landmark for the implemented revision surface; the current
+  set-dictionary matrix uses exact only; legacy schema values `nystrom` and `linformer` are not active
+  tested backends for this revision
 
 ## Shared Hyperparameters (LM + Seq2Seq)
 
@@ -12,11 +20,32 @@ This table uses the **canonical naming**:
 | --- | --- | --- | --- |
 | `training.epochs` | Number of training epochs | LM: 5, Seq2Seq: 5 | Recommended: `1–50` |
 | `training.lr` | Optimizer learning rate | `0.0003` | Recommended: `1e-5–5e-4` |
-| `training.seed` | Random seed | `0` | Any integer |
+| `training.seed` | Required RNG seed applied before data/model construction | `0` | Any integer |
+| `training.deterministic` | Request deterministic PyTorch/CuDNN execution | `false`; paper seed confirmations use `true` | `true`, `false` |
+| `training.strict_deterministic` | Fail closed on nondeterministic PyTorch/CUDA operations and require a valid CuBLAS workspace configuration | `false`; required for new reproducibility-certified runs | `true`, `false`; requires `training.deterministic=true` and `benchmark_mode=false` |
+| `training.benchmark_mode` | Enable benchmark-oriented CuDNN mode | `false`; incompatible with deterministic mode | `true`, `false` |
+| `training.cublas_workspace_config` | Runtime CuBLAS determinism provenance | emitted by runner | Read-only; strict mode accepts `:4096:8` or `:16:8` |
+| `training.seed_applied` | Runtime provenance: runner applied the seed | emitted by runner | Read-only boolean |
+| `training.applied_seed` | Runtime provenance: integer passed to RNGs | emitted by runner | Read-only integer |
+| `training.torch_initial_seed` | Runtime provenance after seed application | emitted by runner | Read-only integer |
+| `training.experiment_contract` | Optional fail-closed experiment protocol | unset; current matrix uses `sd_grid_seeded_v1` | Registered contract name |
+| `training.diagnostics_contract` | Required metric schema for a registered experiment | unset; current matrix uses `current_matrix_v1` | Registered diagnostics name |
+| `training.checkpoint.save_final` | Atomically save a final resumable checkpoint | `false` | `true`, `false` |
+| `training.checkpoint.save_every_epochs` | Atomically save periodic resumable checkpoints | `0` | Integer `>=0`; `0` disables |
+| `training.checkpoint.directory` | Checkpoint and manifest directory | `<training.output_dir>/checkpoints` | Path or `null` |
+| `training.checkpoint.resume_from` | Resume model/optimizer/RNG/loader state | `null` | Checkpoint path; mutually exclusive with eval-only |
+| `training.checkpoint.eval_only_from` | Strict checkpoint loading without optimizer construction or checkpoint mutation | `null` | Checkpoint path; mutually exclusive with resume |
 | `data.batch_size` | Batch size | `16` | Recommended: `1–64` |
 | `data.seq_len` | Sequence length (LM tokens / Seq2Seq max length) | `256` | Recommended: `64–1024` |
 | `data.streaming` | Stream from HF datasets | Default `true` | `true`, `false` |
 | `data.cache_root` | HF cache root | Default from env | Any path |
+| `data.num_workers` | DataLoader workers | `0` | Non-negative integer; ordered iterable datasets currently require `0` |
+| `data.dataset_seed` | Dataset-construction RNG provenance | `training.seed+10000` | Integer |
+| `data.train_loader_seed` | Explicit training-loader generator seed | `training.seed+20000` | Integer |
+| `data.validation_loader_seed` | Explicit validation-loader generator seed | `training.seed+30000` | Integer |
+| `data.dataset_digest` | Combined ordered train/validation token-stream digest | emitted by runner | Read-only SHA-256 |
+| `data.tokenizer_digest` | Ordered vocabulary/tokenizer digest | emitted by runner | Read-only SHA-256 |
+| `logging.metric_columns` | Additional preregistered metric columns retained in CSV/W&B output | `[]` | List of full metric names |
 | `model.vocab_size` | Vocab size (0 = auto infer) | `0` | `0` or positive integer |
 | `model.d_model` | Hidden size | `256` | Recommended: `128–1024` |
 | `model.num_layers` | Number of layers | `4` | Recommended: `2–12` |
@@ -31,13 +60,13 @@ This table uses the **canonical naming**:
 | --- | --- | --- | --- |
 | `model.implementation` | Where set-only is used | LM: `baseline_token` or `set_only` | `baseline_token`, `set_only`, `hybrid_token_set`, `encoder_set_only`, `decoder_set_only`, `cross_attention_set_only`, `encoder_set_decoder_baseline`, `encoder_baseline_decoder_set` |
 | `model.attention_family` | Complexity family | `dense` | `dense`, `sparse`, `linear` |
-| `model.backend` | Concrete backend | `exact` | Active revision: `exact`, `local_band`, `landmark`; legacy/deprecated schema values: `nystrom`, `linformer` |
+| `model.backend` | Concrete backend | `exact` | Implemented revision surface: `exact`, `local_band`, `landmark`; current set-dictionary matrix: `exact`; legacy/deprecated schema values: `nystrom`, `linformer` |
 | `model.encoder_attention_family` | Encoder attention family | defaults to `model.attention_family` | `dense`, `sparse`, `linear` |
-| `model.encoder_backend` | Encoder backend | defaults to `model.backend` | Active revision: `exact`, `local_band`, `landmark`; legacy/deprecated schema values: `nystrom`, `linformer` |
+| `model.encoder_backend` | Encoder backend | defaults to `model.backend` | Implemented: `exact`, `local_band`, `landmark`; legacy/deprecated schema values: `nystrom`, `linformer` |
 | `model.decoder_attention_family` | Decoder self-attn family | defaults to `model.attention_family` | `dense`, `sparse`, `linear` |
-| `model.decoder_backend` | Decoder self-attn backend | defaults to `model.backend` | Active revision: `exact`, `local_band`, `landmark`; legacy/deprecated schema values: `nystrom`, `linformer` |
+| `model.decoder_backend` | Decoder self-attn backend | defaults to `model.backend` | Implemented: `exact`, `local_band`, `landmark`; legacy/deprecated schema values: `nystrom`, `linformer` |
 | `model.cross_attention_family` | Cross-attn family | defaults to `model.attention_family` | `dense`, `sparse`, `linear` |
-| `model.cross_backend` | Cross-attn backend | defaults to `model.backend` | Active revision: `exact`, `local_band`, `landmark`; legacy/deprecated schema values: `nystrom`, `linformer` |
+| `model.cross_backend` | Cross-attn backend | defaults to `model.backend` | Implemented: `exact`, `local_band`, `landmark`; legacy/deprecated schema values: `nystrom`, `linformer` |
 | `model.cross_attention` | Cross-attn implementation | default derives from `implementation` | `baseline`, `set_only` |
 
 ## Set-Only Hyperparameters (shared across encoder/decoder/cross)
@@ -106,7 +135,7 @@ This table uses the **canonical naming**:
 | `anchor.enabled=true` | Set-dictionary anchoring | Constructs a shallow causal token pre-encoder with its own LM head and `L_CE_pre`; `anchor.lambda_pre>0`, `anchor.pre_encoder_head=true`, and `anchor.teacher.enabled=false` are required |
 | `candidate_fiber` | Set-dictionary routing support | `endpoint_window` uses sealed endpoints in the local window; `all_past` uses every sealed past set (`endpoint_m <= t`); `window_plus_landmarks` is deferred |
 | `multiresolution.enabled=true` | Set-only LM | Builds one set stream per `model.multiresolution.groups` entry, sharing token embeddings/token MLP and concatenating routed stream outputs before the LM head; each group's `d_phi` and set width are proportional to `num_heads` |
-| `multiresolution.groups` | Set-only LM | Head counts must sum to `model.num_heads`; every group needs positive `window_size` and `stride`, `stride <= window_size <= data.seq_len`; proportional `d_model`, `set_state_dim`, and `d_phi` shares must be integral |
+| `multiresolution.groups` | Set-only LM | Names must be non-empty and unique; head counts must sum to `model.num_heads`; every group needs positive `window_size` and `stride`, `stride <= window_size <= data.seq_len`; proportional `d_model`, `set_state_dim`, and `d_phi` shares must be integral |
 | `hybrid_token_set` topology | Hybrid LM | `model.hybrid.pattern` length must equal `model.num_layers`; `model.hybrid.set_topologies` length must equal the number of `S` layers; every topology requires positive `window_size` and `stride`, with `stride <= window_size <= data.seq_len` |
 | `router_topk` required | `router_type=learned` | `1 <= router_topk <= max_sets` |
 | `router.min_temp` | `router_type=learned` | Must be numeric and `> 0`; default `0.5` |
@@ -121,9 +150,9 @@ This table uses the **canonical naming**:
 | `adapter_type` | Set-only models with content-bias features | `auto`, `linear`, `nonlinear`, or `hybrid`; resolved adapter type is logged |
 | `attention_family=dense` | Any component | `backend=exact` |
 | `attention_family=sparse` | Any component | `backend in {local_band}` |
-| `attention_family=linear` | Any component | Active revision uses `backend=landmark`; legacy/deprecated schema values `nystrom` and `linformer` are not active tested backends |
+| `attention_family=linear` | Any component | Implemented mapping uses `backend=landmark`; this family is not active in the current set-dictionary matrix; legacy/deprecated schema values `nystrom` and `linformer` are not active tested backends |
 | `backend_params` required | `backend=local_band` | Must set `backend_params.radius >= 1`; optional `global_indices` (tokens) or `global_set_indices` (sets) |
-| `backend_params` required | `backend=landmark` | Uses `backend_params.landmark_coverage > 0`; default `0.25`; `num_landmarks` is not used by the active landmark backend |
+| `backend_params` required | `backend=landmark` | Uses `backend_params.landmark_coverage > 0`; default `0.25`; not active in the current set-dictionary matrix |
 | `backend_params` required | `backend=nystrom` | Deprecated and rejected for this revision cycle; historical YAMLs may exist only under `configs/_deprecated/` and must not be active launch configs |
 | `backend_params` required | `backend=linformer` | Legacy schema path; not an active tested backend for this revision; must set `backend_params.k >= 2` |
 | `backend_params` forbidden | `backend=exact` | Must be empty/absent |
@@ -131,3 +160,13 @@ This table uses the **canonical naming**:
 | `sig_gating` top‑k | `sig_gating.method=*topk` | `k <= max_sets` |
 | `sig_gating` threshold | `sig_gating.method=*threshold` | `0 <= delta_threshold <= 1` |
 | `sig_gating` minhash | `sig_gating.method=minhash_*` | Must set `sig_gating.sig_k` |
+
+## Current Matrix Diagnostics
+
+`current_matrix_v1` requires peak train VRAM, position/rarity validation
+losses, and family-specific attention diagnostics. Set rows additionally
+require whole-span and per-group span ablations, per-group effective range,
+routing entropy/top-1, pooling support, router parameter/gradient norms, and
+pre/post-set-stack gradient norms. Group training diagnostics are logged under
+`ausa/fine/*` and `ausa/coarse/*`; head-weighted aggregate fields remain under
+`ausa/*`. Token controls require `baseline/attention_*` diagnostics.

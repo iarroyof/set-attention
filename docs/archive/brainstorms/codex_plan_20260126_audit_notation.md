@@ -78,4 +78,3 @@ This extends the audit with other plan math that could be misread or only partia
 - Soft‑trimmed Boltzmann pooling is implemented and configurable (see `model.pooling`).
 - Multiscale remains explicitly de‑scoped.
 - Signature neighbor gating (`b_sig`) is still not wired in set‑only; only the hook exists.
-

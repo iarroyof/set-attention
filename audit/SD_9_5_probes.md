@@ -1,5 +1,8 @@
 # SD-9.5 Mechanism Probes
 
+> **Historical probe record.** Dense short diagnostics may be reused; landmark scale rows are inactive.
+> Do not launch follow-ups from this file.
+
 Guards: CE-only, `anchor.enabled=false`, `token_mlp.enabled=false`, `candidate_fiber=endpoint_window`, `output_residual_mode=anchor_span`, multiresolution only.
 
 ## Short Mechanism Attribution

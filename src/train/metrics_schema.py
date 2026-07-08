@@ -6,7 +6,11 @@ from typing import Dict
 TASK_METRICS = {
     "lm": [
         "train/loss",
+        "train/accuracy",
+        "train/valid_tokens",
         "val/loss",
+        "val/accuracy",
+        "val/valid_tokens",
         "train/ppl",
         "val/ppl",
         "val/span_ablation_loss",
@@ -40,6 +44,17 @@ TASK_METRICS = {
         "train/anchor/pre_ce",
         "train/anchor/mse",
         "train/anchor/recon_error_norm",
+    ],
+    "mqar": [
+        "train/loss",
+        "train/ppl",
+        "train/accuracy",
+        "train/valid_tokens",
+        "val/loss",
+        "val/ppl",
+        "val/accuracy",
+        "val/valid_tokens",
+        "val/exact_sequence_accuracy",
     ],
     "seq2seq": ["train/loss", "val/loss", "val/bleu", "val/rougeL"],
     "textdiff": ["train/loss", "val/loss"],
@@ -150,6 +165,12 @@ SET_DIAGNOSTICS = [
     "ausa/delta_router_confidence",
 ]
 
+MULTIRESOLUTION_GROUP_DIAGNOSTICS = [
+    f"ausa/{group}/{metric.removeprefix('ausa/')}"
+    for group in ("fine", "coarse")
+    for metric in SET_DIAGNOSTICS
+]
+
 ATTENTION_TAGS = [
     "attention/family",
     "attention/base_mechanism",
@@ -204,6 +225,7 @@ DATASET_TO_TASK = {
     "wikitext103": "lm",
     "wikitext": "lm",
     "ptb": "lm",
+    "mqar": "mqar",
     "wmt14_fr_en": "seq2seq",
     "cnn_dailymail": "seq2seq",
     "opus_books_en_fr": "seq2seq",

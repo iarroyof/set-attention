@@ -1,5 +1,8 @@
 # SD-9.6 Blue-Demon Long-Context Multiresolution Probe
 
+> **Historical landmark-era evidence. Do not execute its follow-up instructions.** Current experiments
+> are exact dense; use `docs/sd_dense_paper5_matrix.md`.
+
 Date: 2026-06-20
 
 Status: probe complete for the corrected blue-demon interval `(8192 downto 2048] = {4096, 2048}`.

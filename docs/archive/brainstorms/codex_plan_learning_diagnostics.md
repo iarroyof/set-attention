@@ -613,4 +613,3 @@ BASELINE_DIAGNOSTICS = [
 ## 🎯 Should I Implement Baseline Diagnostics?
 
 **YES - This makes the comparison reviewer-proof!**
-

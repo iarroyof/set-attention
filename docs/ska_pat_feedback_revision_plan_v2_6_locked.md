@@ -1,6 +1,12 @@
 # SKA Paper -- PAT Feedback Revision Plan (v2.7 LOCKED)
 
-Status: locked for implementation and writing agents.
+> **Historical original-campaign plan.** This file is retained for architecture and provenance only.
+> It is not current execution guidance for `set-dictionary/anchor-span`. The active branch uses exact
+> dense set/token comparisons and the five-seed matrix in `docs/sd_dense_paper5_matrix.md`; live state
+> is `audit/phase_sd_status.md`. Do not launch landmark, sparse, Nyström, or old Phase-A tasks from this
+> document without an explicit user instruction reopening that campaign.
+
+Status: historical lock for the original campaign; superseded for current branch execution.
 
 This plan supersedes the pasted v2.5 plan and the v2.6 locked text. It folds in the code-review fixes, resolves the two blocking architectural decisions, restores the reviewer-critical matched token-backend baseline controls, and names the context files that a new chat must consult before editing code or LaTeX.
 

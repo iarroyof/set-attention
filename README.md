@@ -1,6 +1,23 @@
 Set Attention — Patchable Kernel-Based Attention for PyTorch
 ===========================================================
 
+Active research branch (2026-07-01)
+-----------------------------------
+- Current work is exact-dense multiresolution set dictionary versus matched exact-dense token
+  attention on `set-dictionary/anchor-span`.
+- Start at `docs/set_dictionary_research_main_plan.md`, then
+  `audit/phase_sd_status.md` and the assigned task under `docs/agent_plans/`.
+- The current paper5 queue is MRP-1 in `docs/sd_dense_paper5_matrix.md`.
+- Corrected matrix artifacts are accepted only from `sd_grid_seeded_v1` with
+  applied seed and `current_matrix_v1` diagnostics provenance.
+- The corrected MRP-1 seed-confirmation matrix is the only active empirical
+  exception. All later empirical work remains blocked on full MRP-0
+  reproducibility/checkpoint validation; see
+  `audit/incident_training_seed_not_applied_20260630.md`.
+- Landmark, sparse, fixed-k, and Nyström material is historical/deferred and is not current launch
+  guidance.
+- The package overview below describes the broader repository capability, not the active paper matrix.
+
 Overview
 --------
 - Drop-in attention heads to patch PyTorch Transformers/Diffusion with kernel-based attention.
