@@ -262,11 +262,12 @@ Known incident or limitation: the first approved calibration launch was stopped
 and quarantined because it evaluated only at the endpoint; see
 `audit/incident_mrp3_calibration_eval_cadence_20260708.md`. Active local Python
 lacks `pytest`, `PyYAML`, and a complete PyTorch install (`torch.utils` is
-missing), so runtime validation uses the Blue project container. Resume and
+missing), so runtime validation uses the project container. Resume and
 eval-only MQAR checkpoint paths are not implemented; final checkpoint save uses
-the MRP-0 checkpoint payload/save API. The old Lizmark `~/set-attention`
-checkout is deprecated for MRP launches; use only
-`~/set-attention-anchor-span-sync`.
+the MRP-0 checkpoint payload/save API. The temporary Lizmark
+`~/set-attention-anchor-span-sync` checkout was used for recovery provenance
+only and is now deprecated. New host launches use the original
+`~/set-attention` path after source sync and container validation.
 
 Next atomic action: do not relaunch MRP-3 or trigger MRP-4 from this result.
 Proceed to MRP-2 AR-hit evaluation; use MRP-3 only as a completed null

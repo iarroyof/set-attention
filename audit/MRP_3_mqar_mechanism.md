@@ -285,11 +285,12 @@ mechanism attribution.
 
 ## L4096/B4 Capacity Preflight
 
-Lizmark was repaired by creating a clean dedicated runtime checkout at
-`~/set-attention-anchor-span-sync`, replacing an incorrect first staging pass
-that had excluded `src/data`. Container syntax/import validation passed before
-launch. The old Lizmark `~/set-attention` checkout remains deprecated and was
-not used.
+Lizmark was repaired at the time by creating a clean temporary runtime checkout
+at `~/set-attention-anchor-span-sync`, replacing an incorrect first staging
+pass that had excluded `src/data`. Container syntax/import validation passed
+before launch. As of the 2026-07-16 host-copy correction, this temporary path
+is deprecated for new launches and the original `~/set-attention` path is again
+the active runtime copy.
 
 The registered one-step capacity preflight completed on 2026-07-09 under
 `out/mqar_capacity_preflight_L4096_B4_lr0p001_u12500`. It used

@@ -5,12 +5,13 @@ Last updated: 2026-07-15 after verifying both GPU servers idle and summarizing t
 Scope: current experimental state for `set-dictionary/anchor-span`.
 
 Current copy/provenance guard: see
-`audit/server_copy_provenance_20260709.md`. Blue
-`~/set-attention-anchor-span-sync` is the active runtime copy for MRP-2/MRP-3.
-Lizmark MRP work must use the repaired clean checkout
-`~/set-attention-anchor-span-sync`; the old `~/set-attention` path is
-deprecated for MRP launches. The hardened `scripts/run_mqar_matrix.sh` is now
-the active Blue runtime copy for MRP-3 resumes.
+`audit/server_copy_provenance_20260709.md`. As of 2026-07-16, the original
+host path `~/set-attention` is again the active runtime copy on both
+blue-demon and Lizmark. Alternate runtime directories such as
+`~/set-attention-anchor-span-sync` and `~/set-attention-mrp0-validation` are
+deprecated audit copies and must not be used for new launches. Historical rows
+below may still name the alternate directory when that was the true launch
+provenance for completed jobs.
 
 Shared-tracker write owner: current program-integration/status worker during
 post-MRP-1 plan alignment. Concurrent task agents update their own

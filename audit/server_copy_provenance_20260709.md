@@ -1,12 +1,19 @@
 # Server Copy Provenance And Launch-Safety Audit
 
-Date: 2026-07-09; updated 2026-07-13 after Blue MRP-3 resume.
+Date: 2026-07-09; updated 2026-07-16 after restoring the original host path
+policy.
 
 ## Current Rule
 
 Do not launch new work from a server checkout unless this file or
 `audit/phase_sd_status.md` says that checkout is launch-ready for the specific
 stage. Runtime files must not be changed underneath an active shell driver.
+
+As of 2026-07-16, the active runtime path on both blue-demon and Lizmark is the
+original `~/set-attention` directory. Temporary alternate directories created
+during recovery, including `~/set-attention-anchor-span-sync` and
+`~/set-attention-mrp0-validation`, are deprecated audit copies. They must be
+kept for provenance but not used for new launches.
 
 ## Active Jobs
 
@@ -19,10 +26,12 @@ stage. Runtime files must not be changed underneath an active shell driver.
 
 | Copy | Role | Status |
 |---|---|---|
-| local workspace `/mnt/d/userfolders/documents/github/set-attention` | editing and audit source | dirty; paper assets and status updated; no commit made |
-| blue-demon `~/set-attention-anchor-span-sync` | active runtime copy | authoritative runtime for the current MRP-3 resume |
-| lizmark `~/set-attention` | not active for MRP-2/MRP-3 | stale/partial source from earlier attempts; do not launch MRP work from this path |
-| lizmark `~/set-attention-anchor-span-sync` | clean runtime copy | launch-ready for MRP-3 capacity preflight only after 2026-07-09 full source sync and container validation |
+| local workspace `/mnt/d/userfolders/documents/github/set-attention` | editing and audit source | canonical documentation/analysis mirror |
+| blue-demon `~/set-attention` | active runtime copy | restored original active path; sync from the latest checkpoint before new launches |
+| lizmark `~/set-attention` | active runtime copy | restored original active path; sync from the latest checkpoint before new launches |
+| blue-demon `~/set-attention-anchor-span-sync` | deprecated audit copy | historical runtime copy for July MRP recovery jobs; do not launch new work here |
+| lizmark `~/set-attention-anchor-span-sync` | deprecated audit copy | historical runtime copy for July MRP recovery/capacity jobs; do not launch new work here |
+| blue-demon `~/set-attention-mrp0-validation` | deprecated audit copy | MRP-0 validation snapshot; do not launch new work here |
 
 ## Critical SHA State
 
@@ -54,8 +63,8 @@ bash -n scripts/run_mqar_matrix.sh scripts/run_mrp2_ar_hit_retrain.sh scripts/ru
 python -m py_compile scripts/run_mqar.py scripts/summarize_mqar.py scripts/evaluate_ar_hits.py scripts/summarize_ar_hits.py src/data/mqar.py src/data/ar_hits.py src/train/mqar.py src/train/metrics_schema.py
 ```
 
-The stale Lizmark `~/set-attention` path remains deprecated because it still
-mixes old partial sync state with prior container artifacts.
+This was a temporary recovery path. It is now deprecated for new launches; the
+original `~/set-attention` path has been restored as the active runtime copy.
 
 ## Lizmark Capacity Preflight Result
 
@@ -98,7 +107,8 @@ Output root:
 1. Wait for active Blue MRP-3 resume containers to exit or explicitly stop them.
 2. Do not modify Blue runtime files underneath the active resume containers.
 3. Run container syntax/import checks on Blue before any new launch family.
-4. Lizmark MRP work must use `~/set-attention-anchor-span-sync`; do not use
-   stale `~/set-attention`.
+4. New Blue/Lizmark MRP work must use the original `~/set-attention` path. Do
+   not launch from `~/set-attention-anchor-span-sync` or
+   `~/set-attention-mrp0-validation`.
 5. Update this file and `audit/phase_sd_status.md` in the same turn as any
    launch or stop action.
