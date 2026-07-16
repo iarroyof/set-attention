@@ -43,6 +43,15 @@ The local workspace is the canonical documentation/analysis mirror. Blue-demon a
 authoritative for the experiment cells assigned to them by the current matrix; neither remote host is
 the sole source of truth.
 
+GitHub HTTPS pushes from the WSL workspace use the local token file
+`/mnt/d/UserFolders/Documents/github_toke.txt` (`../../github_toke.txt` from
+the repo root). Never print, paste, commit, or echo the token. Use it only as
+an ephemeral credential for approved `git push` operations, for example via an
+askpass helper or a one-shot remote URL that is not written into repo config.
+If a push fails with `could not read Username for 'https://github.com'`, check
+this token file before trying plugins, host-side bundles, or manual credential
+workarounds.
+
 ---
 
 ## 3. Required Context Files — Read in This Order

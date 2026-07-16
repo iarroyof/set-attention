@@ -37,6 +37,10 @@ BRANCH / PREREQUISITE:
   satisfied. Do not recreate the branch or repeat the A9 prerequisite.
 - The active program is defined by `docs/set_dictionary_research_main_plan.md`. Legacy branch-creation
   instructions are provenance only.
+- GitHub HTTPS push credential, when the user approves a push, is stored at
+  `/mnt/d/UserFolders/Documents/github_toke.txt` (`../../github_toke.txt` from
+  this repo root). Never print, paste, commit, echo, or persist the token in
+  Git config; use it only as an ephemeral credential for the approved push.
 
 PER-TURN READ DISCIPLINE (decide first: am I planning a change this turn, or not?):
 - If NOT changing code/experiments (status check, question, summarizing): read only
