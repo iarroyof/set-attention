@@ -1,10 +1,10 @@
 # MRP-2: Natural Associative-Recall Hit Evaluation
 
-Status: BLOCKED on MRP-0 PASS, MRP-1 frozen `b*`, and explicit launch approval
+Status: APPROVED; CHECKPOINT RETRAINING COMPLETE; EVALUATION PENDING
 
 Owner: UNASSIGNED
 
-Updated: 2026-06-30.
+Updated: 2026-07-08.
 
 ## Mission
 
@@ -37,16 +37,17 @@ Use MRP-0 checkpoint and metric APIs. Do not edit model forward code.
 
 ## Checkpoint Decision
 
-No local MRP-1 checkpoints exist and the current unified runner does not save
-them. After MRP-1 artifact sync, check both host artifact trees once. If no
+No compatible MRP-1 checkpoints are assumed available for token-level AR-hit
+evaluation. Before launch, check the local and host artifact trees once. If no
 compatible final checkpoints exist, retrain exactly the registered MRP-2 rows
 below with MRP-0 checkpointing and final-validation instrumentation. Existing
 CSV summaries are not substitutes for token-level outputs.
 
 ## Registered Rows
 
-This matrix is a registration, not launch authorization. Do not launch until
-approval is recorded by the tracker write owner in `audit/phase_sd_status.md`.
+This matrix is approved as of 2026-07-08. Do not launch until the evaluator,
+summarizer, focused tests, and checkpoint inventory/retraining decision are
+complete.
 
 At `L=2048,B=4`, exact dense, seeds `0,1,2` applied by MRP-0:
 
@@ -134,26 +135,43 @@ null, or inconclusive.
 
 ## Durable Handoff
 
-Status: BLOCKED.
+Status: APPROVED; CHECKPOINT RETRAINING COMPLETE; EVALUATION PENDING.
 
-Last completed action: protocol, rows, support threshold, and inference gate
-registered.
+Last completed action: evaluator/summarizer infrastructure implemented,
+focused syntax/smoke validation completed, checkpoint inventory found no
+compatible registered final checkpoints across local, blue-demon, and Lizmark
+artifact trees, and the targeted 12-row checkpoint retraining completed on
+blue-demon.
 
-Files changed: this subplan only during registration.
+Files changed: `src/data/ar_hits.py`, `scripts/evaluate_ar_hits.py`,
+`scripts/summarize_ar_hits.py`, `scripts/run_mrp2_ar_hit_retrain.sh`,
+`configs/eval/ar_hits/`, focused tests, and `audit/MRP_2_natural_ar_hits.md`.
 
-Commands/tests and outcomes: none.
+Commands/tests and outcomes: local Python compile passed for AR-hit and MQAR
+changed files; `bash -n scripts/run_mrp2_ar_hit_retrain.sh` passed; Blue
+container compile passed; Blue container lacks `pytest`, so direct smoke
+assertions were used and a plain import/path smoke printed pass.
 
-Artifacts and digests: none.
+Artifacts and digests: retrained checkpoints live under
+`out/mrp2_ar_hits/retrain/{token,b0,b25,b100}_seed{0,1,2}/checkpoints/final.pt`
+on blue-demon. The 2026-07-13 audit found 12/12 rows with epoch-10 CSV
+endpoints and final checkpoints.
 
-Host/PID/log/ETA: none.
+Host/PID/log/ETA: blue-demon retraining process exited before the 2026-07-13
+idle-server audit. Log: `logs/mrp2_ar_hit_retrain_20260709_082300.log`.
 
-Decision or gate result: launch approval has not been granted.
+Decision or gate result: user approval recorded on 2026-07-08 in
+`audit/phase_sd_status.md`; targeted registered retraining is complete, so the
+next gate is the registered AR-hit evaluation over those checkpoints.
 
-Known incident or limitation: no compatible checkpoints are currently known;
-targeted retraining is required if the post-MRP-1 host inventory is also empty.
+Known incident or limitation: Blue container currently lacks `pytest`; direct
+container smoke checks passed but the focused pytest suite still needs a pytest
+environment before final closeout. The first retrain attempt missed the HF
+cache mount; the second launch exposed and fixed zero-head companion-group
+encoding for b0/b100.
 
-Next atomic action: wait for MRP-0 PASS, MRP-1 frozen `b*`, and explicit
-approval recorded by the tracker owner.
+Next atomic action: run the registered AR-hit evaluations over the 12 completed
+checkpoints, then summarize and apply the support/null/inconclusive gate.
 
 Inputs required: MRP-0 checkpoint API, frozen `b*`, applied seeds, full
 WikiText-2, and approved host allocation.

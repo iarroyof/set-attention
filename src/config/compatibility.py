@@ -171,6 +171,17 @@ def validate_compatibility(cfg: Dict[str, Any]) -> Dict[str, Any]:
             training_cfg.get("benchmark_mode") is False,
             "strict_deterministic requires training.benchmark_mode=false",
         )
+    grad_accum_steps = training_cfg.get("grad_accum_steps", 1)
+    require(
+        _require_positive_int(grad_accum_steps, "training.grad_accum_steps") >= 1,
+        "training.grad_accum_steps must be >= 1",
+    )
+    eval_microbatch_size = training_cfg.get("eval_microbatch_size")
+    if eval_microbatch_size is not None:
+        require(
+            _require_positive_int(eval_microbatch_size, "training.eval_microbatch_size") >= 1,
+            "training.eval_microbatch_size must be >= 1 when set",
+        )
 
     seq_len = cfg.get("data", {}).get("seq_len") or model.get("max_seq_len") or 0
     window_size = model.get("window_size", 32) or 32

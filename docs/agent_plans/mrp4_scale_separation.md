@@ -1,10 +1,10 @@
 # MRP-4: MQAR Scale-Separation Sensitivity
 
-Status: HOLD
+Status: NOT_TRIGGERED by completed MRP-3 support gate
 
 Owner: UNASSIGNED
 
-Updated: 2026-06-30.
+Updated: 2026-07-15 after MRP-3 primary MQAR summary.
 
 ## Mission
 
@@ -77,10 +77,13 @@ interaction or that scale separation did not explain the null result.
 
 ## Durable Handoff
 
-Status: HOLD.
+Status: NOT_TRIGGERED.
 
 Last completed action: deterministic trigger, sole topology change, and
-sensitivity gate registered.
+sensitivity gate registered. The completed MRP-3 primary MQAR matrix failed
+support condition 3: frozen `b25` mean accuracy was `0.0002474`, far below the
+required `0.90`. Therefore MRP-4 is not triggered because the primary task is
+inadequate for scale-separation interpretation.
 
 Files changed: this subplan only during registration.
 
@@ -90,13 +93,13 @@ Artifacts and digests: none.
 
 Host/PID/log/ETA: none.
 
-Decision or gate result: trigger unresolved; trigger alone will not authorize
-a launch.
+Decision or gate result: not triggered by the completed MRP-3 support gate.
 
 Known incident or limitation: this result can support only an appendix
 scale-separation sensitivity statement.
 
-Next atomic action: wait for the MRP-3 support/accuracy/interaction result.
+Next atomic action: none. Do not launch the MRP-4 scale-separation rows from
+the current MQAR result.
 
-Inputs required: validated MRP-3 audit and separate explicit launch approval
-if the null-interaction trigger fires.
+Inputs required: none unless a future approved MQAR protocol replaces the null
+MRP-3 result and explicitly reopens this gate.

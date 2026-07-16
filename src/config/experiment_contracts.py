@@ -77,6 +77,8 @@ def _validate_sd_grid_seeded_v1(cfg: dict[str, Any]) -> None:
         in {
             (512, 16),
             (512, 4),
+            (512, 3),
+            (1024, 3),
             (1024, 4),
             (2048, 3),
             (2048, 4),

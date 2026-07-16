@@ -1,8 +1,11 @@
 # Multiresolution Set-Dictionary Research Program
 
-Status: ACTIVE; MRP-1 corrected exact-dense five-seed matrix is REPLACEMENT RUNNING.
+Status: ACTIVE; MRP-1 corrected exact-dense five-seed matrix plus short-B3
+bridge is COMPLETE; MRP-3 MQAR completed as a null/inconclusive mechanism
+probe; MRP-2 evaluation remains the next mechanism gate.
 
-Updated: 2026-07-07.
+Updated: 2026-07-15 after verifying idle servers and summarizing the completed
+MRP-3 MQAR matrix.
 
 This is the canonical program-level plan for the current
 `set-dictionary/anchor-span` research direction. It supersedes future-work
@@ -143,57 +146,71 @@ Consequences for claims:
 | ID | End-to-end owner | Current state | Hard dependency | Canonical subplan |
 |---|---|---|---|---|
 | MRP-0 | Shared reproducibility platform | PASS | Blue container validation passed on 2026-07-07; run full-shape preflights before any selected retraining launch | `agent_plans/mrp0_reproducibility_platform.md` |
-| MRP-1 | Five-seed matrix closure | REPLACEMENT RUNNING | Blue 120/120 complete; Lizmark first pass complete; 15 L3584/B4 mixed diagnostic replacements launched; `b*=b25` frozen | `agent_plans/mrp1_matrix_closure.md` |
-| MRP-2 | Natural AR-hit evaluation | BLOCKED | `b*=b25` is frozen; MRP-1 completion and explicit launch approval remain | `agent_plans/mrp2_natural_ar_hits.md` |
-| MRP-3 | Synthetic MQAR mechanism study | generator/trainer infrastructure READY; launches BLOCKED | MRP-1 completion and explicit approval for launches | `agent_plans/mrp3_mqar_mechanism.md` |
-| MRP-4 | Scale-separation sensitivity | HOLD, deterministic trigger only | MRP-3 trigger and separate explicit launch approval | `agent_plans/mrp4_scale_separation.md` |
-| MRP-5 | Tokenizer-matched WT2/PG-19 transfer | BLOCKED | MRP-1 frozen `b*`, MRP-2 complete, MRP-3 reviewed, explicit launch approval recorded | `agent_plans/mrp5_pg19_transfer.md` |
+| MRP-1 | Five-seed matrix closure | PASS | Blue 120/120 and Lizmark 135/135 endpoint-valid; strict scan accepted 255 CSVs; later short-B3 bridge added 60/60 endpoint-valid descriptive rows; `b*=b25` remains frozen | `agent_plans/mrp1_matrix_closure.md` |
+| MRP-2 | Natural AR-hit evaluation | APPROVED; CHECKPOINT RETRAINING COMPLETE; EVALUATION PENDING | no compatible MRP-1 checkpoints existed; registered 12-row retraining completed on blue-demon and evaluation is the next gate | `agent_plans/mrp2_natural_ar_hits.md` |
+| MRP-3 | Synthetic MQAR mechanism study | COMPLETE; NULL/INCONCLUSIVE | all 18 registered rows completed and summarized; frozen `b25` accuracy mean `0.0002474`, below the `0.90` support threshold | `agent_plans/mrp3_mqar_mechanism.md` |
+| MRP-4 | Scale-separation sensitivity | NOT_TRIGGERED | MRP-3 failed support condition 3, so scale-separation rows must not launch from this result | `agent_plans/mrp4_scale_separation.md` |
+| MRP-lca-cmp | Long-context aggregation / compressed-memory comparison | ACTIVE; implementation/bootstrap validation in progress | follows MRP-3 null result by testing aggregation tasks, not exact key retrieval; no architecture changes authorized | `agent_plans/mrp_lca_cmp.md` |
+| MRP-5 | Tokenizer-matched WT2/PG-19 transfer | BLOCKED | MRP-2 complete and explicit transfer launch approval recorded; MRP-1 has already frozen `b*=b25`, and MRP-3 review is complete but null | `agent_plans/mrp5_pg19_transfer.md` |
 | MRP-6A | Formal architecture, causality, context path | PASS | code-faithful memo and focused tests passed in Blue container | `agent_plans/mrp6a_formal_architecture.md` |
-| MRP-6B | Exact-dense memory/frontier theory | analytic PASS; final fit awaits MRP-1 | analytic memo and focused tests passed in Blue container; empirical matrix artifacts pending | `agent_plans/mrp6b_memory_frontier_theory.md` |
-| MRP-6C | Approximation and allocation theory | analytic PASS; empirical interpretation BLOCKED | empirical interpretation awaits MRP-3 | `agent_plans/mrp6c_multiresolution_approximation.md` |
-| MRP-6D | Independent proof audit and TeX integration | PASS | canonical TeX integration and clean build passed; empirical specialization text remains conditional until MRP-3 | `agent_plans/mrp6d_theory_integration.md` |
-| MRP-7 | Final paper synthesis and reproducibility bundle | BLOCKED | MRP-1/2/3/5 and MRP-6D resolved; MRP-4 pass or not-triggered | `agent_plans/mrp7_paper_synthesis.md` |
+| MRP-6B | Exact-dense memory/frontier theory | PASS for current MRP-1 interpretation | analytic memo and focused tests passed in Blue container; empirical matrix artifacts are now available | `agent_plans/mrp6b_memory_frontier_theory.md` |
+| MRP-6C | Approximation and allocation theory | analytic PASS; empirical specialization not established | MRP-3 completed but did not reach the support regime; keep the approximation/allocation theory conditional | `agent_plans/mrp6c_multiresolution_approximation.md` |
+| MRP-6D | Independent proof audit and TeX integration | PASS | canonical TeX integration and clean build passed; empirical specialization remains unestablished after null MRP-3 | `agent_plans/mrp6d_theory_integration.md` |
+| MRP-7A | Legacy paper-content deprecation and current-model rewrite | ACTIVE; no new experiments | MRP-1, short-B3 bridge, MRP-3-null, and MRP-6D are available; rewrite only current supported sections and keep AR/transfer claims gated on MRP-2/5 | `agent_plans/mrp7a_legacy_paper_content_deprecation.md` |
+| MRP-7 | Final paper synthesis and reproducibility bundle | PARTIAL DRAFTING ALLOWED; FINAL BLOCKED | MRP-1/3/4/6D resolved; final claims still require MRP-2/5 | `agent_plans/mrp7_paper_synthesis.md` |
 
 Agents own disjoint task files until integration. MRP-6A/B/C write proof memos and
-tests, not the canonical TeX. Only MRP-6D edits the formal appendix. MRP-7 edits
-the remaining narrative, tables, figures, and final bundle after MRP-6D.
+tests, not the canonical TeX. Only MRP-6D edits the formal appendix. MRP-7A may
+edit current Results narrative/tables to remove deprecated legacy content and
+replace it with MRP-1 exact-dense evidence. Full MRP-7 edits the final abstract,
+conclusion, bundle, and post-MRP-2/5 synthesis after the remaining gates
+resolve, while preserving the completed null MRP-3 interpretation.
 
-`audit/phase_sd_status.md` and this main plan have one write owner: the MRP-1
-experiment-operations role while paper5 runs. Task agents update only their
-subplan and task audit, then provide a handoff for that owner to fold into the
-shared tracker. After MRP-1 closes, a replacement program-integration owner
-must be explicitly named in the tracker before another agent edits either
-shared file.
+`audit/phase_sd_status.md` and this main plan have one write owner: the
+program-integration/status worker named in the tracker. Task agents update only
+their subplan and task audit, then provide a handoff for that owner to fold
+into the shared tracker.
 
 ## 6. Deterministic Execution Sequence
 
-1. Let the Lizmark `L3584,B4` replacement wave run under exclusive-GPU policy.
-   Blue is complete and idle; Lizmark first pass is complete; the 15
-   endpoint-diagnostic replacements were launched on 2026-07-07. Do not
-   duplicate the driver or allow a competing CUDA workload during replacement
-   rows.
+1. MRP-1 is closed. Blue contributed 120 endpoint-valid rows and Lizmark
+   contributed 135 endpoint-valid rows after the `L3584,B4` replacement wave.
+   The strict scanner accepted 255 corrected CSVs on 2026-07-08. The later
+   short-B3 bridge completed 60/60 additional endpoint-valid descriptive rows
+   for `L512/B3` and `L1024/B3`; it reinforces the b25 interior pattern but
+   does not reopen MRP-1, change `b*`, or authorize additional WT2 sweeps.
+   Pause/release Lizmark until a new registered stage explicitly needs it.
 2. MRP-0 passed Blue container validation on 2026-07-07. Run one-step
    full-shape preflights before any selected retraining launch. See
    `audit/MRP_0_reproducibility_platform.md`.
 3. MRP-6A/B/C proof memos passed focused Blue-container tests, and MRP-6D
    independent proof audit plus canonical TeX integration passed clean build.
-   Final empirical specialization wording still waits for MRP-3.
-4. After the 15 registered `L3584,B4` mixed diagnostic-retry cells finish,
-   perform one status/pull/validation pass. Close the matrix only after the
-   strict scanner accepts the replacements. The registered `L=2048,B=4` rule
-   has already frozen `b*=b25`, before any AR, MQAR, or PG-19 outcome.
-5. Run MRP-2 and MRP-3 only after MRP-1 closes and the user approves their
-   registered matrices.
-6. Evaluate the MRP-3 gate. If support/accuracy prerequisites pass but the
-   interaction CI is not positive, execute exactly MRP-4. If the interaction
-   passes, or if support/accuracy is inadequate, mark MRP-4
-   `NOT_TRIGGERED` with the registered reason. No other topology is introduced.
-7. Run MRP-5 after MRP-2, reusing its AR-hit evaluator on both new
-   tokenizer-matched corpora with no additional training rows.
-8. Preserve the passed MRP-6D analytic theory integration. After MRP-3, add
-   only the registered empirical-specialization interpretation allowed by its
-   outcome.
-9. MRP-7 performs the final claim/evidence audit and paper build.
+   MRP-3 did not establish the empirical specialization premises, so keep the
+   theory conditional.
+4. The registered `L=2048,B=4` rule froze `b*=b25` before any AR, MQAR, or
+   PG-19 outcome. Use the final MRP-1 audit
+   `audit/SD_dense_paper5_final_20260708.md` for paper matrix values.
+5. MRP-2 checkpoint retraining is complete and awaits registered AR-hit
+   evaluation. Do not launch additional MRP-2 rows outside its registered
+   matrix.
+6. MRP-3 completed all 18 registered primary rows but failed the support gate:
+   frozen `b25` accuracy is near chance and far below `0.90`. Mark MRP-4
+   `NOT_TRIGGERED` because the primary task is inadequate; do not launch
+   scale-separation rows from this result.
+7. MRP-lca-cmp may proceed as a separate compressed-aggregation mechanism
+   branch. It must not reuse MQAR as positive evidence, must keep the exact
+   dense set-dictionary model boundary, and must validate gradient
+   accumulation/eval microbatching as runtime-only controls before launches.
+8. Run MRP-5 after MRP-2 and explicit transfer approval, reusing its AR-hit
+   evaluator on both new tokenizer-matched corpora with no additional training
+   rows.
+9. Preserve the passed MRP-6D analytic theory integration. MRP-3 permits only a
+   null/inconclusive mechanism-probe statement, not a positive specialization
+   interpretation.
+10. MRP-7A may proceed now to deprecate legacy active Results sections and
+   rewrite them around the final MRP-1 exact-dense matrix. It must not add
+   final AR/MQAR/PG-19 claims.
+11. MRP-7 performs the final claim/evidence audit and paper build.
 
 No later step may be promoted because an earlier result looks promising.
 

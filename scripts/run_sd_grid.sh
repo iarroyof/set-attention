@@ -31,6 +31,7 @@
 #   GRID_PROFILE=primary   -> completed registered matrix (default)
 #   GRID_PROFILE=frontier  -> L2048/B3 bridge + L3584/{B4,B3} + L4096/B3
 #   GRID_PROFILE=paper5    -> five-seed main-paper rows selected after frontier analysis
+#   GRID_PROFILE=short_b3  -> missing short-context B3 bridge rows at L512,L1024
 #   GRID_PROFILE=b2        -> fallback L2048/B2 bridge + L3584/L4096 B2
 set -euo pipefail
 cd "${REPO_ROOT:-$HOME/set-attention}"
@@ -39,6 +40,7 @@ HOST_TAG="${HOST_TAG:?set HOST_TAG=blue|lizmark}"
 SEEDS="${SEEDS:-0 1 2}"
 DRY_RUN="${DRY_RUN:-0}"
 GPU0="${GPU0:-0}"; GPU1="${GPU1:-1}"
+GPU_WORKERS_PER_DEVICE="${GPU_WORKERS_PER_DEVICE:-1}"
 IMAGE="${IMAGE:-set-attention:latest}"
 PROJECT="${PROJECT:-set-attention}"
 LR="${LR:-0.0001}"
@@ -82,6 +84,10 @@ for numeric_var in GPU_ADMISSION_HEADROOM_MIB GPU_PEAK_ESTIMATE_MARGIN_MIB GPU_A
     exit 2
   }
 done
+[[ "$GPU_WORKERS_PER_DEVICE" =~ ^[1-9][0-9]*$ ]] || {
+  echo "GPU_WORKERS_PER_DEVICE must be a positive integer" >&2
+  exit 2
+}
 case "$ALLOW_GPU_CORESIDENCY" in
   0|1) ;;
   *) echo "ALLOW_GPU_CORESIDENCY must be 0 or 1" >&2; exit 2 ;;
@@ -308,6 +314,24 @@ set 4096 b50 4 4 lizmark exact 4 NA
 set 4096 b75 2 6 lizmark exact 4 NA
 set 4096 b100 0 8 lizmark exact 4 NA
 ROWS
+elif [ "$GRID_PROFILE" = short_b3 ]; then
+# Short-context B3 bridge for the full exact-dense picture. This fills the
+# missing intermediate-batch islands between B4 and the larger/smaller
+# operating points without changing the registered paper5 profile.
+cat <<'ROWS'
+set 512 b0 8 0 lizmark exact 3 NA
+set 512 b25 6 2 lizmark exact 3 NA
+set 512 b50 4 4 lizmark exact 3 NA
+set 512 b75 2 6 lizmark exact 3 NA
+set 512 b100 0 8 lizmark exact 3 NA
+token 512 token NA NA lizmark exact 3 NA
+set 1024 b0 8 0 blue exact 3 NA
+set 1024 b25 6 2 blue exact 3 NA
+set 1024 b50 4 4 blue exact 3 NA
+set 1024 b75 2 6 blue exact 3 NA
+set 1024 b100 0 8 blue exact 3 NA
+token 1024 token NA NA blue exact 3 NA
+ROWS
 elif [ "$GRID_PROFILE" = b2 ]; then
 cat <<'ROWS'
 set 2048 b0 8 0 blue exact 2 NA
@@ -498,6 +522,14 @@ log_gpu_admission () { # event cid gpu expected required co_resident note
 admit_gpu () { # cid gpu; sets ADMISSION_* globals, returns 75 when deferred
   local cid="$1" gpu="$2" key="${1%|*}" expected required note
   expected="${PEAK_ESTIMATE[$key]:-NA}"
+  if [ "$expected" = NA ]; then
+    # Short-B3 bridge rows use the same exact-dense architecture as the
+    # completed B4 rows, at a smaller batch. Use B4 as a conservative admission
+    # reference so co-resident scheduling is still memory-gated.
+    case "$key" in
+      *"|b3") expected="${PEAK_ESTIMATE[${key%|b3}|b4]:-NA}" ;;
+    esac
+  fi
   required="NA"
   if [ "$expected" != NA ]; then
     required=$((expected + GPU_PEAK_ESTIMATE_MARGIN_MIB + GPU_ADMISSION_HEADROOM_MIB))
@@ -515,10 +547,6 @@ admit_gpu () { # cid gpu; sets ADMISSION_* globals, returns 75 when deferred
   ADMISSION_START_PROCESSES="$GPU_PROCESSES"
   ADMISSION_CORESIDENT=0
 
-  if [ "$GPU_GRID_PROCESS_COUNT" -gt 0 ]; then
-    log_gpu_admission defer "$cid" "$gpu" "$expected" "$required" 0 "another grid process is already using this GPU"
-    return 75
-  fi
   if [ "$GPU_PROCESS_COUNT" -eq 0 ]; then
     log_gpu_admission admit "$cid" "$gpu" "$expected" "$required" 0 "exclusive GPU"
     return 0
@@ -769,14 +797,14 @@ for row in "${ROWS[@]}"; do
   for seed in $SEEDS; do CELLS+=("$family $L $variant $fine $coarse $backend $batch $cov $seed"); done
 done
 
-echo "=== SD-GRID ${HOST_TAG} profile=${GRID_PROFILE}: ${#CELLS[@]} candidate cells, SEEDS='${SEEDS}', DRY_RUN=${DRY_RUN} ==="
-worker () { # gpu parity
-  local gpu="$1" parity="$2" i c rc deferred
+echo "=== SD-GRID ${HOST_TAG} profile=${GRID_PROFILE}: ${#CELLS[@]} candidate cells, SEEDS='${SEEDS}', DRY_RUN=${DRY_RUN}, GPU_WORKERS_PER_DEVICE=${GPU_WORKERS_PER_DEVICE} ==="
+worker () { # gpu slot total_slots
+  local gpu="$1" slot="$2" total_slots="$3" i c rc deferred
   while true; do
     i=0
     deferred=0
     for c in "${CELLS[@]}"; do
-      if [ $((i % 2)) -eq "$parity" ]; then
+      if [ $((i % total_slots)) -eq "$slot" ]; then
         # shellcheck disable=SC2086
         if process_cell $c "$gpu"; then rc=0; else rc=$?; fi
         case "$rc" in
@@ -792,14 +820,22 @@ worker () { # gpu parity
   done
 }
 if [ "$DRY_RUN" = 1 ]; then
-  worker "$GPU0" 0; worker "$GPU1" 1
+  total_slots=$((GPU_WORKERS_PER_DEVICE * 2))
+  for ((slot=0; slot<GPU_WORKERS_PER_DEVICE; slot++)); do worker "$GPU0" "$slot" "$total_slots"; done
+  for ((slot=0; slot<GPU_WORKERS_PER_DEVICE; slot++)); do worker "$GPU1" "$((slot + GPU_WORKERS_PER_DEVICE))" "$total_slots"; done
 else
-  worker "$GPU0" 0 > "${LOG_ROOT}/worker_gpu0.log" 2>&1 &
-  p0=$!
-  worker "$GPU1" 1 > "${LOG_ROOT}/worker_gpu1.log" 2>&1 &
-  p1=$!
-  WORKER_PIDS=("$p0" "$p1")
-  echo "workers: GPU${GPU0} pid ${p0}, GPU${GPU1} pid ${p1}"
-  wait "$p0"; wait "$p1"
+  total_slots=$((GPU_WORKERS_PER_DEVICE * 2))
+  declare -a pids=()
+  for ((slot=0; slot<GPU_WORKERS_PER_DEVICE; slot++)); do
+    worker "$GPU0" "$slot" "$total_slots" > "${LOG_ROOT}/worker_gpu0_slot${slot}.log" 2>&1 &
+    pids+=("$!")
+  done
+  for ((slot=0; slot<GPU_WORKERS_PER_DEVICE; slot++)); do
+    worker "$GPU1" "$((slot + GPU_WORKERS_PER_DEVICE))" "$total_slots" > "${LOG_ROOT}/worker_gpu1_slot${slot}.log" 2>&1 &
+    pids+=("$!")
+  done
+  WORKER_PIDS=("${pids[@]}")
+  echo "workers: ${pids[*]}"
+  for pid in "${pids[@]}"; do wait "$pid"; done
 fi
 echo "=== SD-GRID ${HOST_TAG} complete ==="

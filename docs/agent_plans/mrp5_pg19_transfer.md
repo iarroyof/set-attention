@@ -1,10 +1,10 @@
 # MRP-5: Tokenizer-Matched WikiText-2 And PG-19 Transfer
 
-Status: BLOCKED on MRP-0 PASS, MRP-1 frozen `b*`, MRP-2 completion, MRP-3 review, and explicit launch approval
+Status: BLOCKED on MRP-2 completion and explicit transfer launch approval
 
 Owner: UNASSIGNED
 
-Updated: 2026-06-30.
+Updated: 2026-07-15 after MRP-3 completed as null/inconclusive.
 
 ## Mission
 
@@ -144,7 +144,9 @@ transfer gate is applied without retuning, and
 Status: BLOCKED.
 
 Last completed action: tokenizer, token budget, rows, transfer gate, and AR-hit
-reuse registered.
+reuse registered. MRP-0 has since passed, MRP-1 has frozen `b*=b25`, the
+short-B3 bridge does not change the transfer rows or gate, and MRP-3 is
+reviewed as null/inconclusive.
 
 Files changed: this subplan only during registration.
 
@@ -156,13 +158,14 @@ Artifacts and digests: none.
 Host/PID/log/ETA: none.
 
 Decision or gate result: network/prefetch and launch approval have not been
-granted.
+granted. Transfer remains gated on MRP-2 completion and explicit transfer
+approval.
 
-Known incident or limitation: current runner supports only WikiText-2 and no
-shared tokenizer/checkpoint contract exists before MRP-0.
+Known incident or limitation: current runner supports only WikiText-2 for the
+active matrix; the fixed-tokenizer PG-19 path still needs implementation and
+approval before any network/prefetch or training action.
 
-Next atomic action: wait for MRP-0 PASS, frozen `b*`, MRP-2 completion, MRP-3
-review, and explicit approval.
+Next atomic action: wait for MRP-2 completion and explicit transfer approval.
 
 Inputs required: frozen GPT-2 tokenizer artifacts, approved PG-19 access/host
 allocation, and completed upstream audits.

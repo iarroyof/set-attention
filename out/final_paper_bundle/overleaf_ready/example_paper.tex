@@ -1,9 +1,10 @@
 \documentclass{article}
 
-% EMPIRICAL HOLD (2026-06-30): this manuscript is integrated only through SD-8.1.
-% Do not treat its SD-9/landmark/sparse efficiency language as the current set-dictionary verdict or
-% as launch guidance. The active evidence is exact dense and the five-seed matrix is documented in
-% docs/sd_dense_paper5_matrix.md. Rewrite affected results after that matrix is validated.
+% CURRENT EVIDENCE STATE (2026-07-15): active empirical claims are exact-dense
+% multiresolution set-dictionary claims from the corrected MRP-1 matrix. Legacy
+% dense/sparse/landmark A-series material is archived/provenance unless
+% explicitly reintroduced as historical context. MRP-3 MQAR completed as a
+% null/inconclusive mechanism probe and does not establish specialization.
 
 % If you need to pass options to natbib, do so before loading neurips_2025.
 \usepackage{neurips_2025}
@@ -51,7 +52,7 @@
 
 \usepackage[textsize=tiny]{todonotes}
 
-\title{Set Attention}
+\title{Multiresolution Set-Dictionary Attention}
 
 \author{Anonymous Authors}
 
@@ -60,24 +61,81 @@
 \maketitle
 
 \begin{abstract}
-We introduce Set Attention, a sequence modeling architecture that replaces token-to-token attention with set construction, probabilistic pooling, set-level processing, and multi-head routing back to tokens. A tiered analysis separates exact structural facts, mechanistic stability bounds, and empirically testable operating-regime predictions. The theory shows that multi-head routing strictly enlarges the routing function class until limited by candidate-set topology, characterizes topology-induced entropy collapse, and decomposes gradient transport through pooling, set processing, and routing.
+We study a causal set-dictionary language model in which tokens are pooled into
+causal dictionary atoms, atoms interact through exact dense set attention, and
+tokens read back a routed span through an \texttt{anchor\_span} residual.  The
+active model is multiresolution: routing heads are split between fine atoms
+$(w,s)=(2,1)$ and coarser atoms $(4,2)$, with separate banks, set stacks, and
+routers whose outputs are concatenated before prediction.  This gives a
+constant-factor score-memory allocation problem inside the exact-dense
+quadratic family rather than a subquadratic attention claim.
 
-Controlled language-modeling experiments support these predictions across dense exact, sparse local-band, and linear landmark set-attention families. Stride/candidate-count sweeps expose topology-induced routing collapse, pooling-temperature sweeps link effective support to gradient transport, and LR-normalized matched controls show that the present causal implementation reduces long-context memory but does not outperform matched token-attention baselines in perplexity under the tested operating points. The resulting candidate-count, concentration, and transport view offers a principled basis for diagnosing set-mediated alternatives to attention and suggests a lens for related long-context problems such as cache compression, memory pruning, and learned routing.
+On WikiText-2, a corrected five-seed exact-dense matrix shows that a small
+coarse allocation is the most useful set operating point in the larger
+supported islands.  The b25 row, with six fine and two coarse heads, improves
+the mean PPL--peak-VRAM frontier relative to both the matched dense token
+baseline and the all-fine set endpoint at L2048/B4, L3584/B3, L3584/B4, and
+L4096/B3.  At the L4096/B4 memory boundary, token, all-fine, and b25 are
+censored by feasibility, while b50 remains trainable with comparable
+perplexity to the longer-context frontier rows.  Theory formalizes the
+executed multigroup \texttt{anchor\_span} model, proves the contextual path
+through the routed span, gives the direct-sum routing-capacity law, and derives
+the exact-dense score-memory coefficient.  Mechanism claims about associative
+recall are deliberately left to registered AR-hit and MQAR probes.
 \end{abstract}
 
 \section{Introduction}
 
-Attention is the dominant primitive for sequence modeling, but standard token-to-token attention ties expressive interaction to costly pairwise structure. Efficient alternatives such as sparse, local, top-$k$, low-rank, kernelized, and linear mechanisms all constrain how information is aggregated and transported. They are usually introduced as separate designs; our goal is to expose a common structural language in which those tradeoffs can be stated explicitly.
+Attention is the dominant primitive for sequence modeling, but token-to-token
+attention couples modeling capacity to pairwise score tensors.  We study a
+different exact-dense allocation: instead of sparsifying token attention, a
+causal set-dictionary model first pools tokens into dictionary atoms, processes
+those atoms with exact dense set attention, and routes processed atoms back to
+tokens.  The question is not whether this changes the asymptotic class.  In
+the branch studied here it does not: exact dense set attention is still
+quadratic in the number of atoms.  The question is whether changing the atom
+resolution gives a useful quality--memory frontier under a fixed model shape
+and matched dense token baseline.
 
-Set Attention replaces direct token-to-token interaction with a set-mediated pipeline: tokens are organized into a bank of sets, each set is pooled into a state, set states interact through a set-attention family, and a learned multi-head router maps processed set states back to tokens. In this view, information flow is governed by bank topology, pooling concentration, set-level processing, and token-to-set routing. Dense exact, sparse local-band, and linear landmark set-attention backends then become different choices inside the same architecture rather than unrelated approximations.
+The active model uses two atom resolutions in parallel.  Fine heads use
+overlapping two-token atoms with stride one; coarse heads use four-token atoms
+with stride two.  Each resolution owns its own bank, pooling operator, set
+stack, and router.  The routed head outputs are concatenated before the
+language-model head, while the \texttt{anchor\_span} residual preserves only a
+thin token identity carrier and forces contextual prediction through the routed
+span.  The all-fine endpoint b0 is therefore not token attention; it is a
+set-mediated high-resolution control.  The all-coarse endpoint b100 is the
+opposite boundary.  Interior rows b25, b50, and b75 ask whether a mixture of
+resolutions can be better than either endpoint.
 
-This formulation isolates questions that are hard to ask in ordinary attention. When does topology force routing collapse? How many distinct routing patterns can multi-head routing express? How does pooling concentration affect gradient transport? We answer these questions with a tiered analysis: Tier~A gives exact structural facts about candidate sets and routing laws; Tier~B gives local perturbation bounds under explicit smoothness assumptions; Tier~C turns these results into experimentally testable feasible-region predictions.
+Our main empirical result is that the useful operating point is interior in
+the larger exact-dense islands.  In a corrected five-seed WikiText-2 matrix,
+b25 is the best set row by mean perplexity and uses less peak training VRAM
+than both token attention and b0 at L2048/B4, L3584/B3, L3584/B4, and
+L4096/B3.  The confidence intervals still require a cautious statistical
+reading, but the PPL--memory direction is coherent across these larger
+islands.  At L4096/B4, where token, b0, and b25 are censored by the registered
+exact-dense feasibility boundary, b50 is the first moderate-blur row that
+trains.  Thus the result is not a universal token-attention dominance claim:
+shorter islands still favor dense token attention.  It is a more specific
+allocation claim about exact dense multiresolution set dictionaries.
 
-The main theory shows that multi-head routing strictly enlarges the routing function class over single-head routing, with intrinsic capacity growing with the number of routing heads until capped by candidate-count topology. It also characterizes routing entropy, top-$k$ constraints, topology-induced degeneracy, and a perturbation decomposition through pooling, set processing, and routing. These results motivate an operating picture in which stable behavior depends on nondegenerate candidate diversity, sufficient pooling support, and controlled gradient transport.
+The accompanying theory is code-faithful to this branch.  We prove that
+history dependence in the \texttt{anchor\_span} model factors through the
+routed span, that multigroup routing has a direct-sum capacity law over tagged
+fine and coarse candidate fibers, and that the exact dense score-memory
+coefficient decreases linearly with the coarse-head fraction up to lower-order
+finite-length terms.  These are structural and conditional results.  They do
+not prove subquadratic scaling, token equivalence of b0, or that coarse heads
+carry long-range associative recall.  Those mechanism questions are separated
+into registered AR-hit and MQAR probes.
 
-Our language-modeling experiments test this picture directly. Cross-family stride and pooling-temperature sweeps show that routing collapse and pooling-support effects persist across dense exact, sparse local-band, and linear landmark Set Attention. A separate LR-normalized matched comparison provides model-level context: matched token-attention baselines remain stronger in validation perplexity, while set-routed models reduce peak VRAM in the long-context slice. More broadly, the candidate-count, concentration, and transport view may apply to long-context design problems such as cache compression, memory pruning, and learned routing, where retaining state is not enough if the retained structure collapses diversity or support.
-
-The rest of the paper is organized as follows. Section~\ref{sec:model-overview} defines the Set Attention architecture and the dense, sparse, and linear set-processing families. Section~\ref{sec:main-theory} states the compact Tier~A--C theoretical results, with full proofs deferred to the appendix. Section~\ref{sec:results} reports the Tier~C mechanism experiments and the LR-normalized baseline comparison. The appendix gives the full notation, detailed model definitions, proofs, provenance tables, and extended diagnostics.
+The rest of the paper is organized as follows. Section~\ref{sec:model-overview}
+defines the causal multiresolution set-dictionary model.  Section~\ref{sec:main-theory}
+states the compact structural results, with full proofs in the appendix.
+Section~\ref{sec:results} reports the exact-dense WikiText-2 frontier and
+diagnostics.  The appendix gives notation, code correspondence, provenance,
+and deprecated legacy-material disposition.
 
 \section{Related Work}
 Prior work on structured and efficient alternatives to token-to-token attention can be organized into several overlapping themes. One line constrains token-to-token interaction directly through sparse or structured patterns such as locality, top-$k$ selection, or other restricted connectivity rules. Another line seeks linear or low-rank approximations that preserve the token-level attention interface while reducing the cost of dense pairwise interaction. These approaches are closely related to the efficiency motivation of this paper, but they typically treat the attention map itself as the main object to sparsify, approximate, or compress.
@@ -86,7 +144,14 @@ A second line of work changes how attention information is composed or aggregate
 
 A third line emphasizes deployment setting or modality. Ripple Attention illustrates this perspective by tailoring attention structure to vision workloads, where the practical constraints and useful inductive biases differ from those of autoregressive language modeling. More broadly, this literature shows that efficient attention design is often shaped by hardware considerations, modality-specific structure, or the need to preserve strong baseline behavior under restricted interaction budgets.
 
-Our paper differs from these lines of work in both representation and analysis. Instead of approximating token-to-token attention directly, we study set-mediated token interaction through explicit bank topology, probabilistic pooling, set-level processing, and routing distributions back to token space. This lets us analyze pooling concentration, candidate-count structure, and routing behavior within a single framework, and then connect that framework to a tiered theoretical framing tied to the empirical diagnostics in the Results section. That perspective also motivates the formal setup of the next section, where the bank, pooling law, and routing map are introduced as explicit mathematical objects.
+Our paper differs from these lines of work in both representation and analysis.
+Instead of approximating token-to-token attention directly, we study exact-dense
+set-mediated token interaction through explicit bank topology, probabilistic
+pooling, set-level processing, and routing distributions back to token space.
+The current evidence focuses on the dense multiresolution setting because it is
+the branch for which matched token/set controls, applied seeds, and diagnostics
+are complete.  Sparse and landmark variants from earlier development are
+historical provenance, not active evidence for the claims in this paper.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -97,140 +162,169 @@ Our paper differs from these lines of work in both representation and analysis. 
 \section{Model Overview}
 \label{sec:model-overview}
 
-Set Attention replaces direct token-to-token attention by a set-mediated pipeline
+The active architecture in this paper is the code path implemented by
+\texttt{SetOnlyLM} with multiresolution enabled, exact dense set backends,
+\texttt{candidate\_fiber=endpoint\_window}, \texttt{output\_residual\_mode=anchor\_span},
+disabled token MLP, disabled trained anchor, and disabled multivector basis.
+The computation is
 \[
-x_{1:L}\ \longrightarrow\ h_{1:L}^{(0)}\ \longrightarrow\ S^{(0)}\ \longrightarrow\ S^{(K)}\ \longrightarrow\ r_{1:L}\ \longrightarrow\ f_{1:L}\ \longrightarrow\ y_{1:L}.
+\begin{aligned}
+x_{0:L-1}&\longrightarrow h^{(0)}_{0:L-1}
+\longrightarrow \{z^{0,g}\}_{g\in\mathcal G}
+\longrightarrow \{z^{K,g}\}_{g\in\mathcal G}
+\longrightarrow r_{0:L-1}\\
+&\longrightarrow \operatorname{span}_{0:L-1}
+\longrightarrow f_{0:L-1}
+\longrightarrow \ell_{0:L-1}.
+\end{aligned}
 \]
-Here \(h_{1:L}^{(0)}\) are initial token states, \(S^{(0)}=(s_1^{(0)},\ldots,s_M^{(0)})\) is the matrix of pooled set states, \(S^{(K)}=(s_1^{(K)},\ldots,s_M^{(K)})\) is the matrix after \(K\) set-attention blocks, \(r_{1:L}\) are routed set-context states, \(f_{1:L}\) are the final residual token states, and \(y_{1:L}\) are vocabulary logits.
-For a fixed sample, token states are
+The group set is $\mathcal G=\{\mathrm f,\mathrm c\}$ for mixed rows, with
+fine and coarse topologies
+\[
+(w_{\mathrm f},s_{\mathrm f})=(2,1),\qquad
+(w_{\mathrm c},s_{\mathrm c})=(4,2).
+\]
+Uniform endpoints are represented by keeping only one of these groups.  Routing
+heads are partitioned as
+$\bigsqcup_{g\in\mathcal G}\mathcal U_g=\{1,\ldots,H\}$, with
+$H_g=|\mathcal U_g|$ and $\sum_gH_g=H$.
+
+For a token sequence $x_0,\ldots,x_{L-1}$, the code first forms the thin anchor
 \begin{equation}
 \label{eq:main-token-state}
-h_t^{(0)}=e(x_t)+p_t,\qquad t\in[L],
+h_t^{(0)}=e(x_t)+p_t .
 \end{equation}
-with learned token and positional embeddings. In the autoregressive strict-past setting used for the main experiments, the bank drops partial trailing windows. With starts $a_m=1+(m-1)s$ and endpoints $e_m=a_m+w-1$,
+The general implementation may apply a token MLP before pooling, but all active
+paper runs set \texttt{model.token\_mlp.enabled=false}; hence the pooled token
+state is exactly $h_t^{(0)}$.  For each group $g$, the strict-past bank drops
+partial trailing windows and has
 \begin{equation}
 \label{eq:main-bank}
-M=\left\lfloor\frac{L-w}{s}\right\rfloor+1,
+M_g(L)=
+\begin{cases}
+0,&L<w_g,\\
+\left\lfloor\frac{L-w_g}{s_g}\right\rfloor+1,&L\ge w_g,
+\end{cases}
 \qquad
-S_m=\{t\in[L]:a_m\le t\le e_m\},
+a_m^g=ms_g,\qquad e_m^g=a_m^g+w_g-1,
 \end{equation}
-so every active set has exactly $w$ tokens. The strict-past routing candidate
-fiber is endpoint based,
+with set
+\begin{equation}
+\label{eq:main-bank-set}
+S_m^g=\{a_m^g,\ldots,e_m^g\},\qquad m=0,\ldots,M_g(L)-1 .
+\end{equation}
+The endpoint-window candidate fiber used by the reported language-modeling
+runs is
 \begin{equation}
 \label{eq:main-strict-past-candidates}
-\mathcal C_t^{\mathrm{sp}}=\{m\in[M]:t-w<e_m\le t\}.
+\mathcal C_t^g=\{m:\ t-w_g<e_m^g\le t\}.
 \end{equation}
-This is the candidate family used by the causal language-modeling experiments. A legacy noncausal mode can instead use membership candidates $\{m:t\in S_m\}$, but that is not the main autoregressive paper mode.
+The optional \texttt{all\_past} diagnostic replaces this by
+$\{m:e_m^g\le t\}$; it is not part of the main multiresolution matrix.
 
-Each bank set is pooled into a set state \(s_m^{(0)}\), the expectation of token states under a probability law $\mathbb P_m\in\Delta(S_m)$,
+Each group pools its own bank:
 \begin{equation}
 \label{eq:main-pooling}
-s_m^{(0)}=\sum_{t\in S_m}\omega_{t,m}h_t^{(0)},
-\qquad
-\omega_{\cdot,m}\in\Delta(S_m).
+z_m^{0,g}=\mathcal P_g(\{h_j^{(0)}:j\in S_m^g\})
+=\sum_{j\in S_m^g}\omega_{j,m}^g h_j^{(0)},\qquad
+\omega_{\cdot,m}^g\in\Delta(S_m^g).
 \end{equation}
-The main experiments use soft-trimmed Boltzmann pooling,
-$\omega_{t,m}\propto \exp(-\delta_{t,m}/\tau_{\mathrm{pool}})r^{\mathrm{trim}}_{t,m}$,
-with normalization over $S_m$; mean pooling is the corresponding uniform law. The full definition is in Appendix~\ref{sec:pooling-operator} and uses $|S_m|$ wherever set cardinality matters.
+The reported runs use soft-trimmed Boltzmann pooling,
+$\omega_{j,m}^g\propto
+\exp(-\delta_{j,m}^g/\tau_{\mathrm{pool}})r^{\mathrm{trim},g}_{j,m}$,
+renormalized over $S_m^g$.  The pooled states are projected into a group stream
+of width $D_g=D_{\rm set}H_g/H$; in the reported rows $D_{\rm set}=D=384$.
 
-The set states are processed by $K$ residual set-attention blocks with set-attention heads distinct from routing heads. For one set-attention head,
+Each group has a separate stack $\Phi_g$ of $K$ exact dense set-attention blocks.
+For one set-attention head inside group $g$,
 \begin{equation}
 \label{eq:main-set-score}
-a_{ij}^{(h)}=
-\frac{\langle q_i^{(h)},k_j^{(h)}\rangle}{\sqrt{d_a}}
-+g_{ij}+b_{ij}^{(h)}+m_{ij},
+a_{ij}^{(h,g)}=
+\frac{\langle q_i^{(h,g)},k_j^{(h,g)}\rangle}{\sqrt{d_a}}
++\gamma_{ij}^g+b_{ij}^{(h,g)}+m_{ij}^g,
 \end{equation}
-where $q_i^{(h)},k_j^{(h)}\in\mathbb R^{d_a}$ are set-level query/key projections, $g_{ij}$ is geometry bias, $b_{ij}^{(h)}$ is learned content bias, and $m_{ij}$ is the causal or structural mask term. These additional structural terms are part of the dense exact set-attention backend. Let $A^{(h)}=(a_{ij}^{(h)})$ denote the resulting score matrix, and let $Q,K,V$ denote the corresponding query, key, and value matrices for that set-attention head.
+where $\gamma_{ij}^g$ is geometry bias, $b_{ij}^{(h,g)}$ is content bias from the
+configured feature path, and $m_{ij}^g$ is the causal mask.  In strict-past mode
+the mask permits source atom $j$ for target atom $i$ only when
+$e_j^g\le e_i^g$.  The active backend is exact dense set attention,
+\begin{equation}
+\label{eq:main-set-dense}
+\operatorname{SetDense}(Q,K,V)=\operatorname{softmax}(A)V,
+\end{equation}
+and produces processed atoms $z_m^{K,g}=\Phi_g(z^{0,g})_m$.
+Sparse, landmark, and other backend variants are archived provenance, not active
+evidence for the claims in this paper.
 
-The set-processing families used in this work are:
-\begin{align}
-\operatorname{SetDense}(Q,K,V) &= \operatorname{softmax}(A)V,\\
-\operatorname{SetLinear}(Q,K,V) &= \operatorname{softmax}(A_{M\Lambda})\operatorname{softmax}(A_{\Lambda M})V,\\
-\operatorname{SetSparse}(Q,K,V) &: A_{ij}=-\infty\quad\text{outside a local band.}
-\end{align}
-The linear family is the landmark backend, where $\Lambda$ indexes landmark set states, and the sparse family is the local-band backend.
-
-Routing maps processed set states back to token states. With descriptor $d_m$ for set $m$, the learned multi-head router computes
+Routing is group-local.  For head $u\in\mathcal U_g$, the learned router uses
+the current token state and the group descriptor $d_m^g$:
 \begin{equation}
 \label{eq:main-router-score}
-q_t^{(u)}=W_{Q,r}^{(u)}h_t^{(0)},\qquad
-k_m^{(u)}=W_{K,r}^{(u)}d_m,
-\qquad
-g_{t,m}^{(u)}=\frac{\langle q_t^{(u)},k_m^{(u)}\rangle}{\sqrt{d_\phi}}.
+q_t^{u,g}=W_{Q,r}^{u,g}h_t^{(0)},\qquad
+k_m^{u,g}=W_{K,r}^{u,g}d_m^g,\qquad
+g_{t,m}^{u,g}=\frac{\langle q_t^{u,g},k_m^{u,g}\rangle}{\sqrt{d_{\phi,g}}}.
 \end{equation}
-In the hashed-count experimental path, the router descriptor is the pooled set state, $d_m=s_m^{(0)}$; hashed-count features enter the set-attention content bias. Candidate masking sets non-candidates to $-\infty$; the optional fixed top-$k$ step also sets all but the retained candidates to $-\infty$. Denote the resulting masked logit by $\tilde g_{t,m}^{(u)}$. Routing probabilities are
+In the hashed-count path used by the current runs, $d_m^g$ is the group router
+descriptor returned by the feature builder; hashed-count features also enter the
+set-attention content bias.  Candidate masking sets non-candidates to $-\infty$
+and optional top-$k$ masking keeps only retained candidates.  With
+$\tau_{r,\mathrm{eff}}=\max\{\tau_r,\tau_{\min}\}$,
 \begin{equation}
 \label{eq:main-routing-probs}
-\pi_{t,m}^{(u)}\propto \exp\!\left(\tilde g_{t,m}^{(u)}/\tau_r^{\mathrm{eff}}\right),
-\qquad m\in\mathcal C_t,
+\pi_{t,m}^{u,g}=
+\operatorname*{softmax}_{m\in\mathcal C_t^g}
+\left(\tilde g_{t,m}^{u,g}/\tau_{r,\mathrm{eff}}\right),
 \end{equation}
-where $\tau_r^{\mathrm{eff}}=\max\{\tau_r,\tau_{\min}\}$ for the configured lower clamp $\tau_{\min}>0$. Writing $\tilde s_m^{(u)}$ for the head-$u$ subvector of the processed set state $s_m^{(K)}$, the routed head output is
+where empty fibers produce the zero routed vector in the implementation.
+The routed head and group outputs are
 \begin{equation}
 \label{eq:main-routed-head}
-r_t^{(u)}=\sum_{m\in\mathcal C_t}\pi_{t,m}^{(u)}\tilde s_m^{(u)},
-\qquad
-r_t=\operatorname{Concat}_{u=1}^{H_r}r_t^{(u)}.
+r_t^{u,g}=\sum_{m\in\mathcal C_t^g}\pi_{t,m}^{u,g}
+\operatorname{slice}_{u,g}(z_m^{K,g}),\qquad
+r_t^g=\operatorname{Concat}_{u\in\mathcal U_g}r_t^{u,g}.
 \end{equation}
-If $\mathcal C_t=\varnothing$, the routed context is defined as $r_t=0$.
-The default language-model head receives the direct residual representation
+The multiresolution route is the concatenation of group routes followed by the
+set-output projection:
 \begin{equation}
-\label{eq:main-direct-residual}
-f_t=h_t^{(0)}+r_t.
+\label{eq:set-dictionary-span}
+r_t=\operatorname{Concat}_{g\in\mathcal G}r_t^g,\qquad
+\operatorname{span}_t=W_o r_t .
 \end{equation}
-For calibration experiments that study convergence toward the token-level
-limit, we also use a named output policy
-\begin{equation}
-\label{eq:main-empty-only-residual}
-f_t^{\mathrm{empty}}=
-\begin{cases}
-h_t^{(0)},& C_t=0,\\
-r_t,& C_t>0.
-\end{cases}
-\end{equation}
-This \texttt{empty\_only} policy preserves a well-defined state for early
-strict-past positions with no sealed endpoint while avoiding an additional
-token residual whenever routed set information is present. The \texttt{direct}
-policy in \eqref{eq:main-direct-residual} is the default for the reported
-A1--A6 runs; \texttt{empty\_only} is used only when explicitly configured for
-token-limit and compression-calibration experiments.
+Here $W_o$ is the implementation's \texttt{set\_output\_proj}; it is the identity
+when $D_{\rm set}=D$ and otherwise maps from set-state width to model width.
 
-A third output policy, the \texttt{anchor\_span} residual analyzed in
-Appendix~\ref{sec:future-set-dictionary}, reuses the same final-state form as
-\eqref{eq:main-direct-residual},
+The active readout is \texttt{anchor\_span}:
 \begin{equation}
 \label{eq:main-anchor-span}
-f_t = h_t^{(0)} + r_t,
+f_t=h_t^{(0)}+\operatorname{span}_t,\qquad
+\ell_t=W_{\rm lm}f_t,\qquad
+p(x_{t+1}\mid x_{\le t})=\operatorname{softmax}(\ell_t).
 \end{equation}
-but disables the optional pre-pooling token MLP (Appendix~\ref{app:token-mlp}) so
-that $h_t^{(0)}=e(x_t)+p_t$ is a deliberately thin identity carrier and the routed
-context $r_t$ of \eqref{eq:main-routed-head} must supply the contextual prediction.
-A span ablation that sets $r_t{:=}0$ at evaluation collapses perplexity toward the
-unigram regime, confirming that $h_t^{(0)}$ is not a predictive token bypass and
-that prediction is genuinely set-mediated. Equation~\eqref{eq:set-dictionary-span}
-writes $r_t$ through the set-output projection $W_o$.\footnote{$W_o$ maps the
-concatenated routed context from the set-state width to $D$; it is the identity
-whenever the two widths coincide, as in every reported configuration, so it is
-omitted from \eqref{eq:main-routed-head}.}
+There is no contextual token tower in this readout: with the token MLP disabled,
+$h_t^{(0)}$ carries only current-token identity and position, while dependence on
+$x_{<t}$ reaches the logits through the routed span $W_o r_t$.  The span-ablation
+hook sets all of $r_t$ to zero, or one group route $r_t^g$ to zero, for
+diagnostics.  The final exact-dense SD matrix optimizes the ordinary next-token
+cross-entropy loss on these logits only; trained-anchor auxiliary losses are
+disabled in those runs.
 
-\paragraph{Multi-resolution head groups.}
-The $H_r$ routing heads may be partitioned into $G$ disjoint groups indexed by
-$\nu$, with head sets $\mathcal U_\nu\subseteq\{1,\dots,H_r\}$ satisfying
-$\bigsqcup_{\nu}\mathcal U_\nu=\{1,\dots,H_r\}$. Each group $\nu$ carries its own
-bank $\mathcal H_{L,w_\nu,s_\nu}$, and hence its own sets $S^{(\nu)}_m$, endpoints
-$e^{(\nu)}_m$, candidate fiber
-$\mathcal C^{(\nu)}_t=\{m:t-w_\nu<e^{(\nu)}_m\le t\}$ (mean count
-$\bar C^{(\nu)}\approx w_\nu/s_\nu$), pooled states $s^{(0,\nu)}_m$ by
-\eqref{eq:main-pooling}, and processed atoms $s^{(K,\nu)}_m$ from a separate set
-stack. A head $u\in\mathcal U_\nu$ routes over \emph{its own} fiber
-$\mathcal C^{(\nu)}_t$ in \eqref{eq:main-routing-probs}--\eqref{eq:main-routed-head},
-and the head subvectors $r^{(u)}_t$ are concatenated across all groups to form
-$r_t$. We use a fine group $(w_{\mathrm f},s_{\mathrm f})=(2,1)$ and a coarse,
-``blurred'' group $(w_{\mathrm c},s_{\mathrm c})=(4,2)$; the coarse-head fraction
-$|\mathcal U_{\mathrm c}|/H_r$ sets the resolution mix, with $G=1$ the
-single-resolution model and the fractions $0$ and $1$ recovering the uniform fine
-and coarse banks.
+\begin{figure*}[t]
+\centering
+\makebox[\textwidth][c]{\includegraphics[width=1.18\textwidth]{set_dictionary_architecture_figure.tikz.pdf}}
+\caption{Causal dictionary set-attention architecture for the active
+set-dictionary branch.  The thin vertical rail is
+$h_t^{(0)}=e(x_t)+p_t$; all contextual dependence is carried by the routed span
+$W_o r_t$ in \texttt{anchor\_span} mode.  Fine and coarse banks are pooled and
+processed in parallel, routed through disjoint head groups
+$\mathcal U_{\mathrm f},\mathcal U_{\mathrm c}$, concatenated, projected to
+$\operatorname{span}_t$, and decoded by $W_{\rm lm}$.  The right panel lists the
+same computation with the notation used in the theory.}
+\label{fig:set-dictionary-architecture}
+\end{figure*}
 
-Finally, vocabulary logits satisfy $y_t\in\mathbb R^{V_{\mathrm{vocab}}}$. Full notation, diagnostics, and optional implementation components are given in Appendix~\ref{sec:model-objects} and Appendix~\ref{app:token-mlp}.
+The blur fraction is the coarse-head fraction $H_{\mathrm c}/H$.  The final
+matrix uses b0, b25, b50, b75, and b100, corresponding to $0$, $2$, $4$, $6$,
+and $8$ coarse heads out of $H=8$.  Full implementation metadata and the code
+correspondence are summarized in Appendix~\ref{sec:mrp6-code-correspondence}.
 
 
 
@@ -246,7 +340,7 @@ For two histories $x,x'$ with the same current token and position at $t$, the ac
 \label{eq:main-contextual-path-factorization}
 \ell_t(x)-\ell_t(x')=W_{\rm lm}W_o\bigl(r_t(x)-r_t(x')\bigr).
 \end{equation}
-Thus every dependence of the logits on $x_{<t}$ factors through the routed span $W_or_t$.  Span differences in the kernel of $W_{\rm lm}W_o$ up to an all-classes logit shift are not observable from softmax probabilities alone.
+Thus every dependence of the logits on $x_{<t}$ factors through the routed span $W_o r_t$.  Span differences in the kernel of $W_{\rm lm}W_o$ up to an all-classes logit shift are not observable from softmax probabilities alone.
 \end{theorem}
 
 \begin{theorem}[Direct-sum multigroup routing capacity]
@@ -283,15 +377,356 @@ Let $n$ be the number of coarse heads, $A(n)=(H-n)M_f^2+nM_c^2$, and $E(n)$ an a
 \label{sec:results}
 
 \paragraph{Protocol.}
-All language-modeling results use WikiText-2 with the LR-normalized reference
-width $D=384$, $d_{\mathrm{ff}}=1536$, window size $w=16$, stride $s=8$,
-and learning rate $10^{-4}$ unless otherwise stated.  For set-only models,
-the autoregressive setting uses strict-past endpoint routing, drops partial
-trailing windows, and therefore has $M=63$ sets at $L=512$ and $M=255$ sets at
-$L=2048$.  Linear-family rows use the landmark backend with coverage $0.25$.
-All reported means are over three seeds unless explicitly marked otherwise;
-artifact hashes and per-run metadata are recorded in
-\texttt{audit/A5\_4\_handoff.md}.
+All active results in this section use the current set-dictionary branch:
+exact dense attention for both token and set rows, WikiText-2, $D=384$,
+$d_{\mathrm{ff}}=1536$, six layers, eight heads, ten epochs, learning rate
+$10^{-4}$, disabled token MLP, disabled trained anchor, endpoint-window
+candidate fiber, and \texttt{anchor\_span} readout.  Set rows split the eight
+heads between fine atoms $(w,s)=(2,1)$ and coarse atoms $(4,2)$: b0 is
+all-fine, b25 is six fine/two coarse, b50 is four/four, b75 is two/six, and
+b100 is all-coarse.  Every populated cell below uses full WikiText-2 and
+applied seeds $0,\ldots,4$.  Perplexity comparisons are made only within the
+same sequence-length and native-batch island.
+
+\subsection{Exact-Dense Multiresolution Set-Dictionary Frontier}
+\label{sec:results-sd-grid-final}
+
+Table~\ref{tab:sd-grid-final-matrix} reports the final corrected
+set-dictionary matrix.  Every populated cell uses applied seeds $0,\ldots,4$
+and passed the strict endpoint scanner; no limited-data or smoke rows are
+included.  The table deliberately separates native-batch islands because batch
+changes the optimization problem and the memory ceiling.  The registered matrix
+contains ten fully token-comparable islands plus the censored $L=4096$/B4
+boundary.  The missing $L=4096$, batch-4 token, b0, and b25 entries are
+censored feasibility observations rather than assigned bad perplexities: under
+the registered exact dense implementation they do not have endpoint-valid rows,
+while b50, b75, and b100 do.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../plots/main/fig_sd_blur_path_frontier.pdf}
+\caption{Exact-dense blur-allocation frontiers across the registered matrix.
+Rows are context length and columns are batch, so each small panel is one fixed
+$(L,B)$ island.  Within a panel, the gray path follows the set allocation
+b0$\to$b25$\to$b50$\to$b75$\to$b100 in PPL--peak-GiB space; the dashed vertical
+line marks the matched token peak-memory control when present, and the black
+token point has its own interval.  Vertical bars are five-seed 95\%
+t-intervals for PPL.  This view shows that the useful point is usually
+interior, that b100 is consistently the low-memory/high-PPL all-coarse
+endpoint, and that b50 is the first feasible moderate-blur row at the L4096/B4
+boundary.  Censored rows are absent rather than imputed.}
+\label{fig:sd-blur-path-frontier}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../plots/main/fig_sd_operating_regime_map.pdf}
+\caption{Operating-regime map over the full exact-dense matrix.  Colored cells
+report set-minus-token validation PPL and peak GiB saved versus token; gray
+cells denote token-censored or set-censored comparisons, with feasible
+L4096/B4 set rows shown by absolute PPL/GiB.  The completed short and bridge
+rows show that behavior is batch-sensitive: b25 beats token at L512/B3,
+L512/B4, and L1024/B3, while token remains the best-quality row at L512/B16
+and L1024/B4.  From L2048 through L4096/B3, b25 is the coherent interior
+quality--memory winner; at L4096/B4, b50 is the first feasible moderate-blur
+row.  b75/b100 mostly represent memory-for-quality degradation.}
+\label{fig:sd-operating-regime-map}
+\end{figure*}
+
+\input{tables/sd_grid_final_matrix}
+
+The first pattern is that all-fine is rarely the best set-mediated operating
+point.  Among the ten fully token-comparable islands, b25 is the lowest-PPL set
+row in nine; the only exception is $L=1024$/B4, where b0 is lower than b25 but
+token is lower than both.  b25 is also the best overall row in eight of those
+ten islands: L512/B3, L512/B4, L1024/B3, L2048/B3, L2048/B4, L3584/B3,
+L3584/B4, and L4096/B3.  Token remains the best-quality row at L512/B16 and
+L1024/B4.  Thus the matrix does not say that set-dictionary attention
+dominates token attention everywhere; it says that the mostly-fine mixed row
+is a repeated interior optimum under several exact-dense operating conditions.
+In the larger islands b25 also uses less reported peak VRAM than both token
+attention and all-fine: for example, at $L=2048$/B4, b25 reaches
+$916.4\pm27.1$ perplexity and $18117$ MiB versus token at $942.8\pm15.6$ and
+$18633$ MiB; at $L=4096$/B3, b25 reaches $864.6\pm21.7$ and $35365$ MiB
+versus token at $909.3\pm28.8$ and $37955$ MiB.  Many five-seed confidence
+intervals overlap, so this is a mean quality--memory frontier result, not a
+theorem or a settled universal superiority claim.  The direction is
+nevertheless coherent: a small coarse allocation often improves the set
+frontier relative to making all heads as fine as possible.
+
+The second pattern is the expected quality--memory curve as blur increases.
+b50, b75, and b100 usually move left on memory while moving upward in PPL.
+The all-coarse row is valuable as a boundary condition, but it is not the
+model we would choose for quality: its PPL is hundreds of points worse than
+the interior rows in every island.  The interesting rows are the interior
+allocations, especially b25 for supported comparisons and b50 at the largest
+batch/length boundary.  This matches the exact-dense memory theorem's
+coefficient story without claiming a new asymptotic class: blur reduces the
+number of set--set scores materialized per coarse head, but the backend
+remains dense inside each chosen set bank.
+
+The third pattern is the capacity boundary.  At $L=4096$/B4, the registered
+exact-dense token, b0, and b25 cells have no endpoint-valid corrected rows,
+while b50 trains with $893.2\pm39.3$ perplexity and $41387$ MiB.  This is not
+a direct token-vs-b50 PPL win, because the token endpoint is censored.  It is
+instead a useful feasibility result: moving from b25 to b50 sacrifices some
+fine resolution but moves the run into the feasible exact-dense region while
+keeping quality near the best supported longer-context rows.  That behavior is
+exactly what the multiresolution allocation view predicts should be possible
+when score memory, rather than parameter count, becomes the limiting resource.
+
+Finally, the short rows keep the claim honest rather than collapsing to one
+simple story.  At $L=512$/B3 and $L=1024$/B3, b25 is the best-quality row in
+the completed matrix, and b25 also wins the short L512/B4 island.  At
+$L=512$/B16 and $L=1024$/B4, dense token attention remains the best-quality
+row.  Thus batch and context cannot be treated as interchangeable memory
+controls, and the paper claim is not that set-dictionary attention dominates
+token attention everywhere.  The supported claim is more specific and more
+interesting: under exact dense attention, an interior fine/coarse set
+allocation can trace a better mean quality--memory frontier in several
+operating islands and can extend the feasible region at larger context/batch
+settings.
+
+The figures are intentionally related but not redundant.  Table~\ref{tab:sd-grid-final-matrix}
+is the numeric register.  Figure~\ref{fig:sd-blur-path-frontier} asks whether
+the blur path forms an interpretable PPL--memory curve inside each fixed
+$(L,B)$ island.  Figure~\ref{fig:sd-operating-regime-map} asks a different
+question: which set rows beat the matched token row and by how much, including
+the censored cells.  Figure~\ref{fig:sd-group-routing-diagnostics} then leaves
+PPL/VRAM space and checks whether the configured fine/coarse groups learn
+different routing regimes.  Figure~\ref{fig:sd-mechanism-allocation} finally
+puts the frontier and route-removal probes in the same view, showing whether
+the memory frontier is carried by the same group whose removal most damages
+the model.  The overlap is therefore deliberate: each view reuses the same
+registered matrix to answer a different research question.
+
+\subsection{All-Fine Control Is Not the Optimum}
+\label{sec:results-all-fine-control}
+
+The b0 row is the relevant high-resolution control for this branch.  It is not
+token attention: tokens still pool into causal dictionary atoms, the set stack
+processes those atoms, and the language-model head reads the routed
+\texttt{anchor\_span} output.  But it is the closest registered row to the
+intuition that more fine resolution should approach the token baseline.  The
+final matrix does not support a simple monotone version of that intuition.  At
+most completed islands, b25 is better than b0 in PPL, and from $L=2048$
+upward it is also cheaper in peak VRAM.  The pattern appears already in the
+short rows ($943.7$ vs.\ $1040.0$ at $L=512$/B3, $933.4$ vs.\ $1015.7$ at
+$L=512$/B4, and $969.2$ vs.\ $987.6$ at $L=1024$/B3) and becomes a clearer
+quality--memory improvement in the larger rows: $916.4$ vs.\ $956.5$ at
+$L=2048$/B4, $893.5$ vs.\ $913.4$ at $L=3584$/B3, $875.7$ vs.\ $894.9$ at
+$L=3584$/B4, and $864.6$ vs.\ $898.5$ at $L=4096$/B3.  The two exceptions are
+informative rather than embarrassing: L512/B16 shows that a large short-context
+batch favors the token control, and L1024/B4 is the one island where all-fine
+is the best set row even though token is still best overall.  Thus the active
+evidence is not that the set model wins by becoming token-like.  The useful
+operating point is usually interior: mostly fine heads preserve the detailed
+routed prediction path, while a small coarse allocation changes the memory
+coefficient and, empirically, improves the set frontier.
+
+This distinction matters for reviewer interpretation.  If b0 were always the
+best set row, the result would be a costly approximation-to-token story.  If
+b100 were competitive, the result would be a coarse-compression story.  The
+observed pattern is neither.  All-coarse consistently pays a large quality
+cost, all-fine is usually not the optimum, and b25 is the stable quality point
+in the main supported islands.  The set dictionary is therefore acting as a
+multiresolution allocation, not merely as a degraded token attention surrogate.
+
+\subsection{Blur Sweep and Capacity Boundary}
+\label{sec:results-blur-capacity}
+
+The blur sweep gives a compact view of the quality--memory curve.  Moving from
+b0 to b100 reduces the number of dense set--set scores contributed by coarse
+heads, and the measured peak-memory branch follows that pressure: b50, b75,
+and b100 are generally progressively cheaper than b25 and b0 once the context
+is large enough for score tensors to matter.  The short rows show why this is
+not a one-dimensional memory story: L512/B16 favors token quality despite the
+availability of all blur settings, and L1024/B4 favors token quality while b0
+is the best set row.  Quality is therefore not monotone in blur.  b25 usually
+gives the best PPL, b50 is the important memory-saving compromise, and
+b75/b100 mark the quality-degraded side of the frontier.  This is the
+empirical counterpart of
+Theorem~\ref{thm:main-exact-dense-memory-coefficient}: the theorem explains why blur can
+reduce the exact-dense score coefficient; the matrix shows where that
+coefficient reduction remains useful rather than merely destructive.
+
+The most concrete capacity result is $L=4096$/B4.  Under the registered exact
+dense implementation, token attention, b0, and b25 have no endpoint-valid
+corrected rows at this island.  b50, b75, and b100 do train, and b50 reaches
+$893.2\pm39.3$ PPL.  We treat the missing rows as censored feasibility
+observations, not as assigned losses, so this row is not a direct statistical
+win over token attention.  Its role is different: it shows that a moderate
+increase in coarse allocation can move the model across the observed memory
+boundary while preserving a perplexity level comparable to the successful
+longer-context frontier rows.
+
+\subsection{Fine and Coarse Group Diagnostics}
+\label{sec:results-group-diagnostics}
+
+The group diagnostics explain why the mixed rows should not be read as a
+single blurred stream.  Figure~\ref{fig:sd-group-routing-diagnostics} reports
+the routing diagnostics as blur changes inside fixed context/batch islands,
+with five-seed means and confidence intervals.  Columns separate context
+length, the x-axis is coarse-head fraction, and batch is shown as a
+sub-position around each blur tick: B3 to the left, B4 at the center, and B16
+to the right.  This encoding avoids drawing artificial trajectories through
+different contexts or batch sizes.  Endpoints are group-specific: the all-fine
+b0 row contributes only the fine trace, and the all-coarse b100 row contributes
+only the coarse trace.  Censored cells, such as the missing L4096/B4 b0/b25
+rows, are left absent rather than assigned losses.
+Effective range is the routing-probability-weighted mean distance
+$|t-\operatorname{center}(e_m)|$ to the selected atom center.  Routing entropy
+measures spread across the endpoint-window candidate fiber, and top-1
+probability measures concentration on the strongest routed atom.  Across
+contexts and batches, fine routing remains sharper and more local: its
+effective range stays around the sub-token-to-one-token scale, its entropy is
+lower, and its top-1 probability is higher.  Coarse routing consistently
+occupies the broader, higher-entropy regime, with effective ranges near three
+tokens and lower top-1 concentration.  Within-island blur slopes are visible
+but secondary.  Adding coarse heads usually leaves the fine path concentrated,
+while the coarse path becomes slightly more concentrated as it receives more
+heads.  The labels ``fine'' and ``coarse'' therefore correspond to learned
+routing behavior, not only to config metadata.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../plots/main/fig_sd_group_routing_diagnostics.pdf}
+\caption{Fine/coarse routing diagnostics over blur within fixed exact-dense
+islands.  Each point is a five-seed mean with a 95\% t-interval.  Columns are
+context lengths; the x-axis is coarse-head fraction.  Batch is encoded as a
+sub-position around each blur tick, so B3, B4, and B16 are distinguishable
+without connecting different operating islands.  Fine traces run b0 to b75 and
+coarse traces run b25 to b100, because b0 has no coarse group and b100 has no
+fine group.  The persistent vertical gap shows two distinct learned routing
+regimes: a local, concentrated fine path and a broader, higher-entropy coarse
+path.}
+\label{fig:sd-group-routing-diagnostics}
+\end{figure*}
+
+Route-removal ablations give the complementary picture.  Zeroing the fine
+contribution usually hurts far more than zeroing the coarse contribution in
+mixed rows: b25 fine-removal deltas are roughly $15$--$23$ thousand PPL points
+across the main islands, whereas b25 coarse-removal deltas are near zero.
+As the allocation moves toward b75, fine-removal deltas fall because fewer fine
+heads remain, and coarse-removal deltas rise because the coarse stream now
+carries more of the routed signal.  The coarse stream's value at b25 is
+therefore subtler than direct replacement: its standalone ablation delta is
+small, yet adding a small coarse group often improves b25 over b0 and reduces
+memory.  This supports a complementarity interpretation.  Coarse heads are not
+replacing the fine path; they supply a broader, higher-entropy routed summary
+that changes the allocation enough to improve the frontier.
+Figure~\ref{fig:sd-mechanism-allocation} aligns this mechanism view with the
+allocation frontier.  The top row uses matched-token controls as the origin:
+positive x means peak GiB saved versus token attention at the same $(L,B)$, and
+negative y means lower validation PPL than that token control.  We split B4 and
+B3 because batch changes memory directly; the completed B3 bridge is therefore
+shown as its own fixed-batch frontier rather than connected to B4.  The
+frontier panels include the full b0--b100 set path for the fixed-batch B3 and
+B4 comparisons.  The L512/B16 short-control island remains in
+Table~\ref{tab:sd-grid-final-matrix} and
+Figure~\ref{fig:sd-operating-regime-map} because it is a separate batch-control
+condition rather than part of either fixed-batch path.  The bottom row converts
+the fine/coarse route-removal
+measurements into line plots over coarse-head fraction, with separate
+fixed-$(L,B)$ traces and confidence intervals.  The fine-route curves fall as
+the number of fine heads decreases, while coarse-route curves stay small
+through the mixed region and rise only near the all-coarse endpoint.  The
+memory gain is therefore not obtained by making the coarse stream the dominant
+predictive carrier.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../plots/main/fig_sd_mechanism_allocation.pdf}
+\caption{Allocation frontier plus route-removal mechanisms.  Top panels show
+the full b0--b100 set path relative to the matched token point within each
+fixed batch: $x=\mathrm{GiB}_{token}-\mathrm{GiB}_{set}$, and
+$y=\mathrm{PPL}_{set}-\mathrm{PPL}_{token}$, so the favorable quadrant is
+lower/right.  L512/B16 remains a short-control island in
+Table~\ref{tab:sd-grid-final-matrix} and
+Figure~\ref{fig:sd-operating-regime-map}, not part of either fixed-batch B3/B4
+path.  Bottom panels are within-model route-removal probes:
+$\Delta\mathrm{PPL}_{remove}=\mathrm{PPL}_{removed}-\mathrm{PPL}_{original}$,
+reported in thousands of PPL points after zeroing either the fine routed
+contribution or the coarse routed contribution at evaluation time.  Each trace
+is a fixed $(L,B)$ island, points are five-seed means, and vertical bars are
+95\% t-intervals.  These ablations are not token-relative losses.}
+\label{fig:sd-mechanism-allocation}
+\end{figure*}
+
+The rarity/position loss buckets act as a negative control rather than a main
+mechanism figure.  Rare-token losses are much larger than frequent-token losses
+in every row, while early and late halves are close within a frequency bucket.
+The b25 frontier therefore does not appear to be a trivial artifact of a single
+late-context or rare-token slice.  The registered synthetic MQAR probe has now
+been run as a separate mechanism check, but the task did not reach its support
+accuracy regime under the frozen protocol; the remaining natural AR-hit
+evaluation is therefore the next registered mechanism test rather than a
+follow-on architecture sweep.
+
+\subsection{Claim Boundary and Next Mechanism Tests}
+\label{sec:results-claim-boundary}
+
+The current results support an exact-dense multiresolution frontier claim:
+moderate blur improves the mean PPL--VRAM frontier in the main supported
+WikiText-2 islands, and heavier blur extends the feasible region at the
+$L=4096$/B4 memory boundary.  They do not establish subquadratic scaling,
+universal token-attention superiority, token equivalence of b0, or an
+associative-recall mechanism for coarse heads.  Those stronger mechanism
+claims are deliberately separated from the frontier result.  The registered
+MRP-3 synthetic MQAR matrix completed all 18 primary rows, but every row stayed
+near chance; the frozen b25 row reached mean query accuracy $0.000247$, far
+below the prespecified $0.90$ support threshold.  This threshold is not a
+state-of-the-art bar; these are small prototype models.  Its role is to decide
+whether lag-conditioned group ablations can be interpreted as recall
+specialization.  Table~\ref{tab:mqar-prototype-comparison} reports the
+prototype comparison rather than hiding it behind the gate decision.  MQAR was
+run across the same blur-resolution family at one synthetic context length
+($L=2048$, batch 4), not across the full WikiText context grid.  Thus it can
+ask whether the b0--b100 ordering reappears on a controlled recall task, but it
+cannot by itself establish how that ordering changes with language-model
+context length.
+
+\begin{table}[t]
+\centering
+\caption{Registered MQAR prototype comparison at $L=2048$, batch 4, and three
+applied seeds.  Lower loss is better; accuracy is query-only.  The support
+threshold for mechanism attribution was $0.90$ accuracy, so these rows are
+descriptive prototype comparisons rather than positive recall-specialization
+evidence.  The relative pattern is still informative: token has the best loss,
+while b25 is the best set row by loss and uses less peak VRAM than token and
+b0.}
+\label{tab:mqar-prototype-comparison}
+\begin{tabular}{lrrrr}
+\toprule
+Row & Query acc. & Val. loss & $\Delta$ loss vs. token & Peak VRAM (GiB) \\
+\midrule
+token & 0.000263 & 8.3424 & 0.0000 & 9.29 \\
+b0 & 0.000247 & 8.5166 & +0.1741 & 11.14 \\
+b25 & 0.000247 & 8.4891 & +0.1467 & 8.79 \\
+b50 & 0.000245 & 8.4958 & +0.1534 & 7.40 \\
+b75 & 0.000251 & 8.5118 & +0.1694 & 6.09 \\
+b100 & 0.000263 & 8.5226 & +0.1802 & 4.21 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The MQAR comparison therefore gives a weaker but recognizable version of the
+allocation story: the all-fine set row is not the best set row, b25 is the best
+set loss/VRAM compromise, and heavier blur buys memory but degrades loss.  The
+difference from the WikiText frontier is that token remains clearly better on
+MQAR loss.  We therefore treat MQAR as a completed descriptive null probe and
+do not trigger the scale-separation follow-up.  The remaining registered MRP-2
+natural AR-hit evaluation still uses the frozen b25 operating point and
+token/b0/b100 controls to test repeated-token associative recall without
+changing the architecture.
+
+\iffalse
+Legacy Results content from here through the capacity-diagnostics subsection
+is deprecated for the current set-dictionary paper direction.  It is retained
+in source for provenance only and indexed in
+docs/archive/deprecated_paper_content/README.md.  Active claims should use the
+exact-dense multiresolution sections above and
+audit/SD_dense_paper5_final_20260708.md.
 
 \subsection{Matched Backend Controls at the LR-Normalized Reference}
 \label{sec:results-matched-controls}
@@ -653,6 +1088,8 @@ perplexity.  The current SKA gap is therefore not explained by a single missing
 capacity knob; it is more likely a combination of routing optimization,
 generalization, and interface conditioning.
 
+\fi
+
 \section{Conclusion}
 The revised experiments establish a conservative empirical picture.  The
 strict-past SKA implementation is causal, configurable, and memory-efficient at
@@ -692,12 +1129,13 @@ without changing the mathematical model, although it does not by itself solve
 the quality gap.
 
 The more important scientific direction is to test settings that should favor a
-set-mediated model.  The long-context comparison in Table~\ref{tab:long-context}
-is encouraging in this limited sense: the SKA--token gap narrows at $L=2048$
-while SKA keeps a large VRAM reduction.  This is consistent with the broader
-long-sequence literature, where the value of alternative attention mechanisms is
-clearest under long-context memory pressure, sparse or routed computation, or
-compressed memory rather than under short-context token-equivalent replacement
+set-mediated model.  The exact-dense multiresolution matrix above is
+encouraging in this limited sense: moderate blur improves the mean frontier at
+the larger supported islands, and b50 moves the $L=4096$/B4 setting into the
+feasible region.  This is consistent with the broader long-sequence literature,
+where the value of alternative attention mechanisms is clearest under
+long-context memory pressure, sparse or routed computation, or compressed
+memory rather than under short-context token-equivalent replacement
 \citep{dai2019transformerxl,rae2019compressive,beltagy2020longformer,zaheer2020bigbird,roy2020routing}.  It is also aligned with latent and set bottleneck
 architectures, which are usually trained around a compression interface rather
 than evaluated only as a drop-in token-attention substitute
@@ -706,67 +1144,35 @@ than evaluated only as a drop-in token-attention substitute
 \subsection{Set-Dictionary Span as a Diagnostic Branch}
 \label{sec:future-set-dictionary}
 
-The set-dictionary branch isolates a different representation path from the
-default pooling--routing model.  The default strict-past model in
-Section~\ref{sec:model-overview} routes a set context $r_t$ and then uses a
-token residual, for example $f_t=h_t^{(0)}+r_t$ in the direct-residual policy.
-The set-dictionary variant removes that contextual token residual from the
-prediction path.  It keeps only the thin identity anchor $h_t^{(0)}=e(x_t)+p_t$
-(the token MLP disabled, as in \eqref{eq:main-anchor-span}) and asks the routed
-set states to provide the contextual correction:
-\begin{equation}
-\label{eq:set-dictionary-span}
-f_t=h_t^{(0)}+\operatorname{span}_t,\qquad
-\operatorname{span}_t=W_o\!\!\sum_{m\in\mathcal C_t}
-\alpha_{t,m}s_m^{(K)}.
-\end{equation}
-Here $\operatorname{span}_t=W_o r_t$ collects the routed context $r_t$ of
-\eqref{eq:main-routed-head} (written here in its single-head form), $s_m^{(K)}$ is
-the processed dictionary atom, $W_o$ is the set-output projection
-(Section~\ref{sec:model-overview}, identity in the reported runs), and
-$\alpha_{t,m}$ is the learned routing weight.  Thus
-the contextual part of the token representation must be spanned by causal
-dictionary atoms rather than carried by an updated token stream.  This is the
-main mathematical distinction from the previous pooling--routing path: pooling
-still constructs atoms, and routing still chooses atoms, but the language-model
-head no longer receives a full token residual that can silently carry context.
+Section~\ref{sec:model-overview} defines the current set-dictionary branch and
+Figure~\ref{fig:set-dictionary-architecture} gives its computation graph.  The
+diagnostic branch terminology is retained here only to explain earlier capacity
+probes: those probes varied the candidate fiber, the trained-anchor auxiliary
+target, and atom width while keeping the same \texttt{anchor\_span} readout
+\eqref{eq:main-anchor-span}.  In all cases the contextual token representation
+is the routed span $\operatorname{span}_t=W_o r_t$ from
+\eqref{eq:set-dictionary-span}; the language-model head does not receive a
+separate contextual token tower.
 
-\begin{figure*}[t]
-\centering
-\includegraphics[width=0.95\textwidth]{set_dictionary_architecture_figure.tikz.pdf}
-\caption{Causal dictionary set-attention architecture for the set-dictionary
-branch.  The thin vertical rail is the non-contextual anchor
-$h_t^{(0)}=e(x_t)+p_t$, carried only to the output residual in
-\texttt{anchor\_span} mode.  Fine and coarse set banks are pooled and processed
-in parallel, routed back to each token through separate head groups
-$\mathcal U_{\mathrm f},\mathcal U_{\mathrm c}$, concatenated, projected to the
-span update $\operatorname{span}_t$, and decoded as
-$p(x_{t+1}\mid x_{\le t})=\operatorname{softmax}\!\big(\mathbf W_{\mathrm{lm}}(h_t^{(0)}+\operatorname{span}_t)\big)$.
-The right panel lists the aligned computation steps used by the
-multi-resolution SD-9/SD-9.5 configuration, with fine heads using
-$(w_{\mathrm f},s_{\mathrm f})=(2,1)$ and coarse heads using
-$(w_{\mathrm c},s_{\mathrm c})=(4,2)$.}
-\label{fig:set-dictionary-architecture}
-\end{figure*}
-
-The branch also tests two causal candidate fibers.  The endpoint-window fiber
-used by the main strict-past experiments is
+The earlier capacity probes also tested two causal candidate fibers.  The
+endpoint-window fiber used by the main strict-past experiments is group-local:
 \begin{equation}
-\mathcal C_t^{\mathrm{win}}=\{m:t-w<e_m\le t\},
+\mathcal C_t^{g,\mathrm{win}}=\{m:t-w_g<e_m^g\le t\},
 \end{equation}
-where $e_m$ is the endpoint of set $m$.  The maximal causal fiber used in the
-\texttt{all\_past} diagnostic is
+where $e_m^g$ is the endpoint of atom $m$ in group $g$.  The maximal causal
+fiber used in the \texttt{all\_past} diagnostic is
 \begin{equation}
-\mathcal C_t^{\mathrm{all}}=\{m:e_m\le t\}.
+\mathcal C_t^{g,\mathrm{all}}=\{m:e_m^g\le t\}.
 \end{equation}
-Both are causal; \(\mathcal C_t^{\mathrm{all}}\) removes the local
+Both are causal; \(\mathcal C_t^{g,\mathrm{all}}\) removes the local
 candidate-count ceiling by allowing every sealed past atom to compete for each
 token.
 
-Finally, the trained-anchor diagnostic gives the span a predictive target
-without using that target at inference.  A shallow causal pre-encoder produces
-$h_t^\star$ and has its own next-token CE head.  During training, the objective
-is
+The trained-anchor capacity probe used an auxiliary objective that is not part
+of the final SD matrix.  It gave the span a predictive target without using
+that target at inference: a shallow causal pre-encoder produced $h_t^\star$ and
+had its own next-token CE head.  During those diagnostic runs only, the
+objective was
 \begin{equation}
 \label{eq:set-dictionary-anchor-loss}
 \mathcal L
@@ -778,7 +1184,10 @@ is
 \end{equation}
 where $\operatorname{sg}$ stops gradients through the anchor target.  The
 pre-encoder and its head are training-only and are excluded from inference
-accounting.  This guard matters: if $h_t^\star$ is not trained, the anchor is a
+accounting.  This auxiliary loss was not used for the exact-dense
+multiresolution results in Section~\ref{sec:results-sd-grid-final}; those rows
+use ordinary next-token CE with trained anchor disabled.  The guard matters for
+the diagnostic ladder only: if $h_t^\star$ is not trained, the anchor is a
 random target and the reconstruction diagnostic is uninterpretable.
 
 The related experiments are grouped in Table~\ref{tab:sd-capacity-ladder},
@@ -907,11 +1316,12 @@ routing, pooling, and compression simultaneously.  Second, train with a matched
 token-attention teacher, adding logit distillation and optionally hidden-state
 matching so that set states learn which predictive information must survive
 compression.  Third, evaluate under a fixed-VRAM long-context protocol at larger
-$L$, comparing dense and landmark token controls against dense and landmark SKA
-with five seeds.  Fourth, because Table~\ref{tab:long-context} shows a partial
-long-context gap reduction, add an auxiliary compression objective: reconstruct
-teacher hidden states, token windows, or next-token distributions from the set
-states before or alongside the causal LM loss.
+$L$, comparing exact token controls against b0, the frozen b25 row, and the
+all-coarse boundary row under the same backend.  Fourth, because the current
+matrix suggests that interior blur helps under memory pressure, add an
+auxiliary compression objective: reconstruct teacher hidden states, token
+windows, or next-token distributions from the set states before or alongside
+the causal LM loss.
 
 	Two architectural variants are also worth isolating.  The first is activation
 	sharing: compute routing queries from a lightweight descriptor rather than
@@ -981,10 +1391,11 @@ states before or alongside the causal LM loss.
 	multiple set layers appears more damaging than one compressed set stack, even
 	when token layers provide a shared-stream bridge.
 	
-	The broader architecture evidence points in the same direction.  Capacity
-	ablations in Table~\ref{tab:capacity-diagnostics} show that widening $d_\phi$,
-	widening set states, or increasing set-stack depth does not reliably close the
-	gap; in fact, depth 8 and 10 worsen validation perplexity.  The A7
+	The broader architecture evidence points in the same direction.  Historical
+	capacity ablations are now deprecated as active evidence, but they remain
+	useful provenance: widening $d_\phi$, widening set states, or increasing
+	set-stack depth did not reliably close the older model's gap.  The current
+	MRP-1 result points instead to allocation across fine and coarse groups.  The A7
 	quality--efficiency frontier shows that compressed set rows can reduce VRAM but
 	pay large PPL gaps, while the A8 $L=8192$ linear follow-up shows a strong memory
 	benefit without a matching quality recovery.  The hybrid pilot adds one more
@@ -2032,11 +2443,11 @@ This appendix is the canonical theory for the current set-dictionary branch.  It
 \subsection{Notation and Dimensions}
 \label{sec:mrp6-notation}
 
-Let $x_0,\ldots,x_{L-1}$ be a token sequence.  A resolution group $g\in\mathcal G$ has window $w_g$, stride $s_g$, routing-head set $\mathcal U_g$, head count $H_g=|\mathcal U_g|$, and stream width $D_g=D_{\rm set}H_g/H$, with $\sum_gH_g=H$.  The implementation enforces divisibility so each head slice has width $D_g/H_g$.  In the active rows $D_{\rm set}=D=384$, so concatenated routed streams already have model width; $W_o$ is kept explicit for code paths with $D_{\rm set}\ne D$.
+Let $x_0,\ldots,x_{L-1}$ be a token sequence.  A resolution group $g\in\mathcal G$ has window $w_g$, stride $s_g$, routing-head set $\mathcal U_g$, head count $H_g=|\mathcal U_g|$, and stream width $D_g=D_{\rm set}H_g/H$, with $\sum_gH_g=H$.  The implementation enforces divisibility so each head slice has width $D_g/H_g$.  In the active rows $D_{\rm set}=D=384$, so concatenated routed streams already have model width; $W_o$ is kept explicit for code paths with $D_{\rm set}\ne D$.  The router uses a positive temperature floor $\tau_{\min}>0$.
 
 The thin anchor is
 \begin{equation}
-h_t^0=e(x_t)+p_t.
+h_t^{(0)}=e(x_t)+p_t.
 \end{equation}
 For group $g$, define
 \begin{equation}
@@ -2097,7 +2508,7 @@ This is Lemma~\ref{prop:empty-strict-past-fibers} with the boundary clamps remov
 
 Each group pools the thin anchors inside its own bank:
 \begin{equation}
-z_m^{0,g}=\mathcal P_g(\{h_j^0:j\in S_m^g\}).
+z_m^{0,g}=\mathcal P_g(\{h_j^{(0)}:j\in S_m^g\}).
 \end{equation}
 The active pooling rule is soft-trimmed Boltzmann pooling.  Its pure Boltzmann factor has weights proportional to $\exp(-\delta_{j,m}/\tau_{\rm pool})$; the implementation multiplies that factor by a differentiable trimming gate and renormalizes.  Hashed-count and geometry descriptors are group-local deterministic functions of tokens and positions inside the same bank.  A causal $K$-block set stack $\Phi_g$ produces atoms $z_m^{K,g}$, with the mask $e_j^g\le e_m^g$ for source atom $j$ consumed by atom $m$.
 
@@ -2118,11 +2529,11 @@ The full route and span are
 \begin{equation}
 r_t=\operatorname{Concat}_{g\in\mathcal G}r_t^g,
 \qquad
-\operatorname{span}_t=W_or_t.
+\operatorname{span}_t=W_o r_t.
 \end{equation}
 The active logits are
 \begin{equation}
-f_t=h_t^0+\operatorname{span}_t,
+f_t=h_t^{(0)}+\operatorname{span}_t,
 \qquad
 \ell_t=W_{\rm lm}f_t.
 \end{equation}
@@ -2137,7 +2548,7 @@ For every group $g$, layer $k$, atom $m$, and token $t$, $z_m^{k,g}$ depends onl
 \end{theorem}
 
 \begin{proof}
-The pooled atom $z_m^{0,g}$ is computed from anchors in $S_m^g$, whose largest index is $e_m^g$; soft-trimmed pooling weights, hashed counts, and geometry descriptors use no later token.  Induct on set-stack depth.  At layer $k+1$, the causal set mask permits atom $m$ to consume only atoms $j$ with $e_j^g\le e_m^g$.  By the induction hypothesis, those source atoms are functions of prefixes contained in $x_{\le e_m^g}$, and layer normalization, score biases, attention, residual updates, and the set FFN are deterministic functions of those inputs.  Thus $z_m^{k+1,g}$ is endpoint-measurable.  At token $t$, routing uses only atoms with $e_m^g\le t$ plus the current anchor query $h_t^0$; empty fibers give a deterministic zero vector.  Concatenation, $W_o$, anchor addition, and $W_{\rm lm}$ preserve dependence on $x_{\le t}$.
+The pooled atom $z_m^{0,g}$ is computed from anchors in $S_m^g$, whose largest index is $e_m^g$; soft-trimmed pooling weights, hashed counts, and geometry descriptors use no later token.  Induct on set-stack depth.  At layer $k+1$, the causal set mask permits atom $m$ to consume only atoms $j$ with $e_j^g\le e_m^g$.  By the induction hypothesis, those source atoms are functions of prefixes contained in $x_{\le e_m^g}$, and layer normalization, score biases, attention, residual updates, and the set FFN are deterministic functions of those inputs.  Thus $z_m^{k+1,g}$ is endpoint-measurable.  At token $t$, routing uses only atoms with $e_m^g\le t$ plus the current anchor query $h_t^{(0)}$; empty fibers give a deterministic zero vector.  Concatenation, $W_o$, anchor addition, and $W_{\rm lm}$ preserve dependence on $x_{\le t}$.
 \end{proof}
 
 \begin{theorem}[Contextual-path factorization]
@@ -2150,7 +2561,7 @@ Consequently all historical-context dependence factors through the routed span. 
 \end{theorem}
 
 \begin{proof}
-The readout is $\ell_t(x)=W_{\rm lm}(h_t^0(x)+W_or_t(x))$.  Equal current token and equal position imply $h_t^0(x)=h_t^0(x')$.  Subtracting cancels the anchor and leaves the displayed identity.  The observability qualification is the standard softmax invariance under adding $c\mathbf 1$ to the logits.
+The readout is $\ell_t(x)=W_{\rm lm}(h_t^{(0)}(x)+W_o r_t(x))$.  Equal current token and equal position imply $h_t^{(0)}(x)=h_t^{(0)}(x')$.  Subtracting cancels the anchor and leaves the displayed identity.  The observability qualification is the standard softmax invariance under adding $c\mathbf 1$ to the logits.
 \end{proof}
 
 \begin{theorem}[Per-group routing entropy and top-$k$]
@@ -2290,9 +2701,12 @@ The bound is an error-propagation result conditional on a chosen reference famil
 
 \begin{corollary}[Conditional loss stability]
 \label{cor:loss-sensitivity-pooling}
-If the implemented cross-entropy readout is locally Lipschitz in span with constant $L_{\rm model}$ on a ball containing the implemented and reference spans, then
+Let $Q_\theta(h,\sigma)$ denote the single-token cross-entropy loss obtained
+from logits $W_{\rm lm}(h+\sigma)$.  If this readout loss is locally Lipschitz
+in span with constant $L_{\rm model}$ on a ball containing the implemented and
+reference spans, then
 \begin{equation}
-|Q_\theta(h_t^0,\operatorname{span}_t)-Q_\theta(h_t^0,\operatorname{span}_{*,t})|
+|Q_\theta(h_t^{(0)},\operatorname{span}_t)-Q_\theta(h_t^{(0)},\operatorname{span}_{*,t})|
 \le L_{\rm model}\|\Delta\operatorname{span}_t\|.
 \end{equation}
 Any comparison to a different reference loss additionally requires the reference-family Lipschitz and calibration residual assumptions.
@@ -2385,7 +2799,7 @@ Approximation/allocation arithmetic & theory test files under \texttt{tests/theo
 \subsection{Limitations and Nonclaims}
 \label{sec:mrp6-limitations}
 
-The theory uses exact dense score cardinalities, not total VRAM.  Peak VRAM also depends on allocator state, autograd saves, optimizer state, kernel workspaces, and external process occupancy.  OOM observations are fixed hardware/software feasibility outcomes unless separately certified.  The all-fine b0 row is still a set model with $(w,s)=(2,1)$ pooling and routing, not token attention.  The allocation theorem is conditional on marginal error gains and does not identify a blur optimum.  MRP-3-dependent specialization remains conditional until validated mechanism evidence exists.
+The theory uses exact dense score cardinalities, not total VRAM.  Peak VRAM also depends on allocator state, autograd saves, optimizer state, kernel workspaces, and external process occupancy.  OOM observations are fixed hardware/software feasibility outcomes unless separately certified.  The all-fine b0 row is still a set model with $(w,s)=(2,1)$ pooling and routing, not token attention.  The allocation theorem is conditional on marginal error gains and does not identify a blur optimum.  The completed MRP-3 MQAR probe did not reach the support accuracy regime, so empirical specialization remains unestablished.
 
 \subsection{Legacy Label Disposition}
 \label{sec:mrp6-legacy-disposition}
@@ -2439,10 +2853,10 @@ older \texttt{out/metrics/paper\_action*} outputs, and dense-only mechanism
 plots from the pre-A1 period are not mixed with the causal LM results reported
 here.
 
-The matched-quality comparison is reported in the main paper as
-Table~\ref{tab:matched-baseline-vs-setonly}. Source configurations use the
-corresponding implementation names for these paper-level quantities, and the
-generated TSV files retain those exact run identifiers.
+The matched-quality comparison previously reported in this appendix is now
+deprecated as active evidence.  Source configurations retain the corresponding
+implementation names for provenance, while the active main-paper comparison is
+the exact-dense multiresolution matrix in Table~\ref{tab:sd-grid-final-matrix}.
 
 \iffalse
 Legacy pre-A1 / causality-unverified displays intentionally hidden from the
@@ -2534,7 +2948,11 @@ $\tau_{\mathrm{pool}}$ & Pooling $n_{\mathrm{eff}}$ ratio & Pooling $n_{\mathrm{
 
 \clearpage
 
-The matched-quality comparison is reported in the main paper as Table~\ref{tab:matched-baseline-vs-setonly}. Source configurations use the corresponding implementation names for these paper-level quantities, and the generated TSV files retain those exact run identifiers.
+The historical matched-quality comparison is retained as provenance only.
+Source configurations use the corresponding implementation names for those
+paper-level quantities, and the generated TSV files retain those exact run
+identifiers.  The active main-paper comparison is
+Table~\ref{tab:sd-grid-final-matrix}.
 
 \subsection{Cross-Family Complement Sweeps}
 \label{app:family-complements}
@@ -2602,7 +3020,7 @@ Sparse & 0.200 & 0.641 & 10.104 & 15.725 & 0.263 & 0.398 & 0.119 & 359.6 & 71.9 
 \subsection{LR-Normalized Matched-Grid Provenance}
 \label{app:partial-lrnorm-slice}
 
-The completed LR-normalized grids are retained as external provenance artifacts rather than reproduced as an additional appendix table. This avoids mixing older dense-baseline-only slices with the v2.7 matched sparse/linear token controls used for the active claims. Source paths and hashes are recorded in \texttt{audit/A5\_4\_handoff.md} and \texttt{out/paper\_integrated\_evidence/checks/final\_artifact\_index.tsv}; the current paper-level comparison is Table~\ref{tab:matched-baseline-vs-setonly}.
+The completed LR-normalized grids are retained as external provenance artifacts rather than reproduced as an additional appendix table. This avoids mixing older dense-baseline-only slices with the current exact-dense multiresolution claims. Source paths and hashes are recorded in \texttt{audit/A5\_4\_handoff.md} and \texttt{out/paper\_integrated\_evidence/checks/final\_artifact\_index.tsv}; the current paper-level comparison is Table~\ref{tab:sd-grid-final-matrix}.
 
 \subsection{Complete Post-A1 Causal LM Experiment Record}
 \label{app:complete-experiment-record}

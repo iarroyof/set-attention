@@ -3,7 +3,7 @@ name: set-attention-research-direction
 description: Current exact-dense multiresolution set-dictionary direction
 metadata:
   type: project
-  updated: 2026-07-07
+  updated: 2026-07-08
 ---
 
 # Current Research Direction
@@ -21,22 +21,16 @@ set-dictionary attention with matched token attention using the **exact dense ba
   unpaired stochastic replicates only. The confirmation matrix reruns every
   supported cell with actual seeds `0..4` in `sd_grid_seeded_v1`; no legacy
   artifact satisfies a corrected seed.
-- The corrected first pass has finished on both hosts. Blue has 120/120
-  strict endpoint-valid rows. Lizmark has 135/135 core rows, but only 120 were
-  endpoint-valid; the 15 mixed `L3584,B4` rows (`b25/b50/b75`, seeds 0--4)
-  required replacement because endpoint gradient diagnostics were `NA`.
-- The 15 replacement rows were launched on lizmark on 2026-07-07 after stopping
-  the external container again, archiving the invalid first-pass records, and
-  confirming a dry run with 15 plans and 120 skips. Replacement driver PID
-  `3940226`, workers `3940654/3940655`, log
-  `logs/sd_grid_lizmark_paper5_seeded_v1_replacements_20260707.log`.
+- The corrected matrix is closed. Blue has 120/120 strict endpoint-valid rows;
+  Lizmark has 135/135 after the 15 mixed `L3584,B4` replacement rows
+  (`b25/b50/b75`, seeds 0--4). The final strict scan accepted 255 CSVs under
+  `SD_GRID_REQUIRE_CONTRACT=sd_grid_seeded_v1`.
 - Corrected aggregation is fail-closed on experiment/diagnostics contracts,
   native batch, applied seed, full-data status, and duplicate IDs. Fine/coarse
   training diagnostics are separate; archived partial/fail-fast attempts are
   outside `out/paper_mechanisms`.
-- MRP-1 is replacement-running, not closed. The next registered action is to
-  wait for the replacement driver to finish, then pull artifacts and rerun the
-  strict scanner.
+- MRP-1 is PASS. Pause/release Lizmark until a new approved stage explicitly
+  needs it.
 - MRP-0 passed Blue container validation on 2026-07-07. The validation covered
   focused tests, duplicate strict token/b25 smokes, checkpoint replay, and
   eval-only immutability. Run one-step full-shape preflights before any
@@ -45,9 +39,9 @@ set-dictionary attention with matched token attention using the **exact dense ba
   MRP-6D canonical TeX integration passed clean build. Empirical
   specialization wording still waits for MRP-3.
 - MRP-3 generator/trainer infrastructure is ready and passed Blue container
-  tests, dry-run, launch-guard, and a tiny CPU smoke. Calibration, primary
-  MQAR, MRP-2, and MRP-5 still require MRP-1 closure and explicit launch
-  approval.
+  tests, dry-run, launch-guard, and a tiny CPU smoke. MRP-2 and MRP-3 are now
+  gated by explicit launch approval rather than by MRP-1 completion. MRP-5
+  still requires MRP-2/MRP-3 review and explicit approval.
 - B3 and B4 are separate optimization islands; never pool their PPL values.
 - L4096/B4 token, b0, and b25 are repeated 3/3 legacy OOM outcomes that predate
   the 2026-07-02 contention incident. Their old launchers lack external-process
@@ -55,6 +49,7 @@ set-dictionary attention with matched token attention using the **exact dense ba
   retrospectively certified exclusive-capacity measurements.
 - The primary defensible result is a mixed-resolution quality/memory frontier and an exact-dense
   memory-feasibility extension, not universal PPL superiority over token attention.
+- Final MRP-1 analysis: `audit/SD_dense_paper5_final_20260708.md`.
 
 Live matrix and status:
 

@@ -1,10 +1,10 @@
 # MRP-6C: Multiresolution Approximation And Interior Allocation
 
-Status: ANALYTIC PASS; empirical interpretation BLOCKED on MRP-3
+Status: ANALYTIC PASS; empirical specialization not established by null MRP-3
 
 Owner: MRP-6C theory worker
 
-Updated: 2026-07-07.
+Updated: 2026-07-15 after MRP-3 completed as null/inconclusive.
 
 ## Mission
 
@@ -146,7 +146,7 @@ legacy theorem replacements.
 
 ## Durable Handoff
 
-Status: ANALYTIC PASS; empirical interpretation BLOCKED on MRP-3.
+Status: ANALYTIC PASS; empirical specialization not established by null MRP-3.
 
 Last completed action: completed the conditional approximation/allocation
 proof memo, focused CPU-local test file, MRP-6C audit, and local validation.
@@ -166,16 +166,17 @@ Artifacts and digests: no experiment artifacts.
 
 Host/PID/log/ETA: none.
 
-Decision or gate result: analytic MRP-6C proof package passes and is ready for
-MRP-6D independent proof audit; empirical interpretation remains blocked on
-MRP-3.
+Decision or gate result: analytic MRP-6C proof package passes and remains
+conditional. MRP-3 completed but did not reach the support regime, so it does
+not empirically establish the specialization premises.
 
-Known incident or limitation: MRP-3 lag evidence, when available, cannot be
-interpreted as signal frequency or smoothness; the analytic memo remains
-conditional.
+Known incident or limitation: MRP-3 lag evidence cannot be interpreted as
+signal frequency or smoothness, and the completed MRP-3 result is
+null/inconclusive. The analytic memo remains conditional.
 
 Next atomic action: MRP-6D should independently audit MRP-6A/B/C and integrate
 accepted formal results after respecting its own write scope.
 
-Inputs required: validated MRP-3 audit for empirical specialization; no
-experiment input required for the analytic package.
+Inputs required: none for the analytic package. A future empirical
+specialization claim would require a new approved mechanism result that reaches
+its support regime.

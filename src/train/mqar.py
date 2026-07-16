@@ -126,6 +126,83 @@ def _cycle(loader: DataLoader) -> Iterable[dict[str, torch.Tensor]]:
             yield batch
 
 
+def train_mqar_update_block(
+    model: nn.Module,
+    batch_iter: Iterable[dict[str, torch.Tensor]],
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    *,
+    max_updates: int,
+    clip_grad_norm: float = 1.0,
+    grad_accum_steps: int = 1,
+) -> dict[str, Any]:
+    model.train()
+    total_loss = 0.0
+    total_tokens = 0
+    total_correct = 0
+    updates = 0
+    accum_steps = max(1, int(grad_accum_steps))
+    if accum_steps == 1:
+        for batch in batch_iter:
+            if updates >= int(max_updates):
+                break
+            batch = batch_to_device(batch, device)
+            input_ids = batch["input_ids"]
+            labels = batch["labels"]
+            optimizer.zero_grad(set_to_none=True)
+            logits = _forward(model, input_ids, labels)
+            loss, valid_tokens, correct = masked_lm_loss_and_counts(logits, labels)
+            loss.backward()
+            if clip_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float(clip_grad_norm))
+            optimizer.step()
+            total_loss += float(loss.item()) * valid_tokens
+            total_tokens += valid_tokens
+            total_correct += correct
+            updates += 1
+    else:
+        iterator = iter(batch_iter)
+        while updates < int(max_updates):
+            microbatches: list[dict[str, torch.Tensor]] = []
+            for _ in range(accum_steps):
+                try:
+                    microbatches.append(batch_to_device(next(iterator), device))
+                except StopIteration:
+                    break
+            if not microbatches:
+                break
+            optimizer.zero_grad(set_to_none=True)
+            losses: list[tuple[torch.Tensor, int, int]] = []
+            accum_valid_tokens = 0
+            for batch in microbatches:
+                input_ids = batch["input_ids"]
+                labels = batch["labels"]
+                logits = _forward(model, input_ids, labels)
+                loss, valid_tokens, correct = masked_lm_loss_and_counts(logits, labels)
+                losses.append((loss, valid_tokens, correct))
+                accum_valid_tokens += valid_tokens
+            normalizer = max(accum_valid_tokens, 1)
+            for loss, valid_tokens, _ in losses:
+                (loss * (valid_tokens / normalizer)).backward()
+            if clip_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float(clip_grad_norm))
+            optimizer.step()
+            for loss, valid_tokens, correct in losses:
+                total_loss += float(loss.item()) * valid_tokens
+                total_tokens += valid_tokens
+                total_correct += correct
+            updates += 1
+    loss_avg = total_loss / max(total_tokens, 1)
+    return {
+        "loss": loss_avg,
+        "ppl": perplexity(loss_avg),
+        "accuracy": total_correct / max(total_tokens, 1),
+        "valid_tokens": total_tokens,
+        "_optimizer_steps": updates,
+        "_microbatches_per_optimizer_step": accum_steps,
+    }
+
+
 def train_mqar_updates(
     model: nn.Module,
     dataloader: DataLoader,
@@ -134,37 +211,41 @@ def train_mqar_updates(
     *,
     max_updates: int,
     clip_grad_norm: float = 1.0,
+    grad_accum_steps: int = 1,
 ) -> dict[str, Any]:
-    model.train()
-    total_loss = 0.0
-    total_tokens = 0
-    total_correct = 0
-    updates = 0
-    for batch in _cycle(dataloader):
-        if updates >= int(max_updates):
-            break
-        batch = batch_to_device(batch, device)
-        input_ids = batch["input_ids"]
-        labels = batch["labels"]
-        optimizer.zero_grad(set_to_none=True)
-        logits = _forward(model, input_ids, labels)
-        loss, valid_tokens, correct = masked_lm_loss_and_counts(logits, labels)
-        loss.backward()
-        if clip_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float(clip_grad_norm))
-        optimizer.step()
-        total_loss += float(loss.item()) * valid_tokens
-        total_tokens += valid_tokens
-        total_correct += correct
-        updates += 1
-    loss_avg = total_loss / max(total_tokens, 1)
-    return {
-        "loss": loss_avg,
-        "ppl": perplexity(loss_avg),
-        "accuracy": total_correct / max(total_tokens, 1),
-        "valid_tokens": total_tokens,
-        "_optimizer_steps": updates,
-    }
+    return train_mqar_update_block(
+        model,
+        _cycle(dataloader),
+        optimizer,
+        device,
+        max_updates=max_updates,
+        clip_grad_norm=clip_grad_norm,
+        grad_accum_steps=grad_accum_steps,
+    )
+
+
+def _split_batch(
+    batch: dict[str, torch.Tensor],
+    microbatch_size: int | None,
+) -> Iterable[dict[str, torch.Tensor]]:
+    if microbatch_size is None or int(microbatch_size) <= 0:
+        yield batch
+        return
+    first_tensor = next((value for value in batch.values() if torch.is_tensor(value)), None)
+    if first_tensor is None:
+        yield batch
+        return
+    batch_size = int(first_tensor.shape[0])
+    chunk_size = int(microbatch_size)
+    if chunk_size >= batch_size:
+        yield batch
+        return
+    for start in range(0, batch_size, chunk_size):
+        stop = min(start + chunk_size, batch_size)
+        yield {
+            key: value[start:stop] if torch.is_tensor(value) and int(value.shape[0]) == batch_size else value
+            for key, value in batch.items()
+        }
 
 
 @torch.no_grad()
@@ -174,6 +255,7 @@ def evaluate_mqar(
     device: torch.device,
     *,
     bins: LagBins = DEFAULT_LAG_BINS,
+    microbatch_size: int | None = None,
 ) -> dict[str, Any]:
     model.eval()
     if hasattr(model, "reset_probe_metrics"):
@@ -188,41 +270,41 @@ def evaluate_mqar(
     bin_counts = {name: 0 for name, _, _ in bins}
     bin_lag_sums = {name: 0.0 for name, _, _ in bins}
 
-    for batch in dataloader:
-        batch = batch_to_device(batch, device)
-        input_ids = batch["input_ids"]
-        labels = batch["labels"]
-        query_positions = batch["query_positions"]
-        lags = batch["lags"]
-        logits = _forward(model, input_ids)
-        loss, valid_tokens, correct = masked_lm_loss_and_counts(logits, labels)
-        loss_sum += float(loss.item()) * valid_tokens
-        valid_total += valid_tokens
-        correct_total += correct
+    for outer_batch in dataloader:
+        for batch in _split_batch(outer_batch, microbatch_size):
+            batch = batch_to_device(batch, device)
+            input_ids = batch["input_ids"]
+            labels = batch["labels"]
+            query_positions = batch["query_positions"]
+            lags = batch["lags"]
+            logits = _forward(model, input_ids)
+            loss, valid_tokens, correct = masked_lm_loss_and_counts(logits, labels)
+            loss_sum += float(loss.item()) * valid_tokens
+            valid_total += valid_tokens
+            correct_total += correct
 
-        query_logits, query_targets = _query_logits_and_targets(logits, labels, query_positions)
-        predictions = query_logits.argmax(dim=-1)
-        valid = query_targets.ne(IGNORE_INDEX)
-        exact_mask = valid.any(dim=1)
-        exact_total += int(exact_mask.sum().item())
-        exact_correct += int(((predictions.eq(query_targets) | ~valid).all(dim=1) & exact_mask).sum().item())
+            query_logits, query_targets = _query_logits_and_targets(logits, labels, query_positions)
+            predictions = query_logits.argmax(dim=-1)
+            valid = query_targets.ne(IGNORE_INDEX)
+            exact_mask = valid.any(dim=1)
+            exact_total += int(exact_mask.sum().item())
+            exact_correct += int(((predictions.eq(query_targets) | ~valid).all(dim=1) & exact_mask).sum().item())
 
-        per_query_loss = F.cross_entropy(
-            query_logits.reshape(-1, query_logits.shape[-1]),
-            query_targets.reshape(-1),
-            ignore_index=IGNORE_INDEX,
-            reduction="none",
-        ).view_as(query_targets)
-        for name, lo, hi in bins:
-            mask = lags.ge(lo) & lags.le(hi) & valid
-            count = int(mask.sum().item())
-            if count == 0:
-                continue
-            bin_counts[name] += count
-            bin_loss_sums[name] += float(per_query_loss.masked_select(mask).sum().item())
-            bin_correct[name] += int(predictions.eq(query_targets).masked_select(mask).sum().item())
-            bin_lag_sums[name] += float(lags.masked_select(mask).to(dtype=torch.float32).sum().item())
-
+            per_query_loss = F.cross_entropy(
+                query_logits.reshape(-1, query_logits.shape[-1]),
+                query_targets.reshape(-1),
+                ignore_index=IGNORE_INDEX,
+                reduction="none",
+            ).view_as(query_targets)
+            for name, lo, hi in bins:
+                mask = lags.ge(lo) & lags.le(hi) & valid
+                count = int(mask.sum().item())
+                if count == 0:
+                    continue
+                bin_counts[name] += count
+                bin_loss_sums[name] += float(per_query_loss.masked_select(mask).sum().item())
+                bin_correct[name] += int(predictions.eq(query_targets).masked_select(mask).sum().item())
+                bin_lag_sums[name] += float(lags.masked_select(mask).to(dtype=torch.float32).sum().item())
     loss_avg = loss_sum / max(valid_total, 1)
     metrics: dict[str, Any] = {
         "loss": loss_avg,
@@ -260,6 +342,7 @@ def evaluate_mqar_group_ablation(
     base_metrics: dict[str, Any],
     *,
     bins: LagBins = DEFAULT_LAG_BINS,
+    microbatch_size: int | None = None,
 ) -> dict[str, Any]:
     if not hasattr(model, "set_span_ablation_mode"):
         return {"ablation/status": "missing_set_span_ablation_mode_hook"}
@@ -272,7 +355,13 @@ def evaluate_mqar_group_ablation(
     try:
         for group in wanted:
             model.set_span_ablation_mode(group)
-            metrics = evaluate_mqar(model, dataloader, device, bins=bins)
+            metrics = evaluate_mqar(
+                model,
+                dataloader,
+                device,
+                bins=bins,
+                microbatch_size=microbatch_size,
+            )
             out[f"ablation/{group}_loss"] = metrics["loss"]
             out[f"ablation/{group}_accuracy"] = metrics["accuracy"]
             out[f"ablation/{group}_delta_loss"] = metrics["loss"] - float(base_metrics["loss"])

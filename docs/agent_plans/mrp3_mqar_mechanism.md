@@ -1,10 +1,10 @@
 # MRP-3: Synthetic MQAR Mechanism Study
 
-Status: generator/trainer infrastructure READY; launches BLOCKED on MRP-1 completion and explicit approval
+Status: COMPLETE; NULL/INCONCLUSIVE MECHANISM RESULT
 
 Owner: MRP-3 MQAR implementation worker
 
-Updated: 2026-07-07.
+Updated: 2026-07-15 after primary matrix completion and summarization.
 
 ## Mission
 
@@ -102,9 +102,9 @@ inspect the primary test split during calibration.
 
 ## Primary Matrix
 
-Calibration and primary matrices are registrations, not launch authorization.
-Do not launch either until approval is recorded by the tracker write owner in
-`audit/phase_sd_status.md`.
+Calibration, primary, and capacity preflights are approved as of 2026-07-08.
+Run them in the registered order: calibration first, then common-batch
+preflight, then primary/capacity according to the frozen calibration result.
 
 Use:
 
@@ -201,43 +201,75 @@ frequency.
 
 ## Durable Handoff
 
-Status: generator/trainer infrastructure READY; launches BLOCKED.
+Status: COMPLETE; NULL/INCONCLUSIVE MECHANISM RESULT.
 
-Last completed action: implemented non-launched MQAR generator, trainer,
-runner, summarizer, guarded matrix wrapper, configs, focused tests, and audit.
+Last completed action: token LR calibration selected `lr=0.001` at update
+`12500`; B4 common-batch preflight passed for the six primary rows; primary
+matrix launched on blue-demon GPU0; registered L4096/B4 capacity preflight
+completed on lizmark after repairing the clean runtime checkout. The
+blue-demon shutdown interrupted the primary matrix after 8/18 rows; the
+2026-07-13 resume completed the remaining 10 rows by 2026-07-15. The strict
+summarizer accepted all 18 registered endpoint CSVs.
 
 Files changed: `src/data/mqar.py`, `src/train/mqar.py`,
 `scripts/run_mqar.py`, `scripts/summarize_mqar.py`,
-`scripts/run_mqar_matrix.sh`, `configs/mqar/`, focused MQAR tests, this
-subplan status/handoff, and `audit/MRP_3_mqar_mechanism.md`.
+`scripts/run_mqar_matrix.sh`, `scripts/run_mqar_calibration.sh`,
+`configs/mqar/`, focused MQAR tests, this subplan status/handoff, and
+`audit/MRP_3_mqar_mechanism.md`.
 
 Commands/tests and outcomes: `python -m py_compile ...` passed for new Python
-files; `bash -n scripts/run_mqar_matrix.sh` passed; Blue container pytest for
+files; `bash -n scripts/run_mqar_matrix.sh` and
+`scripts/run_mqar_calibration.sh` passed; Blue container pytest for
 `tests/test_mqar_generator.py`, `tests/test_mqar_metrics.py`, and
 `tests/test_mqar_summarizer.py` reported `7 passed`; `python
 scripts/run_mqar.py --config configs/mqar/token_smoke.yaml --dry-run --device
 cpu` validated config/generator/provenance; `MQAR_DEVICE=cpu
 scripts/run_mqar_matrix.sh --smoke` completed one tiny update; ungated
-`scripts/run_mqar_matrix.sh` refused launch with exit code `3`.
+`scripts/run_mqar_matrix.sh` refused launch with exit code `3`; reduced-cadence
+calibration validation emitted two update-indexed rows for each token LR
+candidate with explicit gate columns.
 
-Artifacts and digests: no experiment artifacts; audit recorded in
-`audit/MRP_3_mqar_mechanism.md`.
+Artifacts and digests: primary summary is
+`out/mqar_primary_B4_lr0p001_u12500/summary.tsv`; capacity preflight artifacts
+live under `out/mqar_capacity_preflight_L4096_B4_lr0p001_u12500`; audit
+recorded in `audit/MRP_3_mqar_mechanism.md`.
 
-Host/PID/log/ETA: local shell only; no training process launched.
+Host/PID/log/ETA: blue-demon isolated checkout
+`~/set-attention-anchor-span-sync`; prior primary container/driver exited
+before the 2026-07-13 idle-server audit. Log:
+`logs/mrp3_mqar_primary_B4_lr0p001_u12500_20260709_083600.log`. Completed rows:
+token/b0/b25/b50/b75/b100 seed 0 plus token/b0 seed 1. First incomplete row:
+`b25_seed1_B4`, whose CSV is an empty stub with no final checkpoint.
 
-Decision or gate result: MRP-0 PASS allows infrastructure. Calibration,
-primary, and capacity launches remain blocked on MRP-1 closure and explicit
-approval recorded by the shared tracker owner.
+Resume launched on 2026-07-13 using the hardened runner synced into Blue and
+completed on 2026-07-15:
 
-Known incident or limitation: active local Python lacks `pytest`, `PyYAML`, and
-a complete PyTorch install (`torch.utils` is missing), so runtime validation
-uses the Blue project container. Resume and eval-only MQAR checkpoint paths are
-not implemented; final checkpoint save uses the MRP-0 checkpoint payload/save
-API.
+| host | GPU | container at health check | rows | log | state |
+|---|---:|---|---|---|---|
+| blue-demon | 0 | `7faed36a1d47` | seed 1: b25, b50, b75, b100 | `logs/mrp3_mqar_resume_seed1_remaining_gpu0_20260713.log` | complete |
+| blue-demon | 1 | `fd1add2829a2` | seed 2: token, b0, b25, b50, b75, b100 | `logs/mrp3_mqar_resume_seed2_all_gpu1_20260713.log` | complete |
 
-Next atomic action: after MRP-1 closes and explicit launch approval is
-recorded, run the registered MQAR calibration protocol; do not launch
-calibration, primary, or capacity matrices before that approval.
+Decision or gate result: MRP-0 PASS and MRP-1 PASS are complete. User approval
+for registered MRP-3 calibration/primary/capacity preflights was recorded on
+2026-07-08 in `audit/phase_sd_status.md`. The completed primary MQAR matrix is
+scientifically null/inconclusive: all rows stayed near chance, with frozen
+`b25` mean accuracy `0.0002474`, far below the registered `0.90` support
+threshold. MRP-4 is therefore `NOT_TRIGGERED` because the primary task is
+inadequate for scale-separation interpretation, not because specialization was
+confirmed.
 
-Inputs required: strict MRP-1 closure and explicit launch approval for any
-registered run.
+Known incident or limitation: the first approved calibration launch was stopped
+and quarantined because it evaluated only at the endpoint; see
+`audit/incident_mrp3_calibration_eval_cadence_20260708.md`. Active local Python
+lacks `pytest`, `PyYAML`, and a complete PyTorch install (`torch.utils` is
+missing), so runtime validation uses the Blue project container. Resume and
+eval-only MQAR checkpoint paths are not implemented; final checkpoint save uses
+the MRP-0 checkpoint payload/save API. The old Lizmark `~/set-attention`
+checkout is deprecated for MRP launches; use only
+`~/set-attention-anchor-span-sync`.
+
+Next atomic action: do not relaunch MRP-3 or trigger MRP-4 from this result.
+Proceed to MRP-2 AR-hit evaluation; use MRP-3 only as a completed null
+mechanism-probe result in status/paper context.
+
+Inputs required: none for MRP-3.

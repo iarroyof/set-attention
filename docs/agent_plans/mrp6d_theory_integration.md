@@ -1,10 +1,10 @@
 # MRP-6D: Independent Proof Audit And Manuscript Integration
 
-Status: PASS; empirical specialization remains conditional on MRP-3
+Status: PASS; empirical specialization not established by null MRP-3
 
 Owner: MRP-6D theory integration worker
 
-Updated: 2026-07-07.
+Updated: 2026-07-15 after MRP-3 completed as null/inconclusive.
 
 ## Mission
 
@@ -154,7 +154,7 @@ formalizes the executed model, and the clean manuscript build passes.
 
 ## Durable Handoff
 
-Status: PASS; empirical specialization remains conditional on MRP-3.
+Status: PASS; empirical specialization not established by null MRP-3.
 
 Last completed action: independently audited the MRP-6A/B/C proof packages,
 replaced the canonical main theory and detailed proof appendix with the
@@ -172,8 +172,9 @@ Artifacts and digests: compile/proof lint outputs are under
 Host/PID/log/ETA: local CPU/LaTeX validation only; no experiments launched.
 
 Decision or gate result: MRP-6D canonical TeX integration is complete for the
-analytic theory package. MRP-3-dependent mechanism specialization remains
-conditional and must not be stated as established.
+analytic theory package. The completed MRP-3 result did not reach the support
+regime, so mechanism specialization remains unestablished and must not be
+stated as a positive empirical result.
 
 Known incident or limitation: the older model-object appendix remains as
 provenance for the broader Set Attention manuscript, but its legacy proposition
@@ -183,5 +184,6 @@ for set-dictionary claims.
 Next atomic action: MRP-7 should perform final paper synthesis after the
 remaining empirical gates close, preserving the MRP-6D nonclaims.
 
-Inputs required: validated MRP-3 audit only for empirical specialization;
-none for the analytic theory package.
+Inputs required: none for the analytic theory package. A future empirical
+specialization statement would require a new approved mechanism result that
+reaches its support regime.

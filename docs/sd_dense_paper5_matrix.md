@@ -1,15 +1,15 @@
 # Exact-Dense Five-Seed Paper Matrix
 
-Status: FIRST PASS COMPLETE; 15 L3584/B4 MIXED REPLACEMENTS RUNNING.
+Status: COMPLETE; strict endpoint validation passed.
 
-Updated: 2026-07-07 after Lizmark replacement launch.
+Updated: 2026-07-14 after short-B3 bridge incorporation and plan audit.
 
 Reproducibility note: the completed legacy rows logged labels `seed=0..4` but
 did not apply them to RNG state. Preserve those rows as unpaired stochastic
 replicates. They do not satisfy the five-seed confirmation requirement. See
 `audit/incident_training_seed_not_applied_20260630.md`.
 
-The confirmation matrix is being rerun in
+The confirmation matrix was rerun in
 `out/paper_mechanisms/sd_grid_seeded_v1` with actual seeds `0..4`,
 deterministic mode, applied-seed assertions, and the
 `current_matrix_v1` diagnostics contract.
@@ -38,17 +38,43 @@ endpoint-window, and no re-read/all-past/multivector.
 | Host | Island | Five-seed paper rows | Corrected seeded state |
 |---|---|---|---|
 | blue-demon | L512/B16 | token + b0/b25/b50/b75/b100 | 30/30 valid done |
+| lizmark | L512/B3 | token + b0/b25/b50/b75/b100 | 30/30 valid done as accelerated `short_b3` bridge; see `audit/SD_short_b3_bridge_20260713.md` |
 | blue-demon | L512/B4 | token + b0/b25/b50/b75/b100 | 30/30 valid done |
+| blue-demon | L1024/B3 | token + b0/b25/b50/b75/b100 | 30/30 valid done as accelerated `short_b3` bridge after HF cache sync; see `audit/SD_short_b3_bridge_20260713.md` |
 | blue-demon | L1024/B4 | token + b0/b25/b50/b75/b100 | 30/30 valid done |
 | blue-demon | L2048/B3 | token + b0/b25/b50/b75/b100 | 30/30 valid done |
 | lizmark | L2048/B4 | token + b0/b25/b50/b75/b100 | 30/30 valid done |
-| lizmark | L3584/B4 | token + b0/b25/b50/b75/b100 | 15 endpoint-valid done; 15 mixed replacement rows running |
+| lizmark | L3584/B4 | token + b0/b25/b50/b75/b100 | 30/30 valid done after mixed replacement wave |
 | lizmark | L3584/B3 | token + b0/b25/b50/b75/b100 | 30/30 valid done |
 | lizmark | L4096/B3 | token + b0/b25/b50/b75/b100 | 30/30 valid done |
 | lizmark | L4096/B4 | b50/b75/b100 | 15/15 valid done |
 
-Corrected total: 255 runs, with 120 on blue-demon and 135 on lizmark. No
-legacy row is reused to satisfy an applied seed.
+Closed paper5 corrected total: 255 endpoint-valid runs, with 120 on blue-demon
+and 135 on lizmark. The later `short_b3` bridge extension is not included in
+that closed count. No legacy row is reused to satisfy an applied seed.
+
+The completed `short_b3` bridge used co-resident accelerated mode and
+additional lock-safe auxiliary cells. Use it for PPL and per-process
+peak-memory bridge evidence, not as exclusive-capacity/OOM proof.
+
+Short-B3 completion summary, mean +/- sample standard deviation over five
+seeds:
+
+| Island | Best mean-PPL set row | Token PPL | Best set PPL | Best set peak VRAM MiB |
+|---|---|---:|---:|---:|
+| `L512/B3` | `b25` | 1048.040 +/- 30.003 | 943.695 +/- 26.439 | 3272.788 +/- 0.000 |
+| `L1024/B3` | `b25` | 988.047 +/- 23.773 | 969.176 +/- 41.925 | 6250.296 +/- 0.000 |
+
+All-coarse `b100` remains the cheapest memory row but has a large PPL penalty
+in both bridge islands. See `audit/SD_short_b3_bridge_20260713.md` for the
+full per-row table.
+
+Paper asset incorporation: on 2026-07-13, the asset builder was updated so
+`out/paper_integrated_evidence/checks/sd_grid_seeded_v1_final_20260708/cells.tsv`
+and `out/final_paper_bundle/overleaf_ready/tables/sd_grid_final_matrix.tex`
+are regenerated from the per-seed CSV endpoints, including the `L512/B3` and
+`L1024/B3` bridge rows. The fine/coarse routing diagnostic remains a line-plot
+matrix over fixed `(L,B)` blur paths; no heatmap replaces that figure.
 
 The L4096/B4 token, b0, and b25 rows remain repeated 3/3 legacy OOM outcomes.
 They predate the 2026-07-02 Lizmark contention incident and are not rerun in
@@ -100,7 +126,7 @@ quarantined before the guarded resume.
 | Host | Driver PID | Corrected cells | Queue log | Snapshot active row | ETA / action |
 |---|---:|---:|---|---|---|
 | blue-demon | exited normally | 120/120 endpoint-valid done | `logs/sd_grid_blue_paper5_seeded_v1.log` | none; both GPUs idle | final package pulled and validated |
-| lizmark replacement | 3940226 | 15 mixed L3584/B4 replacements planned; first two active at launch check | `logs/sd_grid_lizmark_paper5_seeded_v1_replacements_20260707.log` | b25 seed0/seed1 active | wait for completion, then pull and strict-validate |
+| lizmark replacement | exited normally | 15/15 mixed L3584/B4 replacements endpoint-valid; 135/135 Lizmark corrected rows valid | `logs/sd_grid_lizmark_paper5_seeded_v1_replacements_20260707.log` | none; both GPUs idle | complete; pause/release Lizmark until a new approved stage |
 
 Blue closed with 120 strict endpoint-valid rows, 120 done markers, and 120
 exit-0 registry records. The final result/log package is local. Word-boundary
@@ -134,39 +160,50 @@ otherwise release the external workload before the 15 rejected mixed
 `L3584/B4` cells can be rerun. Do not launch a second driver, manually start
 that container, or poll either queue without an explicit status request.
 
-## Partial Result Snapshot
+## Final Result Snapshot
 
-The frozen 2026-07-07 PPL/VRAM matrices, paired comparisons, and provisional
-frontiers are in `audit/SD_dense_paper5_partial_20260707.md` and
-`out/paper_integrated_evidence/checks/sd_grid_seeded_v1_post_lizmark_20260707/`.
+The final 2026-07-08 PPL/VRAM matrices, paired comparisons, and frontiers are
+in `audit/SD_dense_paper5_final_20260708.md` and
+`out/paper_integrated_evidence/checks/sd_grid_seeded_v1_final_20260708/`.
 
-Current complete-island mean frontiers:
+Final mean frontiers, including the later short-B3 bridge rows:
 
 | Island | Nondominated rows |
 |---|---|
+| L512/B3 | b25, b50, b75, b100 |
 | L512/B16 | token, b50, b75, b100 |
 | L512/B4 | b25, b50, b75, b100 |
+| L1024/B3 | b25, b50, b75, b100 |
 | L1024/B4 | token, b50, b75, b100 |
 | L2048/B3 | b25, b50, b75, b100 |
 | L2048/B4 | b25, b50, b75, b100 |
-| L3584/B4 | b25, b50, b75, b100 (provisional; mixed rows require replacement) |
+| L3584/B4 | b25, b50, b75, b100 |
 | L3584/B3 | b25, b50, b75, b100 |
 | L4096/B3 | b25, b50, b75, b100 |
 | L4096/B4 | b50, b75, b100 |
 
-The strongest complete set-vs-token mean result is `L2048,B4` b25:
-`916.4 +/- 33.7` PPL and `18116.7` MiB versus token
-`942.8 +/- 19.4` PPL and `18633.3` MiB. Its paired PPL delta
-`-26.5 +/- 48.1` still crosses zero, so this is a mean Pareto win rather than
-a confirmed quality separation.
+The main supported islands show repeated b25 mean Pareto wins:
+
+- L2048/B4 b25: `916.4 +/- 27.1` PPL and `18117` MiB versus token
+  `942.8 +/- 15.6` PPL and `18633` MiB.
+- L3584/B3 b25: `893.5 +/- 26.8` PPL and `29175` MiB versus token
+  `945.3 +/- 18.8` PPL and `31035` MiB.
+- L3584/B4 b25: `875.7 +/- 22.8` PPL and `38570` MiB versus token
+  `896.6 +/- 19.7` PPL and `41076` MiB.
+- L4096/B3 b25: `864.6 +/- 21.7` PPL and `35365` MiB versus token
+  `909.3 +/- 28.8` PPL and `37955` MiB.
+
+The paired PPL confidence intervals still overlap zero, so the paper claim is
+mean PPL/VRAM frontier improvement under the corrected five-seed matrix, not a
+universal or statistically settled token-attention quality theorem.
 
 The registered `L2048,B4` selection island is complete. The minimum interior
 mean PPL selects and freezes `b*=b25` before any downstream empirical outcome;
-see `audit/SD_dense_paper5_results.md`. This freeze does not close MRP-1 or
-authorize MRP-2/3/5.
+see `audit/SD_dense_paper5_final_20260708.md`. MRP-1 is closed, but this does
+not itself authorize MRP-2/3/5 launches; those still require explicit user
+approval.
 
-The strict 2026-07-07 scan confirmed the epoch-level gradient-probe cadence
-defect still affects all 15 completed mixed `L3584,B4` rows. The remote source
-contains the instrumentation-only fix, and the replacement wave is now running.
-Launch audit: `audit/SD_dense_paper5_replacements_20260707.md`. Incident and recovery procedure:
-`audit/incident_sd_grid_epoch_gradient_probe_cadence_20260704.md`.
+The strict 2026-07-08 scan accepts the replacement rows, closing the
+epoch-level gradient-probe cadence recovery. Launch audit:
+`audit/SD_dense_paper5_replacements_20260707.md`. Incident and recovery
+procedure: `audit/incident_sd_grid_epoch_gradient_probe_cadence_20260704.md`.

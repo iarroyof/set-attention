@@ -44,6 +44,8 @@ def normalize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     training_cfg.setdefault("deterministic", False)
     training_cfg.setdefault("strict_deterministic", False)
     training_cfg.setdefault("benchmark_mode", False)
+    training_cfg.setdefault("grad_accum_steps", 1)
+    training_cfg.setdefault("eval_microbatch_size", None)
     checkpoint_cfg = training_cfg.get("checkpoint")
     if checkpoint_cfg is None:
         checkpoint_cfg = {}

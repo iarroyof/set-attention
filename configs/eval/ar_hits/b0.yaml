@@ -1,0 +1,77 @@
+model:
+  implementation: set_only
+  attention_family: dense
+  backend: exact
+  architecture: transformer_lm
+  vocab_size: 0
+  d_model: 384
+  num_heads: 8
+  num_layers: 6
+  dim_feedforward: 1536
+  dropout: 0.1
+  attn_dropout: 0.1
+  resid_dropout: 0.1
+  ffn_dropout: 0.1
+  max_seq_len: 2048
+  window_size: 2
+  stride: 1
+  set_causality_mode: strict_past
+  output_residual_mode: anchor_span
+  allow_token_token: false
+  candidate_fiber: endpoint_window
+  multiresolution:
+    enabled: true
+    groups:
+      - name: fine
+        num_heads: 8
+        window_size: 2
+        stride: 1
+  pooling:
+    mode: soft_trimmed_boltzmann
+    tau: 0.1
+    q: 0.85
+  pooling_multihead: false
+  d_phi: 384
+  set_state_dim: 384
+  adapter_type: auto
+  feature_mode: hashed_counts
+  feature_params:
+    num_bins: 128
+    hash_seed: 13
+    normalize: true
+  geometry:
+    enabled: true
+    apply_as_bias: true
+    apply_in_phi_attn: true
+  router_type: learned
+  router_topk: 16
+  router_temperature: 1.0
+  router:
+    min_temp: 0.5
+    score_mode: candidate_gather
+  router_multihead: true
+  token_mlp:
+    enabled: false
+  anchor:
+    enabled: false
+  set_diversity:
+    lambda_div: 0.0
+  multivector_basis:
+    enabled: false
+    r: 1
+
+data:
+  dataset: wikitext2
+  batch_size: 4
+  seq_len: 2048
+  streaming: true
+
+training:
+  seed: 0
+  epochs: 0
+  lr: 0.0001
+  warmup_steps: 1000
+  set_diversity_weight: 0.0
+  set_diversity_mode: position_contrastive
+  checkpoint:
+    eval_only_from: null

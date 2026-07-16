@@ -1,0 +1,320 @@
+Mon May 11 19:11:16 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 570.133.07             Driver Version: 570.133.07     CUDA Version: 12.8     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 4090        Off |   00000000:01:00.0 Off |                  Off |
+| 33%   39C    P8             17W /  450W |       1MiB /  24564MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+|   1  NVIDIA GeForce RTX 4090        Off |   00000000:07:00.0 Off |                  Off |
+|  0%   33C    P8             19W /  450W |       1MiB /  24564MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+
+=== PROCS ===
+
+=== NOHUP LOG ===
+=== A4.1 long-context smoke complete ===
+
+=== WORKER GPU0 ===
+=== Running a41_baseline_dense_D384_FF1536_L2048_lr1e-4_seed0 on GPU 0 ===
+[task] detected lm (cfg.data.dataset)
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+[task] detected lm (cfg.data.dataset)
+wandb: WARNING Using a boolean value for 'reinit' is deprecated. Use 'return_previous' or 'finish_previous' instead.
+wandb: Tracking run with wandb version 0.24.0
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /workspace/wandb/offline-run-20260512_005935-gq78sy4y
+wandb: Detected [huggingface_hub.inference] in use.
+wandb: Use W&B Weave for improved LLM call tracing. Install Weave with `pip install weave` then add `import weave` to the top of your script.
+wandb: For more information, check out the docs at: https://weave-docs.wandb.ai/
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+epoch=1 train_loss=7.7610 val_loss=7.1531
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+epoch=2 train_loss=6.8810 val_loss=6.9387
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+epoch=3 train_loss=6.6145 val_loss=6.8331
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+epoch=4 train_loss=6.4262 val_loss=6.7747
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+epoch=5 train_loss=6.2674 val_loss=6.7426
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+epoch=6 train_loss=6.1247 val_loss=6.7288
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+epoch=7 train_loss=5.9944 val_loss=6.7236
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+epoch=8 train_loss=5.8718 val_loss=6.7286
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+epoch=9 train_loss=5.7567 val_loss=6.7546
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+epoch=10 train_loss=5.6512 val_loss=6.8172
+wandb: 
+wandb: Run history:
+wandb:     baseline/attention_entropy_mean █▆▅▄▄▃▃▂▂▁
+wandb:     baseline/attention_entropy_norm █▆▅▄▄▃▃▂▂▁
+wandb:    baseline/attention_gradient_norm ▃▁▂▃▅▆▆▇▇█
+wandb:       baseline/attention_param_norm ▁▂▃▄▄▅▆▇▇█
+wandb:  baseline/attention_pattern_jaccard █▁▂▂▃▃▃▃▃▃
+wandb:        baseline/attention_top1_mean ▁▄▅▅▆▆▇▇▇█
+wandb:         baseline/attention_top1_std ▁▅▇▇▇▇▇███
+wandb:    baseline/attention_weight_change █▇█▇▆▄▂▁▁▃
+wandb: baseline/delta_attention_confidence ▁▁▁▁▁▁▁▁▁▁
+wandb:    baseline/delta_attention_entropy ▁▁▁▁▁▁▁▁▁▁
+wandb:                                 +11 ...
+wandb: 
+wandb: Run summary:
+wandb:     baseline/attention_entropy_mean 6.48999
+wandb:     baseline/attention_entropy_norm 0.85119
+wandb:    baseline/attention_gradient_norm 0.29823
+wandb:       baseline/attention_param_norm 59.00348
+wandb:  baseline/attention_pattern_jaccard 0.26078
+wandb:        baseline/attention_top1_mean 0.01355
+wandb:         baseline/attention_top1_std 0.03189
+wandb:    baseline/attention_weight_change 0.054
+wandb: baseline/delta_attention_confidence 0
+wandb:    baseline/delta_attention_entropy 0
+wandb:                                 +11 ...
+wandb: 
+wandb: You can sync this run to the cloud by running:
+wandb: wandb sync /workspace/wandb/offline-run-20260512_005935-gq78sy4y
+wandb: Find logs at: ./wandb/offline-run-20260512_005935-gq78sy4y/logs
+
+=== WORKER GPU1 ===
+=== Running a41_set_dense_D384_FF1536_L2048_w16_s8_lr1e-4_seed0 on GPU 1 ===
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+[task] detected lm (cfg.data.dataset)
+/workspace/src/models/set_only/set_only_lm.py:154: RuntimeWarning: multiscale disabled; using single-scale bank
+  warnings.warn(
+{'pooling': {'mode': 'soft_trimmed_boltzmann', 'tau': 0.1, 'q': 0.85, 'alpha': 10.0, 'learnable_alpha': False, 'tiny_set_n': 3, 'isotropy_eps': 0.0001}, 'pooling_multihead': False, 'sig_gating': {}, 'd_phi': 384, 'geometry': {'enabled': True, 'apply_as_bias': True, 'apply_in_phi_attn': True}, 'router_multihead': True, 'router_temperature': 1.0, 'router_min_temp': 0.5, 'token_mlp': {'enabled': False}, 'set_causality_mode': 'strict_past'}
+[task] detected lm (cfg.data.dataset)
+wandb: WARNING Using a boolean value for 'reinit' is deprecated. Use 'return_previous' or 'finish_previous' instead.
+wandb: Tracking run with wandb version 0.24.0
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /workspace/wandb/offline-run-20260512_005933-ui5h5z7y
+wandb: Detected [huggingface_hub.inference] in use.
+wandb: Use W&B Weave for improved LLM call tracing. Install Weave with `pip install weave` then add `import weave` to the top of your script.
+wandb: For more information, check out the docs at: https://weave-docs.wandb.ai/
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+/workspace/src/models/set_only/diagnostics.py:609: RuntimeWarning: Set Gram spectrum indicates possible overconstraint (top_eig_ratio=0.8333, spectral_entropy_norm=0.2721).
+  warnings.warn(
+epoch=1 train_loss=8.1117 val_loss=7.6290
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+/workspace/src/models/set_only/diagnostics.py:609: RuntimeWarning: Set Gram spectrum indicates possible overconstraint (top_eig_ratio=0.7937, spectral_entropy_norm=0.3164).
+  warnings.warn(
+epoch=2 train_loss=7.3474 val_loss=7.4539
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+/workspace/src/models/set_only/diagnostics.py:609: RuntimeWarning: Set Gram spectrum indicates possible overconstraint (top_eig_ratio=0.7360, spectral_entropy_norm=0.3755).
+  warnings.warn(
+epoch=3 train_loss=7.0806 val_loss=7.3528
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+/workspace/src/models/set_only/diagnostics.py:609: RuntimeWarning: Set Gram spectrum indicates possible overconstraint (top_eig_ratio=0.6874, spectral_entropy_norm=0.4170).
+  warnings.warn(
+epoch=4 train_loss=6.8700 val_loss=7.2886
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+/workspace/src/models/set_only/diagnostics.py:609: RuntimeWarning: Set Gram spectrum indicates possible overconstraint (top_eig_ratio=0.6724, spectral_entropy_norm=0.4327).
+  warnings.warn(
+epoch=5 train_loss=6.6841 val_loss=7.2618
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+/workspace/src/models/set_only/diagnostics.py:609: RuntimeWarning: Set Gram spectrum indicates possible overconstraint (top_eig_ratio=0.6737, spectral_entropy_norm=0.4281).
+  warnings.warn(
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+epoch=6 train_loss=6.5125 val_loss=7.2593
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+/workspace/src/models/set_only/diagnostics.py:609: RuntimeWarning: Set Gram spectrum indicates possible overconstraint (top_eig_ratio=0.6543, spectral_entropy_norm=0.4406).
+  warnings.warn(
+epoch=7 train_loss=6.3511 val_loss=7.2647
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+/workspace/src/models/set_only/diagnostics.py:609: RuntimeWarning: Set Gram spectrum indicates possible overconstraint (top_eig_ratio=0.6455, spectral_entropy_norm=0.4526).
+  warnings.warn(
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+epoch=8 train_loss=6.1999 val_loss=7.2811
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+/workspace/src/models/set_only/diagnostics.py:609: RuntimeWarning: Set Gram spectrum indicates possible overconstraint (top_eig_ratio=0.6267, spectral_entropy_norm=0.4665).
+  warnings.warn(
+epoch=9 train_loss=6.0597 val_loss=7.2953
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+Using the latest cached version of the dataset since Salesforce/wikitext couldn't be found on the Hugging Face Hub (offline mode is enabled).
+Found the latest cached dataset configuration 'wikitext-2-raw-v1' at /workspace/.hf/datasets/Salesforce___wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3 (last modified on Tue Jan 27 00:27:36 2026).
+/workspace/src/models/set_only/diagnostics.py:609: RuntimeWarning: Set Gram spectrum indicates possible overconstraint (top_eig_ratio=0.6097, spectral_entropy_norm=0.4798).
+  warnings.warn(
+epoch=10 train_loss=5.9306 val_loss=7.3168
+wandb: 
+wandb: Run history:
+wandb:          ausa/active_set_ratio ▂▁▃▆▆▇▇█▇█
+wandb:      ausa/active_set_size_mean ▇█▆▃▃▂▁▁▂▁
+wandb:       ausa/active_set_size_std ▁▄█▇▇▇▆▅▅▄
+wandb:       ausa/candidate_count_max ▁▁▁▁▁▁▁▁▁▁
+wandb:      ausa/candidate_count_mean ▁▁▁▁▁▁▁▁▁▁
+wandb:       ausa/candidate_count_min ▁▁▁▁▁▁▁▁▁▁
+wandb:   ausa/delta_router_confidence ▁▁▁▁▁▁▁▁▁▁
+wandb:     ausa/delta_routing_entropy ▁▁▁▁▁▁▁▁▁▁
+wandb:        ausa/delta_set_variance ▁▁▁▁▁▁▁▁▁▁
+wandb: ausa/grad_norm_set_post_blocks █▂▃▂▁▃▁▂▃▃
+wandb:                            +77 ...
+wandb: 
+wandb: Run summary:
+wandb:          ausa/active_set_ratio 0.99989
+wandb:      ausa/active_set_size_mean 32.03303
+wandb:       ausa/active_set_size_std 6.77972
+wandb:       ausa/candidate_count_max 2
+wandb:      ausa/candidate_count_mean 1.98145
+wandb:       ausa/candidate_count_min 0
+wandb:   ausa/delta_router_confidence 0
+wandb:     ausa/delta_routing_entropy 0
+wandb:        ausa/delta_set_variance 0
+wandb: ausa/grad_norm_set_post_blocks 0.00453
+wandb:                            +77 ...
+wandb: 
+wandb: You can sync this run to the cloud by running:
+wandb: wandb sync /workspace/wandb/offline-run-20260512_005933-ui5h5z7y
+wandb: Find logs at: ./wandb/offline-run-20260512_005933-ui5h5z7y/logs
+
+=== PRELAUNCH JSON ===
+{
+  "branch": {
+    "cmd": "git branch --show-current",
+    "returncode": 0,
+    "stdout": [
+      "paper/final-results-bundle"
+    ],
+    "stderr": []
+  },
+  "head": {
+    "cmd": "git rev-parse HEAD",
+    "returncode": 0,
+    "stdout": [
+      "1174947643b001647c4fb92cc48e88c75f044be4"
+    ],
+    "stderr": []
+  },
+  "status_short": {
+    "cmd": "git status --short",
+    "returncode": 0,
+    "stdout": [
+      "M \"Context For Revision Agent after NeurIPS2026 LLM feedback.md\"",
+      " M configs/hyperparameters.md",
+      " M configs/paper_complements/family_linear_landmark.yaml",
+      " M configs/paper_lr_norm/set_linear_landmark.yaml",
+      " M configs/set_only/wikitext2_landmark.yaml",
+      " D configs/set_only/wikitext2_nystrom.yaml",
+      " M scripts/create_paper_complements_yamls.sh",
+      " M scripts/export_main_results_provenance.sh",
+      " M scripts/gpu0_run_lrnorm_headline_pairs.sh",
+      " M scripts/gpu1_run_lrnorm_family_anchor.sh",
+      " M scripts/postrun_collect_family_complements.sh",
+      " M scripts/run_experiment.py",
+      " M scripts/run_lrnorm_both_gpus_commands.sh",
+      " M scripts/summarize_paper_family_complements.py",
+      " M src/config/compatibility.py",
+      " M src/config/normalize.py",
+      " M src/config/schema.py",
+      " M src/models/baseline_token/attention.py",
+      " M src/models/baseline_token/diagnostics.py",
+      " M src/models/seq2seq/seq2seq_model.py",
+      " M src/models/seq2seq/set_only_cross_attention.py",
+      " M src/models/set_only/banks.py",
+      " M src/models/set_only/diagnostics.py",
+      " M src/models/set_only/router.py",
+      " M src/models/set_only/set_only_lm.py",
+      " M src/set_attention/backends/landmark.py",
+      " M src/set_attention/backends/nystrom.py",
+      " M src/train/experiment_logger.py",
+      " M src/train/metrics_schema.py",
+      "?? audit/",
+      "?? configs/_deprecated/",
+      "?? configs/a4_long_context/",
+      "?? docs/revision_source_of_truth_definitions.md",
+      "?? scripts/run_a3_pooltau_sweep.sh",
+      "?? scripts/run_a3_stride_sweep.sh",
+      "?? scripts/run_a3_window_sweep.sh",
+      "?? scripts/run_a41_smoke.sh",
+      "?? scripts/summarize_a2_grid.py",
+      "?? scripts/summarize_a3_pooltau_sweep.py",
+      "?? scripts/summarize_a3_stride_sweep.py",
+      "?? scripts/summarize_a3_window_sweep.py",
+      "?? tests/test_banks_option1.py",
+      "?? tests/test_causality.py",
+      "?? tests/test_diagnostics_option1.py",
+      "?? tests/test_hyperparameter_propagation.py",
+      "?? tests/test_landmark_backend.py",
+      "?? tests/test_nystrom_deprecation.py"
+    ],
+    "stderr": []
+  },
+  "a3_3_manifest_exists": true,
+  "a3_3_manifest_status": "pass",
+  "a3_3_validated_runs": 24,
+  "a3_3_expected_runs": 24,
+  "a3_3_audit_status_line": "Status: PASS",
+  "locked_design_note": "A4.1 long-context smoke: L=2048, D=384, d_ff=1536, batch=16. dense baseline (baseline_token) on GPU0; dense SKA (set_only, w=16, s=8) on GPU1. 1 seed, 10 epochs. M=255 for SKA at L=2048, w=16, s=8. Memory budget verified: ~15.6 GB peak per GPU (fp32) < 24 GB RTX4090 VRAM."
+}

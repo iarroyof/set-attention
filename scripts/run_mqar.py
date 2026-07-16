@@ -28,8 +28,10 @@ from set_attention.utils.repro_workers import make_worker_init_fn  # noqa: E402
 from train.checkpoints import build_checkpoint_payload, save_checkpoint, source_commit  # noqa: E402
 from train.experiment_logger import ExperimentLogger  # noqa: E402
 from train.mqar import (  # noqa: E402
+    _cycle,
     evaluate_mqar,
     evaluate_mqar_group_ablation,
+    train_mqar_update_block,
     train_mqar_updates,
 )
 
@@ -161,26 +163,115 @@ def main() -> None:
     logger.log_model_complexity(model)
 
     max_updates = 1 if args.preflight_one_step else int(cfg["training"].get("max_updates", 20_000))
+    eval_every_updates = 0 if args.preflight_one_step else int(cfg["training"].get("eval_every_updates", 0) or 0)
+    grad_accum_steps = int(cfg["training"].get("grad_accum_steps", 1) or 1)
+    eval_microbatch_size = cfg["training"].get("eval_microbatch_size")
+    eval_microbatch_size = None if eval_microbatch_size is None else int(eval_microbatch_size)
+    calibration_threshold = float(cfg["training"].get("calibration_accuracy_threshold", 0.99))
+    calibration_consecutive_required = int(cfg["training"].get("calibration_consecutive_evals", 2) or 2)
     try:
-        logger.start_epoch(num_train_samples=len(train_ds))
-        train_metrics = train_mqar_updates(
-            model,
-            train_loader,
-            optimizer,
-            device,
-            max_updates=max_updates,
-            clip_grad_norm=float(cfg["training"].get("clip_grad_norm", 1.0)),
-        )
-        global_step = int(train_metrics.pop("_optimizer_steps", 0))
-        val_metrics = evaluate_mqar(model, val_loader, device)
-        if bool(cfg["training"].get("evaluate_group_ablation", False)):
-            val_metrics.update(evaluate_mqar_group_ablation(model, val_loader, device, val_metrics))
-        set_diagnostics = model.get_diagnostics() if hasattr(model, "get_diagnostics") else None
-        logger.log_epoch(1, train_metrics, val_metrics, set_diagnostics)
-        print(
-            f"updates={global_step} train_loss={train_metrics['loss']:.4f} "
-            f"val_loss={val_metrics['loss']:.4f} val_acc={val_metrics['accuracy']:.4f}"
-        )
+        if eval_every_updates > 0:
+            batch_iter = _cycle(train_loader)
+            global_step = 0
+            consecutive_hits = 0
+            gate_passed = False
+            while global_step < max_updates:
+                block_updates = min(eval_every_updates, max_updates - global_step)
+                logger.start_epoch(
+                    num_train_samples=block_updates
+                    * int(cfg["data"]["batch_size"])
+                    * grad_accum_steps
+                )
+                train_metrics = train_mqar_update_block(
+                    model,
+                    batch_iter,
+                    optimizer,
+                    device,
+                    max_updates=block_updates,
+                    clip_grad_norm=float(cfg["training"].get("clip_grad_norm", 1.0)),
+                    grad_accum_steps=grad_accum_steps,
+                )
+                completed_now = int(train_metrics.pop("_optimizer_steps", 0))
+                train_metrics.pop("_microbatches_per_optimizer_step", None)
+                global_step += completed_now
+                train_metrics["completed_updates"] = global_step
+                train_metrics["completed_microbatches"] = global_step * grad_accum_steps
+                val_metrics = evaluate_mqar(
+                    model,
+                    val_loader,
+                    device,
+                    microbatch_size=eval_microbatch_size,
+                )
+                if bool(cfg["training"].get("evaluate_group_ablation", False)):
+                    val_metrics.update(
+                        evaluate_mqar_group_ablation(
+                            model,
+                            val_loader,
+                            device,
+                            val_metrics,
+                            microbatch_size=eval_microbatch_size,
+                        )
+                    )
+                if float(val_metrics["accuracy"]) >= calibration_threshold:
+                    consecutive_hits += 1
+                else:
+                    consecutive_hits = 0
+                gate_passed = consecutive_hits >= calibration_consecutive_required
+                val_metrics["calibration_consecutive_hits"] = consecutive_hits
+                val_metrics["calibration_gate_passed"] = gate_passed
+                val_metrics["calibration_selected_update"] = global_step if gate_passed else None
+                set_diagnostics = model.get_diagnostics() if hasattr(model, "get_diagnostics") else None
+                logger.log_epoch(global_step, train_metrics, val_metrics, set_diagnostics)
+                print(
+                    f"updates={global_step} train_loss={train_metrics['loss']:.4f} "
+                    f"val_loss={val_metrics['loss']:.4f} val_acc={val_metrics['accuracy']:.4f} "
+                    f"calibration_hits={consecutive_hits}/{calibration_consecutive_required}"
+                )
+                if gate_passed or completed_now <= 0:
+                    break
+        else:
+            logger.start_epoch(
+                num_train_samples=(
+                    len(train_ds)
+                    if grad_accum_steps == 1
+                    else max_updates * int(cfg["data"]["batch_size"]) * grad_accum_steps
+                )
+            )
+            train_metrics = train_mqar_updates(
+                model,
+                train_loader,
+                optimizer,
+                device,
+                max_updates=max_updates,
+                clip_grad_norm=float(cfg["training"].get("clip_grad_norm", 1.0)),
+                grad_accum_steps=grad_accum_steps,
+            )
+            global_step = int(train_metrics.pop("_optimizer_steps", 0))
+            train_metrics.pop("_microbatches_per_optimizer_step", None)
+            train_metrics["completed_updates"] = global_step
+            train_metrics["completed_microbatches"] = global_step * grad_accum_steps
+            val_metrics = evaluate_mqar(
+                model,
+                val_loader,
+                device,
+                microbatch_size=eval_microbatch_size,
+            )
+            if bool(cfg["training"].get("evaluate_group_ablation", False)):
+                val_metrics.update(
+                    evaluate_mqar_group_ablation(
+                        model,
+                        val_loader,
+                        device,
+                        val_metrics,
+                        microbatch_size=eval_microbatch_size,
+                    )
+                )
+            set_diagnostics = model.get_diagnostics() if hasattr(model, "get_diagnostics") else None
+            logger.log_epoch(1, train_metrics, val_metrics, set_diagnostics)
+            print(
+                f"updates={global_step} train_loss={train_metrics['loss']:.4f} "
+                f"val_loss={val_metrics['loss']:.4f} val_acc={val_metrics['accuracy']:.4f}"
+            )
         if cfg["training"].get("checkpoint", {}).get("save_final") and not args.preflight_one_step:
             _save_final_checkpoint(
                 cfg=cfg,

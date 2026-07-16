@@ -1,10 +1,10 @@
 # MRP-6B: Exact-Dense Memory And Frontier Theory
 
-Status: ANALYTIC PASS; final empirical fit BLOCKED on MRP-1 completion
+Status: PASS for current MRP-1 empirical interpretation
 
 Owner: MRP-6B theory worker
 
-Updated: 2026-07-07.
+Updated: 2026-07-08.
 
 ## Mission
 
@@ -25,7 +25,7 @@ integration.
 5. `../../configs/set_dictionary/sd9_multiresolution.yaml`
 6. `../../audit/SD_dense_matched_results.md`
 7. `../../audit/SD_dense_frontier_extension.md`
-8. final MRP-1 audit when available
+8. final MRP-1 audit: `../../audit/SD_dense_paper5_final_20260708.md`
 
 ## Write Scope
 

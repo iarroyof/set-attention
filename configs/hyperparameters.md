@@ -24,6 +24,8 @@ capabilities and are not active launch targets.
 | `training.deterministic` | Request deterministic PyTorch/CuDNN execution | `false`; paper seed confirmations use `true` | `true`, `false` |
 | `training.strict_deterministic` | Fail closed on nondeterministic PyTorch/CUDA operations and require a valid CuBLAS workspace configuration | `false`; required for new reproducibility-certified runs | `true`, `false`; requires `training.deterministic=true` and `benchmark_mode=false` |
 | `training.benchmark_mode` | Enable benchmark-oriented CuDNN mode | `false`; incompatible with deterministic mode | `true`, `false` |
+| `training.grad_accum_steps` | Runtime gradient accumulation microbatches per optimizer update | `1`; prior SD/MRP behavior | Positive integer; comparisons must match effective batch size |
+| `training.eval_microbatch_size` | Optional validation/eval microbatch chunk size | `null`; disabled | `null` or positive integer; must preserve metrics |
 | `training.cublas_workspace_config` | Runtime CuBLAS determinism provenance | emitted by runner | Read-only; strict mode accepts `:4096:8` or `:16:8` |
 | `training.seed_applied` | Runtime provenance: runner applied the seed | emitted by runner | Read-only boolean |
 | `training.applied_seed` | Runtime provenance: integer passed to RNGs | emitted by runner | Read-only integer |
@@ -160,6 +162,8 @@ capabilities and are not active launch targets.
 | `sig_gating` top‑k | `sig_gating.method=*topk` | `k <= max_sets` |
 | `sig_gating` threshold | `sig_gating.method=*threshold` | `0 <= delta_threshold <= 1` |
 | `sig_gating` minhash | `sig_gating.method=minhash_*` | Must set `sig_gating.sig_k` |
+| `training.grad_accum_steps` | Training runtime | Default `1` preserves one dataloader batch per optimizer step. Values `>1` change the effective batch size to `data.batch_size * training.grad_accum_steps` and are valid only when the experiment plan compares equal effective batch sizes. |
+| `training.eval_microbatch_size` | Evaluation runtime | Optional memory-control chunking for evaluation; must not change metric values relative to unchunked evaluation except for expected floating-point roundoff. |
 
 ## Current Matrix Diagnostics
 

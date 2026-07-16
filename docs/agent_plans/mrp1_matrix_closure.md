@@ -1,10 +1,10 @@
 # MRP-1: Five-Seed Exact-Dense Matrix Closure
 
-Status: REPLACEMENT RUNNING
+Status: PASS
 
 Owner: current experiment operations role
 
-Updated: 2026-07-07 after Lizmark replacement launch.
+Updated: 2026-07-14 after post-close short-B3 bridge audit.
 
 ## Mission
 
@@ -22,25 +22,24 @@ applied seeds `0..4`, without changing its registered cells.
 
 ## Active State
 
-The frozen 2026-07-06 queue snapshot is:
+The final 2026-07-08 queue snapshot is:
 
 - blue-demon: 120/120 endpoint-valid complete; driver exited normally; both
   GPUs idle; final package pulled and validated;
-- lizmark corrected PID `2879441`: exited normally; 135/135 first-pass rows
-  completed, 120 endpoint-valid, and 15 mixed `L3584,B4` rows required
-  replacement for endpoint gradient diagnostics.
-- lizmark replacement driver PID `3940226`: running the 15 registered
-  `L3584,B4` mixed replacement rows; workers `3940654` and `3940655`.
+- lizmark corrected/replacement queues: exited normally; 135/135 corrected
+  rows endpoint-valid after replacing the 15 mixed `L3584,B4` diagnostic rows.
 
-The Lizmark external-workload watcher PID `3049751` was stopped earlier, but
-the 2026-07-07 check found `cancer_rl_agent__deferred_until_sd_grid_release`
-running again with no current GPU allocation. The external workload must be
-kept or restored to a non-contending state before replacement rows launch.
+The final Lizmark status check found no active grid driver or worker and both
+GPUs idle. Pause/release Lizmark unless a new approved stage explicitly needs
+it. Future Lizmark launches still require exclusive admission after the
+incident in `../../audit/incident_lizmark_gpu_contention_20260702.md`.
 
-The one permitted post-launch health check passed on each host. Lizmark
-requires exclusive admission after the incident in
-`../../audit/incident_lizmark_gpu_contention_20260702.md`. Do not poll either
-host again until the user explicitly asks for status or reports completion.
+Post-close bridge note: the later `short_b3` extension completed the previously
+missing `L512/B3` and `L1024/B3` descriptive islands with 60/60 endpoint-valid
+rows. These rows complete the full paper visualization over B3/B4/B16 short
+operating points and reinforce the b25 interior pattern. They are not part of
+the original closed 255-row paper5 bundle, do not change the frozen
+`b*=b25`, and do not authorize another MRP-1 sweep.
 
 ## Locked Matrix
 
@@ -56,7 +55,7 @@ No b62, B2, landmark, sparse, fixed-k, or architecture row may be added.
 
 ## Completion Procedure
 
-On the first explicit completion/status request:
+Completed procedure:
 
 1. Check each host once for the grid driver, workers, GPU state, and final queue
    log.
@@ -114,8 +113,8 @@ Freeze `b*` before MRP-2/3/5 outcomes are inspected:
 5. do not change `b*` during later datasets or tasks.
 
 This freeze is complete: `b*=b25`, recorded in
-`audit/SD_dense_paper5_results.md`. It does not satisfy MRP-1's remaining
-matrix-closure or MRP-0 dependencies.
+`audit/SD_dense_paper5_final_20260708.md`. MRP-1 is closed; later launches
+still require their own explicit approvals.
 
 ## Deliverables
 
@@ -135,35 +134,29 @@ has been launched.
 
 ## Durable Handoff
 
-Status: REPLACEMENT RUNNING.
+Status: PASS.
 
 Last completed action: Blue ended normally at 120/120 strict endpoint-valid
-cells. Lizmark ended normally and its artifacts/log were pulled locally on
-2026-07-07. The merged first-pass snapshot contains 255 full-data rows:
-240 strict endpoint-valid rows plus 15 mixed `L3584,B4` rows whose endpoint
-gradient diagnostics remain `NA`. Those 15 invalid records and markers were
-archived outside the corrected root; the replacement dry run planned exactly
-15 cells and skipped 120; the replacement driver was launched.
+cells. Lizmark ended normally after the replacement wave; artifacts/logs were
+pulled locally on 2026-07-08. The strict scanner accepted 255 endpoint-valid
+full-data rows under `SD_GRID_REQUIRE_CONTRACT=sd_grid_seeded_v1`.
 
-Files changed: epoch-scoped gradient-probe scheduling, its regression test,
-partial-grid summarizer/artifacts, incident audit, and canonical
-planning/status documentation. The probe fix is deployed on both hosts;
-existing active containers retain their imported pre-fix code.
+Files changed: final-grid summary artifacts, final audit, manuscript table,
+and canonical planning/status documentation.
 
-Commands/tests and outcomes: final launcher/handoff tests passed 6/6. The
-strict dry run reported 133 plans and two accepted skips, and the post-resume
-health check showed one exclusive set-attention process per GPU and header-only
-OOM registries.
+Commands/tests and outcomes: strict `sd_grid_status.py` scan passed. The final
+Lizmark status check showed no active grid process, both GPUs idle, queue log
+complete, and header-only corrected OOM registries.
 
-Artifacts and digests: pending final sync.
+Artifacts and digests: `out/paper_integrated_evidence/checks/sd_grid_seeded_v1_final_20260708/`
+and `audit/SD_dense_paper5_final_20260708.md`.
 
-Host/PID/log/ETA: replacement driver PID `3940226`, workers `3940654` and
-`3940655`, log
-`logs/sd_grid_lizmark_paper5_seeded_v1_replacements_20260707.log`. Initial
-active cells were b25 seeds 0 and 1, with both GPUs at about 41.9 GiB.
+Host/PID/log/ETA: no active PIDs. Log:
+`logs/sd_grid_lizmark_paper5_seeded_v1_replacements_20260707.log`.
 
-Decision or gate result: MRP-1 is not closed. Replacement wave is running
-after external workload was stopped again.
+Decision or gate result: MRP-1 is closed. `b*=b25` remains frozen. MRP-2 and
+MRP-3 already have recorded approval for their registered work; continue only
+their registered evaluation/completion steps.
 
 Known incidents or limitations: legacy labels were not applied. Grid
 identity/diagnostics remediation is in
@@ -171,12 +164,12 @@ identity/diagnostics remediation is in
 and artifact disposition are in
 `audit/incident_lizmark_gpu_contention_20260702.md`; the epoch-probe recovery
 is in `audit/incident_sd_grid_epoch_gradient_probe_cadence_20260704.md`.
-Full MRP-0 checkpoint/data/loader work remains open.
+MRP-0 platform validation passed, but new stages still require registered
+preflights and checkpoint/data provenance.
 
-Next atomic action: stop polling until user requests status or reports
-completion. Then pull replacement artifacts, inspect admission telemetry and
-OOM registries, and rerun the strict scanner before accepting final MRP-1
-results.
+Next atomic action: no further MRP-1 experiment action. Downstream work should
+continue with the already registered MRP-2 AR-hit evaluation and MRP-3 MQAR
+completion. Do not run more Lizmark work without a new approved stage.
 
 Inputs required: host access, current queue logs/artifacts, canonical scanner,
 and the registered matrix.
