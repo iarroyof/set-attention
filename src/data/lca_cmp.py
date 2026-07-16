@@ -56,6 +56,10 @@ def _special_tokens(vocab_size: int) -> dict[str, int]:
     }
 
 
+def special_tokens(vocab_size: int) -> dict[str, int]:
+    return _special_tokens(vocab_size)
+
+
 def _validate_config(cfg: LCACmpConfig) -> None:
     if cfg.vocab_size < 16:
         raise ValueError("LCA vocab_size must be at least 16")

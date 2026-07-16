@@ -1,0 +1,36 @@
+stage: mrp_lca_cmp
+task: lca_cmp
+model:
+  implementation: baseline_token
+  architecture: transformer_lm
+  vocab_size: 128
+  d_model: 64
+  nhead: 4
+  num_layers: 2
+  dim_feedforward: 256
+  dropout: 0.0
+  max_seq_len: 64
+  attention_family: dense
+  backend: exact
+  backend_params: {}
+  causal: true
+data:
+  dataset: lca_cmp
+  vocab_size: 128
+  seq_len: 64
+  batch_size: 4
+  num_train_examples: 32
+  num_val_examples: 16
+  marker_fraction: 0.12
+  count_jitter: 3
+  dataset_seed: 17
+training:
+  seed: 0
+  lr: 0.0003
+  max_updates: 2
+  grad_accum_steps: 1
+  eval_microbatch_size: null
+  output_dir: out/lca_cmp_smoke
+logging:
+  csv:
+    path: out/lca_cmp_smoke/token_smoke.csv
