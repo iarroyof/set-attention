@@ -8,7 +8,9 @@ Current run status, completed phases, and active PIDs are NOT hardcoded here —
 they live in the applicable tracker: `audit/phase_a_status.md` for the original revision and
 `audit/phase_sd_status.md` for the set-dictionary branch.
 
-> **Current default scope (2026-07-02):** `set-dictionary/anchor-span`, corrected exact-dense five-seed matrix.
+> **Current default scope (2026-07-17):** `set-dictionary/anchor-span` for the current model line and
+> `mrp-lca-cmp-sd` for the LCA comparison branch. The false-start branch
+> `mrp-lca-cmp` was based on `origin/main`; do not use it for current set-dictionary work.
 > Original Phase A and landmark/sparse/Nyström plans are historical unless the user explicitly reopens
 > them.
 
@@ -37,7 +39,7 @@ tracker to find out exactly where the project stands right now.
 | WSL local mount | `/mnt/d/UserFolders/Documents/GitHub/set-attention` |
 | Remote experiment server | `iarroyof@192.168.241.149:~/set-attention` (`blue-demon`) |
 | Large-memory experiment server | `iarroyof@192.168.241.205:~/set-attention` (`lizmark`) |
-| GitHub | active local branch `set-dictionary/anchor-span`; no push/merge without approval |
+| GitHub | authoritative branches `set-dictionary/anchor-span@3e7edb4` and `mrp-lca-cmp-sd@e221ec2`; no push/merge without approval |
 
 The local workspace is the canonical documentation/analysis mirror. Blue-demon and lizmark are
 authoritative for the experiment cells assigned to them by the current matrix; neither remote host is
@@ -48,9 +50,20 @@ GitHub HTTPS pushes from the WSL workspace use the local token file
 the repo root). Never print, paste, commit, or echo the token. Use it only as
 an ephemeral credential for approved `git push` operations, for example via an
 askpass helper or a one-shot remote URL that is not written into repo config.
-If a push fails with `could not read Username for 'https://github.com'`, check
-this token file before trying plugins, host-side bundles, or manual credential
-workarounds.
+If a non-interactive push fails with `could not read Username for
+'https://github.com'`, check this token file before trying plugins, host-side
+bundles, or manual credential workarounds. An interactive username/password
+push using username `iarroyof` and the regenerated token was verified by the
+user on 2026-07-17.
+
+Host launch safety is not inferred from directory names. As of the 2026-07-17
+audit, Blue `~/set-attention` is a dirty git tree on
+`paper/final-results-bundle@1174947`, and Lizmark `~/set-attention` is not a
+git repository. Do not run `git switch`, `git reset`, `git pull`, or launch jobs
+on either active host path until the tree has been deliberately archived or
+repaired. Deprecated alternate directories such as
+`~/set-attention-anchor-span-sync` and `~/set-attention-mrp0-validation` remain
+audit copies only.
 
 ---
 

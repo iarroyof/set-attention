@@ -1,7 +1,7 @@
 # Server Copy Provenance And Launch-Safety Audit
 
-Date: 2026-07-09; updated 2026-07-16 after restoring the original host path
-policy.
+Date: 2026-07-09; updated 2026-07-17 after auditing GitHub push state and
+Blue/Lizmark checkout safety.
 
 ## Current Rule
 
@@ -9,11 +9,33 @@ Do not launch new work from a server checkout unless this file or
 `audit/phase_sd_status.md` says that checkout is launch-ready for the specific
 stage. Runtime files must not be changed underneath an active shell driver.
 
-As of 2026-07-16, the active runtime path on both blue-demon and Lizmark is the
-original `~/set-attention` directory. Temporary alternate directories created
-during recovery, including `~/set-attention-anchor-span-sync` and
-`~/set-attention-mrp0-validation`, are deprecated audit copies. They must be
-kept for provenance but not used for new launches.
+GitHub is now the authoritative branch source for new syncs:
+
+- `set-dictionary/anchor-span` at `3e7edb4`
+- `mrp-lca-cmp-sd` at `e221ec2`
+
+The earlier local branch `mrp-lca-cmp` was created from `origin/main` and is a
+false-start validation branch. Do not launch from it and do not pull it to
+GPU hosts for current set-dictionary work.
+
+The intended active runtime path on both blue-demon and Lizmark remains the
+original `~/set-attention` directory, but launch readiness is not implied by the
+path name. The 2026-07-17 audit found Blue and Lizmark need explicit repair
+before new launches:
+
+- blue-demon `~/set-attention`: git repo on `paper/final-results-bundle` at
+  `1174947`, with 421 dirty/untracked status entries. A direct
+  `git switch -C mrp-lca-cmp-sd origin/mrp-lca-cmp-sd` would overwrite local
+  files and correctly aborts. Archive/reconcile before any checkout, reset, or
+  launch.
+- Lizmark `~/set-attention`: not a git repository, despite having
+  `ACTIVE_RUNTIME_COPY.md`. Do not run git pull/switch there; repair by an
+  intentional clone/sync procedure before launch.
+
+Temporary alternate directories created during recovery, including
+`~/set-attention-anchor-span-sync` and `~/set-attention-mrp0-validation`, are
+deprecated audit copies. They must be kept for provenance but not used for new
+launches.
 
 ## Active Jobs
 
@@ -27,8 +49,8 @@ kept for provenance but not used for new launches.
 | Copy | Role | Status |
 |---|---|---|
 | local workspace `/mnt/d/userfolders/documents/github/set-attention` | editing and audit source | canonical documentation/analysis mirror |
-| blue-demon `~/set-attention` | active runtime copy | restored original active path; sync from the latest checkpoint before new launches |
-| lizmark `~/set-attention` | active runtime copy | restored original active path; sync from the latest checkpoint before new launches |
+| blue-demon `~/set-attention` | intended active runtime path | NOT launch-ready on 2026-07-17: git repo dirty on `paper/final-results-bundle@1174947`; archive/reconcile first |
+| lizmark `~/set-attention` | intended active runtime path | NOT launch-ready on 2026-07-17: directory is not a git repo; clone/sync repair required |
 | blue-demon `~/set-attention-anchor-span-sync` | deprecated audit copy | historical runtime copy for July MRP recovery jobs; do not launch new work here |
 | lizmark `~/set-attention-anchor-span-sync` | deprecated audit copy | historical runtime copy for July MRP recovery/capacity jobs; do not launch new work here |
 | blue-demon `~/set-attention-mrp0-validation` | deprecated audit copy | MRP-0 validation snapshot; do not launch new work here |

@@ -35,12 +35,29 @@ CURRENT EXPERIMENT OVERRIDE (2026-07-02):
 BRANCH / PREREQUISITE:
 - The active branch is already `set-dictionary/anchor-span`; its candidate-gather prerequisite is
   satisfied. Do not recreate the branch or repeat the A9 prerequisite.
+- For LCA comparison work, use the corrected branch `mrp-lca-cmp-sd` at
+  `e221ec2`, which is based on `set-dictionary/anchor-span`. The branch
+  `mrp-lca-cmp` was a false start from `origin/main` and is not valid for
+  current set-dictionary experiments.
 - The active program is defined by `docs/set_dictionary_research_main_plan.md`. Legacy branch-creation
   instructions are provenance only.
 - GitHub HTTPS push credential, when the user approves a push, is stored at
   `/mnt/d/UserFolders/Documents/github_toke.txt` (`../../github_toke.txt` from
   this repo root). Never print, paste, commit, echo, or persist the token in
-  Git config; use it only as an ephemeral credential for the approved push.
+  Git config; use it only as an ephemeral credential for the approved push. The
+  user verified an interactive HTTPS push with the regenerated token on
+  2026-07-17; a non-interactive credential prompt failure is not evidence that
+  the token is invalid.
+
+HOST CHECKOUT GUARD (2026-07-17):
+- Do not assume Blue/Lizmark are launch-ready because `~/set-attention` exists.
+  The latest audit found Blue `~/set-attention` is a dirty git repo on
+  `paper/final-results-bundle@1174947`, and Lizmark `~/set-attention` is not a
+  git repository. Repair/archive deliberately before any `git switch`,
+  `git reset`, `git pull`, source sync, compose run, or experiment launch.
+- Deprecated alternate directories, including `~/set-attention-anchor-span-sync`
+  and `~/set-attention-mrp0-validation`, are provenance copies only. Do not
+  launch new work from them.
 
 PER-TURN READ DISCIPLINE (decide first: am I planning a change this turn, or not?):
 - If NOT changing code/experiments (status check, question, summarizing): read only
