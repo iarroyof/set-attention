@@ -12,25 +12,21 @@ stage. Runtime files must not be changed underneath an active shell driver.
 GitHub is now the authoritative branch source for new syncs:
 
 - `set-dictionary/anchor-span` at `3e7edb4`
-- `mrp-lca-cmp-sd` at `e221ec2`
+- `mrp-lca-cmp-sd` at `d0f7ae8` (pushed 2026-07-17); hosts additionally carry
+  the unpushed validation commit `2ded5d1` via verified bundle.
 
 The earlier local branch `mrp-lca-cmp` was created from `origin/main` and is a
 false-start validation branch. Do not launch from it and do not pull it to
 GPU hosts for current set-dictionary work.
 
-The intended active runtime path on both blue-demon and Lizmark remains the
-original `~/set-attention` directory, but launch readiness is not implied by the
-path name. The 2026-07-17 audit found Blue and Lizmark need explicit repair
-before new launches:
-
-- blue-demon `~/set-attention`: git repo on `paper/final-results-bundle` at
-  `1174947`, with 421 dirty/untracked status entries. A direct
-  `git switch -C mrp-lca-cmp-sd origin/mrp-lca-cmp-sd` would overwrite local
-  files and correctly aborts. Archive/reconcile before any checkout, reset, or
-  launch.
-- Lizmark `~/set-attention`: not a git repository, despite having
-  `ACTIVE_RUNTIME_COPY.md`. Do not run git pull/switch there; repair by an
-  intentional clone/sync procedure before launch.
+The 2026-07-17 host repair is complete (see
+`audit/incident_branch_host_context_20260717.md`, Resolution section). Both
+`~/set-attention` directories are now clean git checkouts on
+`mrp-lca-cmp-sd@2ded5d1`, compose-validated (compile, LCA dry-run, batching
+preservation, in-container write test). The pre-repair directories are
+preserved at `~/repo_audit_copies/set-attention_pre_mrp_lca_cmp_sd_repair_20260717_175927`
+on each host. Lizmark launches must set `UID`/`GID` env for docker compose
+(host uid 1001 vs image default 1000).
 
 Temporary alternate directories created during recovery, including
 `~/set-attention-anchor-span-sync` and `~/set-attention-mrp0-validation`, are
@@ -49,8 +45,8 @@ launches.
 | Copy | Role | Status |
 |---|---|---|
 | local workspace `/mnt/d/userfolders/documents/github/set-attention` | editing and audit source | canonical documentation/analysis mirror |
-| blue-demon `~/set-attention` | intended active runtime path | NOT launch-ready on 2026-07-17: git repo dirty on `paper/final-results-bundle@1174947`; archive/reconcile first |
-| lizmark `~/set-attention` | intended active runtime path | NOT launch-ready on 2026-07-17: directory is not a git repo; clone/sync repair required |
+| blue-demon `~/set-attention` | active runtime path | launch-ready 2026-07-17: clean checkout `mrp-lca-cmp-sd@2ded5d1`, compose-validated; pre-repair tree archived under `~/repo_audit_copies/` |
+| lizmark `~/set-attention` | active runtime path | launch-ready 2026-07-17: clean checkout `mrp-lca-cmp-sd@2ded5d1`, compose-validated; launches require `UID`/`GID` env set; pre-repair tree archived under `~/repo_audit_copies/` |
 | blue-demon `~/set-attention-anchor-span-sync` | deprecated audit copy | historical runtime copy for July MRP recovery jobs; do not launch new work here |
 | lizmark `~/set-attention-anchor-span-sync` | deprecated audit copy | historical runtime copy for July MRP recovery/capacity jobs; do not launch new work here |
 | blue-demon `~/set-attention-mrp0-validation` | deprecated audit copy | MRP-0 validation snapshot; do not launch new work here |

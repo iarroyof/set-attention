@@ -71,3 +71,37 @@ plan:
   record an intentional rsync-only runtime policy before launch.
 
 No destructive cleanup is authorized by this incident note alone.
+
+## Resolution (2026-07-17/18)
+
+Repair executed after the user pushed `d0f7ae8` and approved host repair:
+
+1. Both hosts verified idle (no project processes; all GPUs 1 MiB used, 0%).
+2. Old unsafe `~/set-attention` directories preserved by timestamped rename to
+   `~/repo_audit_copies/set-attention_pre_mrp_lca_cmp_sd_repair_20260717_175927`
+   on both hosts. Nothing was deleted.
+3. Clean `~/set-attention` checkouts recreated on both hosts from the verified
+   host-side git bundle (no GitHub credentials needed on hosts), then
+   fast-forwarded from bundle
+   `~/repo_audit_bundles/set-attention-mrp-lca-cmp-sd-2ded5d1.bundle` to
+   `2ded5d1` ("Relax LCA PPL roundoff validation", not yet pushed to origin).
+4. Compose validation passed on both hosts at `2ded5d1`: `py_compile` of the
+   LCA modules, LCA dry-run, and `scripts/check_lca_batching_preservation.py`
+   (PPL roundoff fixed by the tolerance commit).
+5. Runtime directory fixes: root-owned empty `.hf` (created by the docker
+   volume mount) was replaced with user-owned `.hf/datasets` and `.hf/hub`;
+   `out/lca_cmp`, `logs/lca_cmp`, `subsets`, `wandb` created. In-container
+   write test to `out/lca_cmp` passes on both hosts.
+6. Lizmark-specific guard: the host user is uid/gid 1001 while the container
+   image default is 1000. Compose launches on Lizmark must set the
+   `UID`/`GID` environment (e.g. `UID=$(id -u) GID=$(id -g) docker compose
+   run ...`), because `docker-compose.yml` uses `user: "${UID}:${GID}"`.
+   Without it, container writes to mounted `out/` fail with EACCES. Blue is
+   uid 1000 and matches the image default. `.nv/` (root-owned NVIDIA toolkit
+   artifact) was added to `.git/info/exclude` on Lizmark to silence a
+   git-status warning.
+
+Both `~/set-attention` checkouts are now launch-ready git repos on
+`mrp-lca-cmp-sd@2ded5d1` (ahead of origin by the unpushed validation commit).
+Both hosts remain idle; no scientific launch has been made from the repaired
+copies.

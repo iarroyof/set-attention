@@ -9,22 +9,19 @@ Current copy/provenance guard: see
 is the authoritative source for new code syncs:
 
 - `set-dictionary/anchor-span` at `3e7edb4`
-- `mrp-lca-cmp-sd` at `e221ec2`
+- `mrp-lca-cmp-sd` at `d0f7ae8` (hosts carry `2ded5d1` via verified bundle,
+  unpushed)
 
 The local workspace at `/mnt/d/userfolders/documents/github/set-attention` is
-clean on `mrp-lca-cmp-sd` and tracks `origin/mrp-lca-cmp-sd`. The earlier
-`mrp-lca-cmp` branch was a false start from `origin/main`; do not launch or
-pull it for current set-dictionary work.
+clean on `mrp-lca-cmp-sd` at `2ded5d1`, one commit ahead of
+`origin/mrp-lca-cmp-sd`. The earlier `mrp-lca-cmp` branch was a false start
+from `origin/main`; do not launch or pull it for current set-dictionary work.
 
-Do not assume either GPU host is launch-ready merely because `~/set-attention`
-exists. The 2026-07-17 host audit found:
-
-- blue-demon `~/set-attention`: git repo, branch `paper/final-results-bundle`,
-  commit `1174947`, with 421 dirty/untracked status entries. Do not checkout,
-  reset, pull, or launch there until the dirty tree is archived or reconciled.
-- Lizmark `~/set-attention`: not a git repository, although it has
-  `ACTIVE_RUNTIME_COPY.md`. Do not run git commands or launch there until it is
-  repaired by a deliberate clone/sync procedure.
+The 2026-07-17 host repair is complete: both `~/set-attention` copies are
+clean, compose-validated git checkouts on `mrp-lca-cmp-sd@2ded5d1`; pre-repair
+trees are archived under `~/repo_audit_copies/` on each host. Lizmark compose
+launches must set the `UID`/`GID` environment. Resolution details:
+`audit/incident_branch_host_context_20260717.md`.
 
 Alternate runtime directories such as `~/set-attention-anchor-span-sync` and
 `~/set-attention-mrp0-validation` are deprecated audit copies and must not be
