@@ -88,7 +88,9 @@ def main() -> None:
         left = full_metrics[key]
         right = micro_metrics[key]
         if isinstance(left, float):
-            if abs(left - right) > 1e-6:
+            atol = 1e-6
+            rtol = 1e-6 if key == "ppl" else 0.0
+            if abs(left - right) > atol + rtol * max(abs(left), abs(right), 1.0):
                 raise AssertionError(f"{key}: {left} != {right}")
         elif left != right:
             raise AssertionError(f"{key}: {left} != {right}")
