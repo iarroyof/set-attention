@@ -1,6 +1,6 @@
 # MRP-lca-cmp: Long-Context Aggregation / Compressed-Memory Comparison
 
-Status: ACTIVE; batching runtime validation passed; LCA generator pending
+Status: ACTIVE; batching tests and generator validation passed; calibration launch pending approval
 
 Owner: MRP-lca-cmp mechanism worker
 
@@ -152,7 +152,23 @@ Validation recorded on Lizmark in the `set-attention:latest` container:
 - Loading `configs/set_dictionary/sd9_multiresolution.yaml` resolves
   `training.grad_accum_steps=1` and `training.eval_microbatch_size=null`.
 
-LCA task generator and launch scripts remain pending.
+LCA generator scaffold exists (`src/data/lca_cmp.py`, `src/train/lca_cmp.py`,
+`scripts/run_lca_cmp.py` with `--dry-run`/`--preflight-one-step`,
+`configs/lca_cmp/`). Batching preservation is now covered by a real pytest
+module, validated 2026-07-18 in the blue-demon `set-attention` container at
+`mrp-lca-cmp-sd@2ded5d1`:
 
-Next atomic action: finish local tests for batching preservation, then
-implement the first synthetic LCA generator with a dry-run/preflight path.
+- `tests/test_lca_cmp_batching.py` (4 tests) and
+  `tests/test_lca_cmp_generator.py` (6 tests): 10 passed. Accumulated
+  microbatches match one full-batch update; eval microbatching preserves
+  metrics (relative tolerance for derived PPL); generator digests are
+  seed-deterministic and train/validation seeds are disjoint; default configs
+  resolve `grad_accum_steps=1`, `eval_microbatch_size=null`.
+- `scripts/check_lca_batching_preservation.py` passed.
+- `run_lca_cmp.py --dry-run` and `--preflight-one-step` passed
+  (`updates=1 train_loss=4.8507 val_loss=4.5152`, untrained chance regime as
+  expected).
+
+Next atomic action: launch the registered calibration rows (`L=1024,B=4` and
+`L=2048,B=4`, token + b0--b100, seeds 0--2) behind the learnability gate. This
+requires explicit user approval; no queue is authorized by this plan alone.
