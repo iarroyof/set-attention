@@ -108,13 +108,53 @@ Primary compressed-aggregation scale:
 Five-seed extension is authorized only after the 3-seed primary matrix shows a
 stable candidate Pareto win and passes the task learnability gate.
 
+## Native-Batch Memory Story (user directive 2026-07-18)
+
+Microbatching and gradient accumulation are runtime memory controls. The paper
+story must also state what memory the implementation needs **without** them.
+Therefore:
+
+- For every cell that runs with `grad_accum_steps>1` or
+  `eval_microbatch_size` set, the pipeline must also record the **native-batch
+  reference**: a one-step full-shape preflight of the identical model/task at
+  `grad_accum_steps=1`, `eval_microbatch_size=null`, and
+  `data.batch_size` equal to the effective batch, logging its peak VRAM or its
+  OOM censoring. This is a measurement row, not a trained row.
+- Every summary table reports both numbers per cell: peak train VRAM under the
+  active batching settings **and** the native-batch peak (or `OOM` censored).
+- Memory-advantage claims compare like for like: optimized-vs-optimized and
+  native-vs-native, never optimized-set versus native-token.
+
+## OOM Censoring Reconsideration
+
+Microbatching shifts the OOM boundary, so previously censored cells must be
+re-examined rather than inherited as infeasible:
+
+- Known prior censoring under the exact-dense paper matrix: `L=4096,B=4`
+  token, `b0`, and `b25` (3/3 legacy OOM, pre-2026-07-02, observed legacy
+  feasibility outcomes).
+- Before any LCA cell is excluded on memory grounds, run the registered
+  one-step full-shape preflight twice: native batch and with the intended
+  microbatch/accumulation settings. Record both outcomes.
+- If a previously censored cell is admitted only under microbatching, it
+  enters the matrix as a **new labeled row** (batching-controlled memory
+  extension), never as a continuation of the censored native cell, and its
+  quality numbers are never pooled with native-batch islands (control-tuple
+  rule: effective batch, LR, and update budget held fixed; batching mode is a
+  reported stratum).
+- `L=4096,B=4` token/`b0`/`b25` reconsideration preflights are registered as
+  part of the primary stage, after calibration passes the learnability gate.
+
 ## Metrics
 
 Mandatory per row:
 
 - task loss, task accuracy, exact/sequence accuracy when defined;
 - bucketed accuracy by aggregation horizon or segment span;
-- peak train VRAM, elapsed time, samples/s;
+- peak train VRAM under the active batching settings **and** the native-batch
+  one-step preflight peak (or explicit OOM censoring), per the native-batch
+  memory story above;
+- elapsed time, samples/s;
 - microbatch size, `grad_accum_steps`, effective batch size;
 - set group diagnostics: fine/coarse routing entropy, top-1, effective range,
   and group ablation deltas where the model exposes the hook;

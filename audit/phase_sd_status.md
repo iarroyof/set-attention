@@ -379,6 +379,65 @@ the registered 500-update calibration-eval cadence. Reduced-cadence Blue
 container validation passed with two update-indexed rows for each token LR
 candidate and explicit calibration gate columns.
 
+## MRP-lca-cmp Calibration Launch State
+
+User approval for the registered MRP-lca-cmp calibration matrix was given on
+2026-07-18 (plan `docs/agent_plans/mrp_lca_cmp.md`, matrix
+`configs/lca_cmp/matrix.md`). Scope: islands `L=1024,B=4` and `L=2048,B=4`,
+families token + set b0/b25/b50/b75/b100, seeds 0/1/2 (36 trained rows),
+`D=384 d_ff=1536 6L 8H lr=1e-4`, `grad_accum_steps=1`,
+`eval_microbatch_size=null` (native batching; each trained row's
+`train/peak_vram_mib` doubles as the registered native-batch memory record).
+Calibration budget: `max_updates=2000` (modest learnability check: 8000
+samples seen at B=4, well under the 20000-example train split; the gate only
+requires token dense to move well above chance and one set row to reach a
+nondegenerate regime, not convergence).
+
+Launch-host fixes validated in the blue-demon container before launch:
+
+- `scripts/run_lca_cmp.py` previously logged `training.seed` without applying
+  it; it now calls `apply_training_seed` (seed 0 vs 1 one-step preflights
+  produce different inits, `training.seed_applied=True` in CSV).
+- `src/train/metrics_schema.py` had no `lca_cmp` TASK_METRICS entry, so task
+  metrics were silently dropped from the CSV; an `lca_cmp` column set
+  (loss/ppl/accuracy, update counters, effective batch, exact-sequence
+  accuracy, near-bucket metrics) was added and validated.
+- `scripts/run_lca_cmp_calibration.sh` (new driver) is restart-safe
+  (skip-on-complete CSV or `.done` marker, stale-lock reclaim), keeps an OOM
+  registry (`out/lca_cmp/calibration/oom_registry.tsv`), appends per-row
+  results to `calibration_runs_<host>.tsv`, scans each log for
+  traceback/OOM and each CSV endpoint for nan/inf before marking done, and
+  retries any native-OOM cell once as a labeled microbatch row
+  (batch 2 x grad_accum 2, effective batch 4).
+
+Sanity pass on blue-demon 2026-07-18: `py_compile` clean;
+`pytest tests/ -k lca -q` 10 passed / 2 skipped; one-step preflights passed
+for token (`val_loss=2.2417 val_acc=0.4995`, chance) and set b25
+(`val_loss=3.9124`, chance regime). Hosts run `mrp-lca-cmp-sd@2ded5d1`, one
+commit behind origin `91cb271`; `git diff 2ded5d1..91cb271` touches only
+`audit/`, `docs/`, and `tests/` (no runtime code), so host checkouts are
+runtime-equivalent.
+
+Calibration launch state:
+
+| Host | GPU | Container/PID | Row | Log | State |
+|---|---:|---|---|---|---|
+| blue-demon `~/set-attention` | 0 | driver PID `2638735`, worker per GPU | calibration queue, 36 rows round-robin across both GPUs | `logs/lca_cmp/blue/queue.log`, `logs/lca_cmp/blue/worker_gpu0.log` | LIVE; launched 2026-07-18 after schema/seed fixes |
+| blue-demon `~/set-attention` | 1 | same driver, second worker | same queue | `logs/lca_cmp/blue/worker_gpu1.log` | LIVE |
+
+Health check after first rows (2026-07-18): both workers alive, containers
+`lcacmp_blue_*` up on both GPUs, GPU util 39-96%, VRAM ~4.0 GiB per GPU
+(well under the 24 GiB ceiling; historical L<=2048 B4 SD peaks
+were <= ~14 GiB). CSV headers written under
+`out/lca_cmp/calibration/<family>/L<len>/`. Post-relaunch confirmation: the
+first three token rows completed DONE with `.done` markers and complete
+schema-fixed CSVs (`training.seed_applied=True`,
+`train/peak_vram_mib=2680.6` at L1024/B4, val_acc 0.77/0.62/0.75 for seeds
+0/1/2 — already above the 0.5 chance line at 2000 updates). First full pass
+was stopped and relaunched within minutes after the CSV schema gap above was
+found; no pre-fix CSV is retained as a result. Next check only on completion
+or failure; do not poll.
+
 ## MRP-2 Natural AR-Hit Launch State
 
 Checkpoint inventory found no compatible registered MRP-2 final checkpoints in

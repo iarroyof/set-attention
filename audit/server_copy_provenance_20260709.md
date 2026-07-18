@@ -39,6 +39,8 @@ launches.
 |---|---|---:|---|---|---|---|
 | MRP-3 MQAR primary resume | blue-demon | 0 | `7faed36a1d47` at health check | `~/set-attention-anchor-span-sync` | `logs/mrp3_mqar_resume_seed1_remaining_gpu0_20260713.log` | live seed 1 b25/b50/b75/b100 queue |
 | MRP-3 MQAR primary resume | blue-demon | 1 | `fd1add2829a2` at health check | `~/set-attention-anchor-span-sync` | `logs/mrp3_mqar_resume_seed2_all_gpu1_20260713.log` | live seed 2 token/b0/b25/b50/b75/b100 queue |
+| MRP-lca-cmp calibration | blue-demon | 0 | driver PID `2638735` + per-row `lcacmp_blue_*` containers | `~/set-attention` | `logs/lca_cmp/blue/{queue,worker_gpu0}.log` | LIVE 2026-07-18: 36-row calibration queue (L1024/L2048 B4, token+b0..b100, seeds 0-2, 2000 updates) |
+| MRP-lca-cmp calibration | blue-demon | 1 | same driver, second worker | `~/set-attention` | `logs/lca_cmp/blue/worker_gpu1.log` | LIVE 2026-07-18: same queue, round-robin |
 
 ## Copy Status
 

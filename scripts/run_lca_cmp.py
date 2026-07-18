@@ -14,7 +14,7 @@ sys.path.append(str(ROOT / "scripts"))
 
 from config.load import load_config  # noqa: E402
 from data.lca_cmp import build_lca_cmp_datasets  # noqa: E402
-from run_experiment import build_model  # noqa: E402
+from run_experiment import apply_training_seed, build_model  # noqa: E402
 from train.experiment_logger import ExperimentLogger  # noqa: E402
 from train.lca_cmp import evaluate_lca, train_lca_updates  # noqa: E402
 
@@ -49,6 +49,7 @@ def main() -> None:
     cfg = load_config(args.config, overrides=_flatten_overrides(args.override))
     if cfg.get("data", {}).get("dataset") != "lca_cmp":
         raise ValueError("scripts/run_lca_cmp.py requires data.dataset=lca_cmp")
+    apply_training_seed(cfg)
 
     train_ds, val_ds = build_lca_cmp_datasets(cfg["data"])
     cfg["task"] = "lca_cmp"
