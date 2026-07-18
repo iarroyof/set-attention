@@ -47,7 +47,10 @@ BRANCH / PREREQUISITE:
   Git config; use it only as an ephemeral credential for the approved push. The
   user verified an interactive HTTPS push with the regenerated token on
   2026-07-17; a non-interactive credential prompt failure is not evidence that
-  the token is invalid.
+  the token is invalid. The file is CRLF with a label first line; extract the
+  token with `grep -a -m1 -E '^(ghp_|github_pat_)'` (verified via authenticated
+  `git ls-remote` on 2026-07-18). Reading the whole file concatenates the label
+  into the password and fails auth.
 
 HOST CHECKOUT GUARD (2026-07-17):
 - Do not assume Blue/Lizmark are launch-ready because `~/set-attention` exists.
