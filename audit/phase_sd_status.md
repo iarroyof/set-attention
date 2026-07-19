@@ -422,8 +422,18 @@ Calibration launch state:
 
 | Host | GPU | Container/PID | Row | Log | State |
 |---|---:|---|---|---|---|
-| blue-demon `~/set-attention` | 0 | driver PID `2638735`, worker per GPU | calibration queue, 36 rows round-robin across both GPUs | `logs/lca_cmp/blue/queue.log`, `logs/lca_cmp/blue/worker_gpu0.log` | LIVE; launched 2026-07-18 after schema/seed fixes |
-| blue-demon `~/set-attention` | 1 | same driver, second worker | same queue | `logs/lca_cmp/blue/worker_gpu1.log` | LIVE |
+| blue-demon `~/set-attention` | 0 | driver exited | calibration queue, 36 rows round-robin across both GPUs | `logs/lca_cmp/blue/queue.log`, `logs/lca_cmp/blue/worker_gpu0.log` | COMPLETE 2026-07-18 19:23 |
+| blue-demon `~/set-attention` | 1 | same driver, second worker | same queue | `logs/lca_cmp/blue/worker_gpu1.log` | COMPLETE 2026-07-18 19:23 |
+
+Completion state (verified 2026-07-18): 36/36 rows endpoint-valid (exit 0,
+complete schema-fixed CSVs, `.done` markers), OOM registry header-only,
+strict log scan clean (no traceback/NaN/Inf/OOM), both blue-demon GPUs idle
+(1 MiB, 0% util, no `lcacmp_*` containers). Gate outcome: Gate 1 (token
+learnability) PASS at L1024, marginal at L2048; **Gate 2 FAIL — all 30 set
+rows at chance**. Diagnosis and recommendation (structural `endpoint_window`
+receptive-field ceiling; probe `candidate_fiber=all_past` before any
+relaunch) in `audit/LCA_calibration_20260718.md`. Per the plan's STOP
+condition, no scale rows were launched.
 
 Health check after first rows (2026-07-18): both workers alive, containers
 `lcacmp_blue_*` up on both GPUs, GPU util 39-96%, VRAM ~4.0 GiB per GPU
@@ -435,8 +445,8 @@ schema-fixed CSVs (`training.seed_applied=True`,
 `train/peak_vram_mib=2680.6` at L1024/B4, val_acc 0.77/0.62/0.75 for seeds
 0/1/2 — already above the 0.5 chance line at 2000 updates). First full pass
 was stopped and relaunched within minutes after the CSV schema gap above was
-found; no pre-fix CSV is retained as a result. Next check only on completion
-or failure; do not poll.
+found; no pre-fix CSV is retained as a result. Final completion check
+recorded above (2026-07-18 19:23 pass complete).
 
 ## MRP-2 Natural AR-Hit Launch State
 
