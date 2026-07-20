@@ -159,6 +159,40 @@ spend.** Concretely:
 No adjustment has been implemented; this audit is diagnosis only, per
 instructions.
 
+## Fiber Probe Outcome (2026-07-19/20): all_past is memory-infeasible exact-dense
+
+The user approved exactly one fiber-diagnosis probe (`b25`, `L=1024`, seed 0,
+`candidate_fiber=all_past`, `max_updates=2000`, all other settings identical
+to the `b25|1024|b4|0|native` row; plan section "Approved Diagnostic Probes").
+The probe could not be trained on either host:
+
+| Attempt | Host | Batching | Result |
+|---|---|---|---|
+| native B4 | blue-demon (24 GiB) | `batch 4 x accum 1` | OOM at first forward: router candidate-gather scores tensor requested 26.97 GiB (`router.py:278`, `(q.unsqueeze(3) * k_g).sum(-1)`) |
+| native B4 | lizmark (49 GiB) | `batch 4 x accum 1` | OOM: 29.66 GiB already allocated + same 26.97 GiB request > 47.5 GiB |
+| microbatch | lizmark (49 GiB) | `batch 2 x accum 2`, effective batch 4 | OOM: 46.2 GiB allocated + 13.49 GiB request; single registered microbatch retry exhausted |
+
+All three CSVs are header-only (no trained row). Logs:
+`logs/lca_cmp/blue/lcacmp_b25_L1024_seed0_allpast_probe.log`,
+`logs/lca_cmp/lizmark/lcacmp_b25_L1024_seed0_allpast_probe{,_microbatch}.log`.
+
+Interpretation:
+
+- The receptive-field diagnosis (endpoint_window fiber sees only ~2 candidate
+  sets per query) stands as the best explanation of the Gate-2 failure; the
+  confirming training probe is blocked by memory, not by ambiguity.
+- The block is itself a registered finding: the `all_past` fiber makes the
+  multihead candidate-gather router materialize a `T x C` score tensor
+  (C = all past set endpoints, ~L/stride), i.e. **O(L^2) router memory in the
+  exact-dense implementation**. At `L=1024, D=384` this exceeds a 49 GiB GPU
+  even at microbatch 2. The fiber that would give the query access to the
+  full context is precisely the one whose router gather is quadratically
+  memory-bound — directly relevant to the memory-frontier story.
+- This is censoring, not a quality result: nothing about all_past quality can
+  be claimed. The registered retry policy (one microbatch retry) is
+  exhausted; any further attempt (batch 1 x accum 4, or a chunked candidate
+  gather) requires a new explicit decision.
+
 ## Artifacts
 
 - Results TSV: `out/lca_cmp/calibration/calibration_runs_blue.tsv` (36 rows)

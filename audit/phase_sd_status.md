@@ -435,6 +435,16 @@ receptive-field ceiling; probe `candidate_fiber=all_past` before any
 relaunch) in `audit/LCA_calibration_20260718.md`. Per the plan's STOP
 condition, no scale rows were launched.
 
+Fiber probe update (2026-07-20): the single approved `all_past` probe
+(`b25|L1024|seed0`) is **OOM-censored on both hosts** — native B4 OOM on Blue
+(26.97 GiB router score tensor) and Lizmark, and the one registered
+microbatch retry (b2 x accum2) also OOMed on Lizmark (~60 GiB total demand).
+Root cause: the all_past candidate-gather router materializes an O(L^2)
+score tensor. No trained probe row exists; the receptive-field diagnosis
+remains the best Gate-2 explanation, and any further probe attempt (batch 1
+x accum 4 or a chunked gather) needs a new explicit user decision. Details:
+`audit/LCA_calibration_20260718.md` "Fiber Probe Outcome". Both hosts idle.
+
 Health check after first rows (2026-07-18): both workers alive, containers
 `lcacmp_blue_*` up on both GPUs, GPU util 39-96%, VRAM ~4.0 GiB per GPU
 (well under the 24 GiB ceiling; historical L<=2048 B4 SD peaks

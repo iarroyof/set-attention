@@ -37,7 +37,20 @@ benchmark transfer.
 
 ## Active Model Boundary
 
-No architecture changes are authorized by this plan.
+No architecture changes are authorized by this plan, except the single
+registered diagnostic probe in "Approved Diagnostic Probes" below.
+
+## Approved Diagnostic Probes
+
+User-approved 2026-07-19: exactly one fiber-diagnosis probe
+(`b25`, `L=1024`, `B=4`, seed 0, `candidate_fiber=all_past`, native batching,
+`max_updates=2000`, all other settings identical to the completed
+`b25|1024|b4|0|native` calibration row). Purpose: test the `endpoint_window`
+receptive-field diagnosis in `audit/LCA_calibration_20260718.md` (Gate 2
+failure root cause). This probe is **not** part of the calibration or primary
+matrix, its numbers are never pooled with matrix rows, and it does **not**
+reopen `all_past` (or any other boundary change) for matrix rows. Output is
+labeled `allpast_probe` so it cannot be confused with matrix artifacts.
 
 - `model.implementation in {baseline_token,set_only}` only.
 - `attention_family=dense`, `backend=exact`; landmark/sparse/fixed-k are not
