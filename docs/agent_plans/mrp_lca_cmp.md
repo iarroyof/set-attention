@@ -51,6 +51,25 @@ failure root cause). This probe is **not** part of the calibration or primary
 matrix, its numbers are never pooled with matrix rows, and it does **not**
 reopen `all_past` (or any other boundary change) for matrix rows. Output is
 labeled `allpast_probe` so it cannot be confused with matrix artifacts.
+Outcome: OOM-censored on both hosts, including the single microbatch retry —
+the candidate-gather router materializes an O(L^2) `T x C` scores tensor
+(`router.py:278`). See `audit/LCA_calibration_20260718.md` "Fiber Probe
+Outcome".
+
+User-approved 2026-07-20 (option 0): exactly one follow-up probe, identical
+to the above except **`router.score_mode=dense`** (dense router computes
+`scores = q @ k^T` as `[B,H,T,M]` with masked invalid all-past entries,
+avoiding the gathered `[B,H,T,C,d_phi]` key tensor). Precedent:
+`audit/SD_8_all_past_dense_routerdense_smoke.md` records that
+`score_mode=dense` with `candidate_fiber=all_past` avoids the all-past
+candidate-gather OOM. This is a config-level routing implementation choice,
+not an architecture change. Label: `allpast_routerdense_probe`; never pooled
+with matrix rows. Batching fallback order, as runtime memory controls only:
+native B4 → B2 x accum2 → B1 x accum4 (effective batch 4 held constant).
+Verdict criteria: if train loss moves clearly below ln 2 / val_acc above
+chance, the endpoint_window receptive-field diagnosis is confirmed; if it
+fits but fails to learn, the Gate-2 cause is deeper than candidate
+reachability. Chunked scoring is deferred unless this probe still OOMs.
 
 - `model.implementation in {baseline_token,set_only}` only.
 - `attention_family=dense`, `backend=exact`; landmark/sparse/fixed-k are not

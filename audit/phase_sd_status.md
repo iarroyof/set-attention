@@ -445,6 +445,16 @@ remains the best Gate-2 explanation, and any further probe attempt (batch 1
 x accum 4 or a chunked gather) needs a new explicit user decision. Details:
 `audit/LCA_calibration_20260718.md` "Fiber Probe Outcome". Both hosts idle.
 
+Router-dense probe update (2026-07-20): the user-approved option-0 probe
+(`all_past` + `router.score_mode=dense`, label `allpast_routerdense_probe`)
+completed cleanly on Lizmark (peak 3216 MiB native B4 — candidate-gather OOM
+was key duplication, not the O(L^2) scores). Reachability was achieved
+(candidate_count_max=1023, ~69-96 effective candidates) but the row still
+did not learn (val_loss 0.817, val_acc 0.498 vs token 0.77 at the same
+budget). **Candidate reachability is not the binding constraint; the Gate-2
+cause is deeper than the fiber.** Details: `audit/LCA_calibration_20260718.md`
+"Router-Dense Probe Verdict". Both hosts idle.
+
 Health check after first rows (2026-07-18): both workers alive, containers
 `lcacmp_blue_*` up on both GPUs, GPU util 39-96%, VRAM ~4.0 GiB per GPU
 (well under the 24 GiB ceiling; historical L<=2048 B4 SD peaks

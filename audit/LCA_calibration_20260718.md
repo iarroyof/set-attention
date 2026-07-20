@@ -193,6 +193,41 @@ Interpretation:
   exhausted; any further attempt (batch 1 x accum 4, or a chunked candidate
   gather) requires a new explicit decision.
 
+## Router-Dense Probe Verdict (2026-07-20): reachability is not the bottleneck
+
+Following the user's option-0 directive, the same probe cell
+(`b25`, `L=1024`, seed 0, `max_updates=2000`, native B4, effective batch 4)
+was rerun with `candidate_fiber=all_past` + **`router.score_mode=dense`**
+(label `allpast_routerdense_probe`, Lizmark GPU 0, exit 0, strict log scan
+clean; precedent `audit/SD_8_all_past_dense_routerdense_smoke.md`).
+
+| Row | Fiber / router | Peak VRAM | train/loss (run mean) | val/loss | val/acc |
+|---|---|---:|---:|---:|---:|
+| `b25|1024|b4|0|native` | endpoint_window / candidate_gather | 2637.3 MiB | ~0.86 (flat) | 0.943 | 0.500 |
+| `allpast_routerdense_probe` | all_past / dense | 3216.0 MiB | 0.814 | 0.817 | 0.498 |
+
+Diagnostics confirm the fiber change did what it should:
+`candidate_count_max=1023` (vs 2 with endpoint_window), effective routed
+candidates mean ~69-96 per query (router_topk=16 per head now meaningful),
+router entropy non-uniform (norm 0.72-0.74). Memory is modest (3216 MiB) —
+the candidate-gather OOM was the gathered `[B,H,T,C,d_phi]` key duplication,
+not the O(L^2) scores, matching the user's analysis.
+
+Verdict per the pre-registered criteria: **the probe fits but does not
+learn** — at the same budget where token dense reached val_acc 0.77, the
+set path with full all-past candidate reach remains at chance (val_loss
+0.817 > ln 2). Candidate reachability is therefore **not** the binding
+constraint; the Gate-2 cause is deeper than the fiber (set-pathway
+optimization/capacity: pooling, router gradient signal, or the anchor_span
+residual path — not yet isolated). Caveats: single seed, single budget,
+`train/loss` is the run mean (late learning would be masked in that column,
+but endpoint val metrics are unambiguous).
+
+This result does not reopen all_past or score_mode=dense for matrix rows;
+both remain diagnostic-only labels. Registered artifacts:
+`out/lca_cmp/calibration/b25/L1024/lcacmp_b25_L1024_seed0_allpast_routerdense_probe.{csv,json}`,
+logs under `logs/lca_cmp/{blue,lizmark}/lcacmp_b25_L1024_seed0_allpast_*.log`.
+
 ## Artifacts
 
 - Results TSV: `out/lca_cmp/calibration/calibration_runs_blue.tsv` (36 rows)
