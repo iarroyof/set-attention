@@ -10,6 +10,11 @@ Blue-demon is the short/medium experiment host assigned by the current matrix. H
 `192.168.241.205`, the same user/repo, 2× RTX 6000 Ada. Each host is authoritative only for its
 assigned cells; the local workspace holds canonical documentation and merged analysis.
 
+HOST PREFERENCE (user directive 2026-07-20): if a test/probe/launch needs
+≤24 GB VRAM, use **blue-demon** — its RTX 4090s are faster. Reserve Lizmark
+for work that needs >24 GB (or massive parallelism). Applies to probes,
+tests, and any launch that fits a 4090.
+
 CREDENTIALS (do not print or commit the secret): use `sshpass -f ~/.ssh/.sshpass` for both hosts.
 Do not parse structured repo-parent credential files.
 

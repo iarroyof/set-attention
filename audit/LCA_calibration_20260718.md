@@ -278,6 +278,31 @@ Artifacts: `out/lca_cmp/calibration/{b25,token}/L1024/*{fulltopk,prefixsup,oracl
 `*_curve.csv`; logs `logs/lca_cmp/lizmark/lcacmp_*{fulltopk,prefixsup,oracle}*.log`;
 driver `scripts/run_lca_cmp_mechanistic_probes.sh`.
 
+## Combined Probe + Prefix 3-Seed Mini Calibration (2026-07-20)
+
+The user-approved combined probe (`all_past` + `score_mode=dense` +
+`router_topk=1023` + `data.supervision=prefix`, b25/L1024/seed0, 2000
+updates, native B4, Lizmark — launched before the blue-preference rule was
+stated) completed clean:
+
+| Row | val_loss | val_acc | Peak VRAM | Train curve |
+|---|---:|---:|---:|---|
+| token, prefix supervision (P2) | 0.220 | 0.903 | 2678.7 MiB | 5.13 → 0.217 |
+| **b25 combined (`combined_probe`)** | **0.141** | **0.936** | 3215.9 MiB | 5.22 → 0.127 |
+
+The two independent fixes compose, and at this budget/diagnostic scale the
+set row **exceeds** token dense under identical prefix supervision. This is
+a single-seed diagnostic label row, not a matrix result: all_past + full
+routing is O(L^2) in scores and the memory-frontier question at larger L is
+unresolved.
+
+Follow-up (user-approved): 3-seed mini calibration at L1024 only —
+`prefix3_token`, `prefix3_b25_fulltopk`, `prefix3_b25_topk16` (9 rows, same
+budget, native B4) launched on blue-demon per the ≤24 GB host-preference
+rule. Driver `scripts/run_lca_prefix_3seed.sh`; artifacts under
+`out/lca_cmp/prefix3/`, logs `logs/lca_cmp/blue/prefix3_*.log`. Results
+pending at the time of this audit update.
+
 ## Artifacts
 
 - Results TSV: `out/lca_cmp/calibration/calibration_runs_blue.tsv` (36 rows)

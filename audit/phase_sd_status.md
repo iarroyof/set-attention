@@ -467,6 +467,17 @@ NOT inherent architectural disadvantage. Per-update loss-curve logging added
 `audit/LCA_calibration_20260718.md` "Mechanistic Probe Series". Both hosts
 idle.
 
+Combined probe (2026-07-20): `all_past`+dense+`router_topk=1023`+prefix
+supervision composes the two fixes — b25/L1024/seed0 reaches **val_acc
+0.936, val_loss 0.141**, exceeding token prefix supervision (0.903) at the
+same budget (peak 3216 MiB). Single-seed diagnostic label; O(L^2) scores
+mean the larger-L memory frontier is unresolved. Follow-up 3-seed L1024
+mini calibration (`prefix3_token`, `prefix3_b25_fulltopk`,
+`prefix3_b25_topk16`, 9 rows) launched on blue-demon under the new
+host-preference rule (≤24 GB work uses Blue's faster 4090s; recorded in
+`memory/blue-demon-access.md`). Driver `scripts/run_lca_prefix_3seed.sh`;
+results pending.
+
 Health check after first rows (2026-07-18): both workers alive, containers
 `lcacmp_blue_*` up on both GPUs, GPU util 39-96%, VRAM ~4.0 GiB per GPU
 (well under the 24 GiB ceiling; historical L<=2048 B4 SD peaks
