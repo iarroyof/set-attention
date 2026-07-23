@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 import sys
 
@@ -42,6 +43,23 @@ def _flatten_overrides(groups: list[list[str]]) -> list[str]:
 
 def _loader(dataset, batch_size: int, *, shuffle: bool) -> DataLoader:
     return DataLoader(dataset, batch_size=int(batch_size), shuffle=bool(shuffle))
+
+
+def _write_curve_csv(csv_path: str | None, curve: list[tuple[int, float]]) -> Path | None:
+    """Write the per-update train-loss sidecar ``<csv_stem>_curve.csv``."""
+    if not curve:
+        return None
+    if csv_path is None:
+        return None
+    curve_path = Path(csv_path)
+    curve_path = curve_path.with_name(f"{curve_path.stem}_curve{curve_path.suffix}")
+    curve_path.parent.mkdir(parents=True, exist_ok=True)
+    with curve_path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["update", "train_loss"])
+        for update, loss in curve:
+            writer.writerow([update, f"{loss:.6f}"])
+    return curve_path
 
 
 def main() -> None:
@@ -98,7 +116,9 @@ def main() -> None:
             max_updates=max_updates,
             clip_grad_norm=float(cfg["training"].get("clip_grad_norm", 1.0)),
             grad_accum_steps=grad_accum_steps,
+            record_curve=True,
         )
+        curve = train_metrics.pop("_curve", [])
         completed_updates = int(train_metrics.pop("_optimizer_steps", 0))
         train_metrics.pop("_microbatches_per_optimizer_step", None)
         train_metrics["completed_updates"] = completed_updates
@@ -113,10 +133,13 @@ def main() -> None:
         )
         set_diagnostics = model.get_diagnostics() if hasattr(model, "get_diagnostics") else None
         logger.log_epoch(1, train_metrics, val_metrics, set_diagnostics)
+        curve_path = _write_curve_csv(args.csv_path or cfg.get("logging", {}).get("csv", {}).get("path"), curve)
         print(
             f"updates={completed_updates} train_loss={train_metrics['loss']:.4f} "
             f"val_loss={val_metrics['loss']:.4f} val_acc={val_metrics['accuracy']:.4f}"
         )
+        if curve_path is not None:
+            print(f"curve_csv={curve_path}")
     finally:
         logger.finish()
 

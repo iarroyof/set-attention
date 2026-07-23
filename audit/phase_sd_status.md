@@ -455,6 +455,18 @@ budget). **Candidate reachability is not the binding constraint; the Gate-2
 cause is deeper than the fiber.** Details: `audit/LCA_calibration_20260718.md`
 "Router-Dense Probe Verdict". Both hosts idle.
 
+Mechanistic probe series (2026-07-20): P0-P3 complete on Lizmark, all clean.
+P1 full routing (`router_topk=1023`) flips the all-past dense b25 row from
+0.498 to **0.827** val_acc — top-k=16 sparse selection was a primary
+bottleneck. P2 prefix supervision lifts the set row to **0.787** (token
+0.903) — final-token-only supervision was an independent bottleneck. P3
+oracle count tokens reach **0.985** — routing/readout is fine; the residual
+deficit is pooling/set-state learning. Conclusion: set-path/task mismatch,
+NOT inherent architectural disadvantage. Per-update loss-curve logging added
+(P0); 21/21 LCA tests pass in container. Details:
+`audit/LCA_calibration_20260718.md` "Mechanistic Probe Series". Both hosts
+idle.
+
 Health check after first rows (2026-07-18): both workers alive, containers
 `lcacmp_blue_*` up on both GPUs, GPU util 39-96%, VRAM ~4.0 GiB per GPU
 (well under the 24 GiB ceiling; historical L<=2048 B4 SD peaks

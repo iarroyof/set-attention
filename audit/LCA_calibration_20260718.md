@@ -216,17 +216,67 @@ not the O(L^2) scores, matching the user's analysis.
 Verdict per the pre-registered criteria: **the probe fits but does not
 learn** — at the same budget where token dense reached val_acc 0.77, the
 set path with full all-past candidate reach remains at chance (val_loss
-0.817 > ln 2). Candidate reachability is therefore **not** the binding
-constraint; the Gate-2 cause is deeper than the fiber (set-pathway
-optimization/capacity: pooling, router gradient signal, or the anchor_span
-residual path — not yet isolated). Caveats: single seed, single budget,
-`train/loss` is the run mean (late learning would be masked in that column,
-but endpoint val metrics are unambiguous).
+0.817 > ln 2). Phrasing per user review (2026-07-20): endpoint-window
+reachability is definitely broken for global aggregation; all-past+dense
+fixes topological reachability but does not by itself make the current set
+path learn a global count under sparse final-token supervision. This is
+**not** proof of an inherent architecture disadvantage; it is evidence of a
+current set-path/task mismatch involving supervision sparsity, pooling,
+softmax routing, top-k selection, and the lack of an explicit additive
+accumulator. Final-token-only supervision is structurally more damaging for
+endpoint-window set attention than for token attention: the token final
+query attends directly to all positions, while the set final query reaches
+distant markers only through O(window)-per-layer diffusion. Caveats: single
+seed, single budget, `train/loss` is the run mean (late learning would be
+masked in that column, but endpoint val metrics are unambiguous).
 
 This result does not reopen all_past or score_mode=dense for matrix rows;
 both remain diagnostic-only labels. Registered artifacts:
 `out/lca_cmp/calibration/b25/L1024/lcacmp_b25_L1024_seed0_allpast_routerdense_probe.{csv,json}`,
 logs under `logs/lca_cmp/{blue,lizmark}/lcacmp_b25_L1024_seed0_allpast_*.log`.
+
+## Mechanistic Probe Series (2026-07-20): mismatch localized — NOT architectural
+
+User-approved probe series P0-P3 (plan "Approved Diagnostic Probes") on the
+`b25`/`L=1024`/seed 0 cell, 2000 updates, native B4, Lizmark, all strict-scan
+clean. P0 added per-update train-loss curve logging
+(`<csv_stem>_curve.csv`). Implementation: `data.supervision={endpoint,prefix}`
+and `data.oracle_count_token` generator options in `src/data/lca_cmp.py`
+(defaults unchanged); driver `scripts/run_lca_cmp_mechanistic_probes.sh`;
+11 new tests in `tests/test_lca_cmp_probes.py` (21/21 LCA tests pass in the
+Lizmark container).
+
+| Probe | Change vs router-dense probe | val_loss | val_acc | train-loss curve |
+|---|---|---:|---:|---|
+| baseline: `b25` endpoint_window (calibration) | — | 0.943 | 0.500 | flat ≥ ln 2 |
+| baseline: all_past + dense, topk=16 | — | 0.817 | 0.498 | (no curve; run mean 0.814) |
+| P1 `allpast_routerdense_fulltopk_probe` | `router_topk=1023` (full routing) | **0.405** | **0.827** | 5.82 → 0.053 |
+| P2 `prefixsup_b25_probe` | prefix supervision (topk=16 kept) | **0.433** | **0.787** | 5.24 → 0.474 |
+| P2 `prefixsup_token_probe` | prefix supervision, token dense | 0.220 | 0.903 | 5.13 → 0.217 |
+| P3 `oracle_b25_probe` | oracle count token (topk=16, endpoint sup.) | **0.126** | **0.985** | 5.68 → 0.00003 |
+
+Verdicts:
+
+- **P1 — top-k=16 sparse selection was a primary bottleneck.** With full
+  routing the same set row learns to 0.827 val_acc (vs 0.498), same memory
+  (3216 MiB). The failure was not set compression per se.
+- **P2 — sparse final-token supervision was an independent bottleneck.**
+  Prefix supervision alone (top-k=16 kept) lifts the set row to 0.787.
+  Token still leads (0.903), so a residual quality gap remains under equal
+  supervision.
+- **P3 — routing/readout works when set states carry the count.** Oracle
+  count tokens give 0.985; the remaining deficit lives in
+  pooling/set-state learning, not in the router or the LM readout.
+- Combined conclusion (user formulation): the calibration Gate-2 failure is
+  a **set-path/task mismatch** — top-k sparsity + final-token-only
+  supervision + learned pooling — and **not** evidence of an inherent
+  architectural disadvantage of set-dictionary attention for global
+  aggregation. Single seed/budget; no matrix rows affected; all_past and
+  score_mode=dense remain diagnostic-only labels.
+
+Artifacts: `out/lca_cmp/calibration/{b25,token}/L1024/*{fulltopk,prefixsup,oracle}*.{csv,json}` +
+`*_curve.csv`; logs `logs/lca_cmp/lizmark/lcacmp_*{fulltopk,prefixsup,oracle}*.log`;
+driver `scripts/run_lca_cmp_mechanistic_probes.sh`.
 
 ## Artifacts
 

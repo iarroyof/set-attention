@@ -51,12 +51,14 @@ def train_lca_update_block(
     max_updates: int,
     clip_grad_norm: float = 1.0,
     grad_accum_steps: int = 1,
+    record_curve: bool = False,
 ) -> dict[str, Any]:
     model.train()
     total_loss = 0.0
     total_tokens = 0
     total_correct = 0
     updates = 0
+    curve: list[tuple[int, float]] = []
     accum_steps = max(1, int(grad_accum_steps))
     iterator = iter(batch_iter)
     while updates < int(max_updates):
@@ -89,6 +91,9 @@ def train_lca_update_block(
             total_tokens += valid_tokens
             total_correct += correct
         updates += 1
+        if record_curve:
+            update_loss = sum(float(loss.item()) * valid_tokens for loss, valid_tokens, _ in losses)
+            curve.append((updates, update_loss / max(accum_valid_tokens, 1)))
 
     loss_avg = total_loss / max(total_tokens, 1)
     return {
@@ -98,6 +103,7 @@ def train_lca_update_block(
         "valid_tokens": total_tokens,
         "_optimizer_steps": updates,
         "_microbatches_per_optimizer_step": accum_steps,
+        "_curve": curve,
     }
 
 
@@ -110,6 +116,7 @@ def train_lca_updates(
     max_updates: int,
     clip_grad_norm: float = 1.0,
     grad_accum_steps: int = 1,
+    record_curve: bool = False,
 ) -> dict[str, Any]:
     return train_lca_update_block(
         model,
@@ -119,6 +126,7 @@ def train_lca_updates(
         max_updates=max_updates,
         clip_grad_norm=clip_grad_norm,
         grad_accum_steps=grad_accum_steps,
+        record_curve=record_curve,
     )
 
 

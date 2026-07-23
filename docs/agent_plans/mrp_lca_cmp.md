@@ -70,6 +70,31 @@ Verdict criteria: if train loss moves clearly below ln 2 / val_acc above
 chance, the endpoint_window receptive-field diagnosis is confirmed; if it
 fits but fails to learn, the Gate-2 cause is deeper than candidate
 reachability. Chunked scoring is deferred unless this probe still OOMs.
+Outcome: fits (3216 MiB) but does not learn (val_loss 0.817, val_acc 0.498);
+see `audit/LCA_calibration_20260718.md` "Router-Dense Probe Verdict" —
+evidence of a set-path/task mismatch (supervision sparsity, pooling, softmax
+routing, top-k, no additive accumulator), NOT proof of inherent
+architectural disadvantage.
+
+User-approved 2026-07-20 (mechanistic probes; no scale rows): a small probe
+series to localize the set-path/task mismatch, all on the `b25`/`L=1024`
+family at diagnostic scale, none pooled with matrix rows:
+
+- P0 infrastructure: per-update train-loss curve logging in the LCA runner
+  (current `train/loss` is a run mean and can mask late learning).
+- P1 `all_past` + `score_mode=dense` + full routing (`router_topk=0`/full
+  top-k, as supported by the implementation): tests whether top-k=16 sparse
+  selection is the bottleneck vs set compression itself.
+- P2 prefix/all-position supervision variant of the same counting task
+  (every position predicts its prefix count bucket), run for BOTH token and
+  set rows: tests whether sparse final-token supervision is what kills set
+  learning; token gets identical supervision so the comparison stays fair.
+- P3 oracle set-state sanity check (explicit marker-count feature or true
+  window count in the set atom): if the model still fails, the problem is
+  routing/readout; if it solves, pooling/set-state learning is the issue.
+
+These probes are diagnostic-only; they do not reopen all_past or any other
+boundary change for matrix rows, and no scale rows are authorized.
 
 - `model.implementation in {baseline_token,set_only}` only.
 - `attention_family=dense`, `backend=exact`; landmark/sparse/fixed-k are not

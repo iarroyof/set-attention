@@ -22,6 +22,8 @@ class LCACmpConfig:
     count_jitter: int = 16
     random_noise: bool = True
     split: str = "train"
+    supervision: str = "endpoint"
+    oracle_count_token: bool = False
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,37 @@ def _validate_config(cfg: LCACmpConfig) -> None:
         raise ValueError("LCA marker_fraction must be in (0, 0.5)")
     if cfg.count_jitter <= 0:
         raise ValueError("LCA count_jitter must be positive")
+    if cfg.supervision not in {"endpoint", "prefix"}:
+        raise ValueError("LCA supervision must be 'endpoint' or 'prefix'")
+    if cfg.oracle_count_token and oracle_count_base(
+        cfg.vocab_size, cfg.seq_len, cfg.marker_fraction, cfg.count_jitter
+    ) <= 1:
+        raise ValueError("LCA vocab_size too small to reserve the oracle count-token range")
+
+
+def oracle_count_base(
+    vocab_size: int,
+    seq_len: int,
+    marker_fraction: float = 0.08,
+    count_jitter: int = 16,
+) -> int:
+    """First token id of the reserved oracle count range.
+
+    The generator draws the marker count from a window of
+    ``span = high_max - low_min + 1`` realizable values (the low/high jitter
+    ranges around the bucket threshold). The oracle encodes the true count as
+    the dedicated id ``oracle_count_base + (count - low_min)``; the span-wide
+    range sits directly below the four special tokens and disjoint from the
+    noise-token range. The endpoint bucket is recoverable from the oracle id
+    alone (``offset >= threshold - low_min``).
+    """
+    context_len = int(seq_len) - 1
+    threshold = max(1, min(context_len - 1, round(context_len * float(marker_fraction))))
+    jitter = max(1, int(count_jitter))
+    low_min = max(0, threshold - jitter)
+    high_max = min(context_len, threshold + jitter)
+    span = high_max - low_min + 1
+    return int(vocab_size) - 4 - span
 
 
 def generate_lca_cmp(config: LCACmpConfig | Mapping[str, Any]) -> LCACmpGenerated:
@@ -92,11 +125,24 @@ def generate_lca_cmp(config: LCACmpConfig | Mapping[str, Any]) -> LCACmpGenerate
         raise ValueError("LCA threshold/count_jitter leaves no positive count range")
 
     specials = _special_tokens(vocab_size)
+    oracle_base = (
+        oracle_count_base(vocab_size, seq_len, cfg.marker_fraction, cfg.count_jitter)
+        if cfg.oracle_count_token
+        else None
+    )
+    noise_high = oracle_base if oracle_base is not None else vocab_size - 4
     if cfg.random_noise:
-        examples = rng.integers(1, vocab_size - 4, size=(num_examples, seq_len), dtype=np.int64)
+        examples = rng.integers(1, noise_high, size=(num_examples, seq_len), dtype=np.int64)
     else:
         examples = np.zeros((num_examples, seq_len), dtype=np.int64)
     examples[:, -1] = specials["query"]
+
+    # With the oracle enabled, position seq_len-2 is reserved for the count
+    # token, so markers are placed only in the first context_len-1 positions.
+    marker_span = context_len - 1 if oracle_base is not None else context_len
+    high_max = min(high_max, marker_span)
+    if high_min > high_max:
+        raise ValueError("LCA oracle marker span leaves no positive count range")
 
     labels_np = np.full((num_examples, seq_len), IGNORE_INDEX, dtype=np.int64)
     targets = rng.integers(0, 2, size=num_examples, dtype=np.int64)
@@ -108,9 +154,28 @@ def generate_lca_cmp(config: LCACmpConfig | Mapping[str, Any]) -> LCACmpGenerate
             count = int(rng.integers(low_min, low_max + 1)) if low_max >= low_min else 0
         marker_counts[idx] = count
         if count > 0:
-            positions = rng.choice(context_len, size=count, replace=False)
+            positions = rng.choice(marker_span, size=count, replace=False)
             examples[idx, positions] = specials["marker"]
         labels_np[idx, -1] = specials["answer_true"] if target else specials["answer_false"]
+
+    if cfg.supervision == "prefix":
+        # Every position t predicts the bucket of the marker count inside the
+        # prefix [0..t]. The per-position threshold is the endpoint threshold
+        # scaled by the covered context fraction, so the class balance and the
+        # count_jitter margin match the endpoint task at every horizon; at the
+        # final position this reduces exactly to the endpoint label.
+        marker_mask = examples == specials["marker"]
+        prefix_counts = np.cumsum(marker_mask, axis=1)
+        steps = np.arange(1, seq_len + 1, dtype=np.float64)
+        thresholds = np.maximum(1, np.rint(threshold * steps / context_len)).astype(np.int64)
+        labels_np = np.where(
+            prefix_counts >= thresholds[None, :],
+            specials["answer_true"],
+            specials["answer_false"],
+        ).astype(np.int64)
+
+    if oracle_base is not None:
+        examples[:, -2] = oracle_base + (marker_counts - low_min)
 
     query_positions = np.full((num_examples, 1), seq_len - 1, dtype=np.int64)
     lags = np.full((num_examples, 1), context_len, dtype=np.int64)
@@ -178,6 +243,8 @@ class LCACmpDataset(Dataset):
             "seq_len": int(self.config.seq_len),
             "marker_fraction": float(self.config.marker_fraction),
             "count_jitter": int(self.config.count_jitter),
+            "supervision": str(self.config.supervision),
+            "oracle_count_token": bool(self.config.oracle_count_token),
             "dataset_digest": self.dataset_digest,
             "token_count": int(self.config.num_examples * self.config.seq_len),
             "record_offsets_digest": _int_sequence_digest(record_offsets),
@@ -225,6 +292,8 @@ def build_lca_cmp_datasets(data_cfg: Mapping[str, Any]) -> tuple[LCACmpDataset, 
         "marker_fraction": float(data_cfg.get("marker_fraction", 0.08)),
         "count_jitter": int(data_cfg.get("count_jitter", 16)),
         "random_noise": bool(data_cfg.get("random_noise", True)),
+        "supervision": str(data_cfg.get("supervision", "endpoint")),
+        "oracle_count_token": bool(data_cfg.get("oracle_count_token", False)),
     }
     train = LCACmpDataset(
         LCACmpConfig(
