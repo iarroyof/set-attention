@@ -17,6 +17,17 @@ tests, and any launch that fits a 4090.
 
 OFF-LAN ACCESS (verified 2026-07-23): Tailscale network `ai.deploys@gmail.com`.
 
+**Always use `scripts/sa_ssh.sh` for host access** — it auto-detects the
+network (LAN probe, 10-min cache) and falls back to Tailscale on access
+error, retrying once in the other mode (user directive 2026-07-23: LAN is
+the normal path; Tailscale is temporary fallback only):
+
+- `scripts/sa_ssh.sh blue|lizmark [cmd...]`
+- `scripts/sa_ssh.sh blue|lizmark scp <args>`
+- `scripts/sa_ssh.sh mode` (print detected mode: `lan` or `tailscale`)
+
+Underlying routes, for reference:
+
 - blue-demon Tailscale IP: `100.64.104.123` (tailscaled on the host). From
   anywhere: `sshpass -f ~/.ssh/.sshpass ssh iarroyof@100.64.104.123`.
 - Lizmark has NO Tailscale; reach it through blue-demon as jump host:
