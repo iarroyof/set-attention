@@ -482,6 +482,19 @@ was seed noise; robust findings are set-in-token-regime, full-routing
 > top-k16 (+0.079 at equal VRAM), no set advantage claimed. Details:
 `audit/LCA_calibration_20260718.md`.
 
+Blur frontier sweep (2026-07-24): 12/12 rows clean on Blue. **b75 meets the
+target: 0.9233±0.0157 val_acc (within seed noise of token 0.9443±0.0317) at
+2346.7 MiB, −12.5% vs token's 2680.6 MiB** — first diagnostic set row
+matching token quality at lower VRAM on the LCA task. Quality is
+non-monotone in blur (b75 > b50 ≈ b25 > b100): coarse atoms shrink the
+O(L^2) score tensor AND are better counting units; all-coarse loses detail.
+Host sync after sweep: Blue and Lizmark are both clean git checkouts at the
+current origin HEAD; local/GitHub/hosts fully synced. Adaptive host access
+wrapper `scripts/sa_ssh.sh` (LAN preferred, Tailscale fallback) is the
+required entry point. Next per user staging: top-k bandwidth sweep
+{16,32,64,128,256,full} on b25/L1024 prefix, then pooling isolation;
+L>=2048 frontier probe needs its own plan amendment.
+
 Health check after first rows (2026-07-18): both workers alive, containers
 `lcacmp_blue_*` up on both GPUs, GPU util 39-96%, VRAM ~4.0 GiB per GPU
 (well under the 24 GiB ceiling; historical L<=2048 B4 SD peaks

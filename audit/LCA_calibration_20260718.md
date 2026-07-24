@@ -322,6 +322,40 @@ pooling/set-state learning (per P3) and possibly the pointwise-only token
 residual. The O(L^2) full-routing memory question at L>=2048 remains the
 open frontier issue.
 
+## Blur Frontier Sweep (2026-07-24): b75 matches token quality at lower VRAM
+
+User-approved sweep (plan "Approved Diagnostic Probes"): blur families
+{b25,b50,b75,b100} x seeds 0-2, all_past + score_mode=dense +
+router_topk=1023 + prefix supervision, L=1024, native B4, 2000 updates,
+blue-demon. 12/12 rows exit 0, strict scan clean. b25 rows replicate the
+prefix3 fulltopk rows bit-for-bit (determinism check).
+
+| Family | val_acc mean ± sd | Peak VRAM | vs token VRAM |
+|---|---|---:|---:|
+| token prefix (prefix3) | 0.9443 ± 0.0317 | 2680.6 MiB | — |
+| b25 | 0.8956 ± 0.0407 | 3215.9 MiB | +20% |
+| b50 | 0.8974 ± 0.0435 | 2636.2 MiB | −2% |
+| **b75** | **0.9233 ± 0.0157** | **2346.7 MiB** | **−12%** |
+| b100 | 0.8379 ± 0.0262 | 1710.7 MiB | −36% |
+
+**Success criterion met**: b75 sits within seed noise of token quality
+(gap 0.021 acc ≈ 1.2 SEM with overlapping intervals; tighter sd than token)
+at strictly lower peak VRAM (−334 MiB, −12.5%). This is the first
+diagnostic-label set row that matches token quality at lower memory on the
+LCA aggregation task. Notable non-monotonicity: b75 > b50 ≈ b25 in quality
+while VRAM falls with blur — coarse atoms (w4/s2) both shrink the O(L^2)
+score tensor and appear to be better evidence units for counting; b100
+(all-coarse) then loses too much detail (−0.09 vs b75).
+
+Caveats: L1024 only, 2000 updates, synthetic task, diagnostic labels — not
+matrix rows. The L>=2048 frontier question (does b75 hold quality vs token
+while token VRAM grows O(L^2) to 9.1+ GiB?) is the decisive next
+experiment and requires its own plan amendment. Per user staging, the
+top-k bandwidth sweep {16,32,64,128,256,full} precedes any scale-up.
+
+Driver `scripts/run_lca_prefix_blur_sweep.sh`; artifacts
+`out/lca_cmp/prefixblur/`; logs `logs/lca_cmp/blue/prefixblur_*.log`.
+
 ## Artifacts
 
 - Results TSV: `out/lca_cmp/calibration/calibration_runs_blue.tsv` (36 rows)
