@@ -96,6 +96,38 @@ family at diagnostic scale, none pooled with matrix rows:
 These probes are diagnostic-only; they do not reopen all_past or any other
 boundary change for matrix rows, and no scale rows are authorized.
 
+User-approved 2026-07-20 (blur frontier sweep): a 3-seed diagnostic sweep to
+find a set row that **matches token prefix-supervision quality at lower peak
+VRAM** at L=1024. Rows: blur families {b25, b50, b75, b100}, all with
+`all_past` + `score_mode=dense` + full routing (`router_topk=1023`) +
+`data.supervision=prefix`, seeds 0-2, native B4, `max_updates=2000` (12
+rows). Rationale: coarser atoms reduce the candidate count, shrinking the
+O(L^2) router score tensor — the mechanism by which a set row can sit below
+token's 2681 MiB while holding the ~0.90+ quality regime established by the
+prefix3 mini calibration. Success criterion: a blur row with 3-seed mean
+val_acc within noise of token prefix (0.944±0.032) and 3-seed peak VRAM
+strictly below token's 2681 MiB. Diagnostic labels only
+(`prefixblur_*`); not matrix rows; no larger-L launch is authorized by this
+entry.
+
+User directives 2026-07-23 (sequencing after the blur sweep):
+
+1. **Top-k bandwidth sweep** before any architecture change: b25/L1024
+   prefix at `router_topk={16,32,64,128,256,full}` — if accuracy rises
+   smoothly, the story is "aggregation needs routing bandwidth", and the
+   minimal sufficient top-k becomes a design parameter.
+2. **Pooling/set-state isolation** (oracle already points here): test
+   simpler/oracle pooling before touching routing/readout.
+3. **No causal token-highway implementation yet.** A depthwise-causal-conv /
+   EMA / low-rank causal mixer would change the model class (hybrid
+   token-context path + set attention); it must not be used to rescue
+   set-only claims. If it is ever tested, it is an explicit new branch
+   (`set + causal token highway`) with its own memory accounting and
+   ablations: highway off / pointwise only / local causal conv /
+   EMA-low-rank. `anchor_span` already provides a pointwise gradient path
+   (thin_anchor + routed_repr), but that is not context transport — the
+   distinction is recorded so future proposals do not conflate them.
+
 - `model.implementation in {baseline_token,set_only}` only.
 - `attention_family=dense`, `backend=exact`; landmark/sparse/fixed-k are not
   active unless a later plan explicitly reopens them.
