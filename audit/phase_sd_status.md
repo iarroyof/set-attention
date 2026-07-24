@@ -476,7 +476,11 @@ mini calibration (`prefix3_token`, `prefix3_b25_fulltopk`,
 `prefix3_b25_topk16`, 9 rows) launched on blue-demon under the new
 host-preference rule (≤24 GB work uses Blue's faster 4090s; recorded in
 `memory/blue-demon-access.md`). Driver `scripts/run_lca_prefix_3seed.sh`;
-results pending.
+results: token prefix 0.9443±0.0317, b25 full-topk 0.8956±0.0407, b25
+top-k16 0.8171±0.0114 (9/9 clean, Blue idle). The seed-0 set-over-token gap
+was seed noise; robust findings are set-in-token-regime, full-routing
+> top-k16 (+0.079 at equal VRAM), no set advantage claimed. Details:
+`audit/LCA_calibration_20260718.md`.
 
 Health check after first rows (2026-07-18): both workers alive, containers
 `lcacmp_blue_*` up on both GPUs, GPU util 39-96%, VRAM ~4.0 GiB per GPU

@@ -300,8 +300,27 @@ Follow-up (user-approved): 3-seed mini calibration at L1024 only —
 `prefix3_token`, `prefix3_b25_fulltopk`, `prefix3_b25_topk16` (9 rows, same
 budget, native B4) launched on blue-demon per the ≤24 GB host-preference
 rule. Driver `scripts/run_lca_prefix_3seed.sh`; artifacts under
-`out/lca_cmp/prefix3/`, logs `logs/lca_cmp/blue/prefix3_*.log`. Results
-pending at the time of this audit update.
+`out/lca_cmp/prefix3/`, logs `logs/lca_cmp/blue/prefix3_*.log`.
+
+**3-seed results (2026-07-23, all rows exit 0, strict scan clean, Blue idle
+after completion):**
+
+| Family | val_acc mean ± sd | val_loss mean ± sd | Peak VRAM |
+|---|---|---|---|
+| token, prefix | 0.9443 ± 0.0317 | 0.136 ± 0.083 | 2680.6 MiB |
+| b25 full routing, prefix | 0.8956 ± 0.0407 | 0.255 ± 0.127 | 3215.9 MiB |
+| b25 top-k=16, prefix | 0.8171 ± 0.0114 | 0.383 ± 0.018 | 3216.0 MiB |
+
+Verdict: the single-seed combined result (0.936 > 0.903) was **within seed
+noise** — across seeds token prefix leads (0.944 vs 0.896; ~1.9 SEM gap,
+overlapping intervals at n=3). The robust findings are: (a) the set row is
+now in token's quality regime rather than at chance — the routing/supervision
+repairs hold across seeds; (b) full routing beats top-k=16 consistently
+(+0.079 acc, tight top-k16 sd 0.011) at identical VRAM; (c) no set-over-token
+advantage is claimed. The remaining ~0.05 gap localizes to
+pooling/set-state learning (per P3) and possibly the pointwise-only token
+residual. The O(L^2) full-routing memory question at L>=2048 remains the
+open frontier issue.
 
 ## Artifacts
 
