@@ -356,6 +356,72 @@ top-k bandwidth sweep {16,32,64,128,256,full} precedes any scale-up.
 Driver `scripts/run_lca_prefix_blur_sweep.sh`; artifacts
 `out/lca_cmp/prefixblur/`; logs `logs/lca_cmp/blue/prefixblur_*.log`.
 
+## Top-k Bandwidth Sweep (2026-07-24): aggregation needs routing bandwidth
+
+User staging item 1: b75/L1024/prefix/all_past/score_mode=dense,
+router_topk={16,32,64,128,256,512,1023} x seeds 0-2, native B4,
+2000 updates, blue-demon. 21/21 rows exit 0.
+
+| router_topk | val_acc mean ± sd | Peak VRAM mean |
+|---:|---:|---:|
+| 16 | 0.7836 ± 0.0208 | 2348.5 MiB |
+| 32 | 0.8181 ± 0.0032 | 2351.7 MiB |
+| 64 | 0.8501 ± 0.0018 | 2360.2 MiB |
+| 128 | 0.8509 ± 0.0152 | 2377.7 MiB |
+| 256 | 0.8707 ± 0.0301 | 2407.7 MiB |
+| 512 | 0.8821 ± 0.0276 | 2374.7 MiB |
+| 1023 (full) | 0.9233 ± 0.0157 | 2346.7 MiB |
+
+Findings: (a) quality rises monotonically with routing bandwidth over the
+whole range — no plateau before full routing; global counting needs many
+weak evidence paths, and top-k selection discards them. (b) Peak VRAM is
+**flat** across topk (2347-2408 MiB, spread <3%): in score_mode=dense the
+[B,H,T,M] score tensor is materialized regardless of top-k, so top-k
+sparsity buys no memory in this router mode. Sparse top-k only becomes a
+memory lever if scoring itself is made sparse (candidate-gather without
+dense scores, or chunked sparse scoring). (c) topk=1023 replicates the
+prefixblur b75 row (0.9233 ± 0.0157 @ 2346.7 MiB) — determinism holds.
+
+Driver `scripts/run_lca_topk_sweep.sh`; TSV
+`out/lca_cmp/topksweep/topksweep_blue.tsv` (pulled); per-row CSVs on blue
+under `out/lca_cmp/topksweep/b75/L1024/`; logs
+`logs/lca_cmp/blue/topksweep_*.log`.
+
+## L2048 Pilot (2026-07-24, Lizmark, seed 0): VRAM advantage holds, quality gap widens
+
+User staging item 2 (moved early per user directive): L=2048, prefix
+supervision, all_past + score_mode=dense, native B4, 2000 updates,
+seed 0, Lizmark. 3/3 rows exit 0, clean.
+
+| Row | val_acc | val_loss | Peak VRAM |
+|---|---:|---:|---:|
+| token prefix | 0.9440 | 0.127 | 9123.9 MiB |
+| b75 full routing (topk=2047) | 0.8158 | 0.407 | 7201.1 MiB |
+| b75 topk=256 | 0.7571 | 0.508 | 7325.4 MiB |
+
+Findings: (a) b75 full routing keeps a **−21% VRAM advantage** over token
+at L2048 (7201 vs 9124 MiB) — the blur family scales its memory edge with
+L. (b) The quality gap widens vs L1024: 0.816 vs 0.944 (−0.128) compared
+to −0.021 at L1024. Token at L2048 is unchanged (0.944 both L), so the
+gap is the set row degrading, not token improving. (c) topk=256 at L2048
+(0.757) is consistent with the L1024 bandwidth curve — sparsity costs
+quality without buying memory in dense-score mode (7325 vs 7201 MiB for
+full routing; topk256 is actually *higher* here, within run-to-run noise).
+
+Open questions before interpretation: (1) seed-0 only — L1024 taught us
+single seeds mislead by up to ±0.04; seeds 1-2 needed (user pre-approved
+"seeds 0-2 if feasible"). (2) Budget: 2000 updates may be short for
+L2048 — check `*_curve.csv` for whether b75full loss was still descending
+at update 2000. (3) The RuntimeWarning "multiscale disabled; using
+single-scale bank" (`set_only_lm.py:311`) fires on all_past runs — verify
+what bank b75 actually used before over-interpreting the fine/coarse
+story.
+
+Driver `scripts/run_lca_l2048_pilot.sh`; TSV
+`out/lca_cmp/l2048pilot/l2048pilot_lizmark.tsv` (pulled); per-row CSVs on
+Lizmark under `out/lca_cmp/l2048pilot/`; logs
+`logs/lca_cmp/lizmark/l2048pilot_*.log`.
+
 ## Artifacts
 
 - Results TSV: `out/lca_cmp/calibration/calibration_runs_blue.tsv` (36 rows)

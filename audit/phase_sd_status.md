@@ -495,6 +495,26 @@ required entry point. Next per user staging: top-k bandwidth sweep
 {16,32,64,128,256,full} on b25/L1024 prefix, then pooling isolation;
 L>=2048 frontier probe needs its own plan amendment.
 
+Top-k bandwidth sweep (2026-07-24, Blue, b75/L1024/prefix, 21/21 clean):
+quality rises monotonically with router_topk (16: 0.7836±0.0208 ->
+1023/full: 0.9233±0.0157; no plateau) — global aggregation needs routing
+bandwidth. Peak VRAM is flat across topk (2347-2408 MiB): in
+score_mode=dense the [B,H,T,M] score tensor is materialized regardless,
+so top-k sparsity buys no memory in this router mode; sparsity only helps
+memory if scoring itself is sparse. topk=1023 replicates the prefixblur
+b75 row exactly. TSV `out/lca_cmp/topksweep/topksweep_blue.tsv`.
+
+L2048 pilot (2026-07-24, Lizmark, seed 0, 3/3 clean): token prefix
+0.9440 @ 9123.9 MiB; b75 full routing (topk=2047) 0.8158 @ 7201.1 MiB
+(**−21% VRAM vs token, memory edge scales with L**); b75 topk256 0.7571
+@ 7325.4 MiB. Quality gap widens vs L1024 (−0.128 vs −0.021); token is
+flat across L, so the set row degrades. Open: seeds 1-2 (pre-approved
+"0-2 if feasible"), 2000-update budget sufficiency at L2048 (check
+curves), and the "multiscale disabled; using single-scale bank" warning
+(`set_only_lm.py:311`) on all_past runs before interpreting the b75
+fine/coarse story. TSV `out/lca_cmp/l2048pilot/l2048pilot_lizmark.tsv`.
+Details: `audit/LCA_calibration_20260718.md`.
+
 Health check after first rows (2026-07-18): both workers alive, containers
 `lcacmp_blue_*` up on both GPUs, GPU util 39-96%, VRAM ~4.0 GiB per GPU
 (well under the 24 GiB ceiling; historical L<=2048 B4 SD peaks

@@ -110,23 +110,32 @@ strictly below token's 2681 MiB. Diagnostic labels only
 (`prefixblur_*`); not matrix rows; no larger-L launch is authorized by this
 entry.
 
-User directives 2026-07-23 (sequencing after the blur sweep):
+User directives 2026-07-23 (sequencing after the blur sweep), revised
+2026-07-24 (tightened staging):
 
-1. **Top-k bandwidth sweep** before any architecture change: b25/L1024
-   prefix at `router_topk={16,32,64,128,256,full}` — if accuracy rises
-   smoothly, the story is "aggregation needs routing bandwidth", and the
-   minimal sufficient top-k becomes a design parameter.
-2. **Pooling/set-state isolation** (oracle already points here): test
-   simpler/oracle pooling before touching routing/readout.
-3. **No causal token-highway implementation yet.** A depthwise-causal-conv /
-   EMA / low-rank causal mixer would change the model class (hybrid
-   token-context path + set attention); it must not be used to rescue
-   set-only claims. If it is ever tested, it is an explicit new branch
-   (`set + causal token highway`) with its own memory accounting and
-   ablations: highway off / pointwise only / local causal conv /
-   EMA-low-rank. `anchor_span` already provides a pointwise gradient path
-   (thin_anchor + routed_repr), but that is not context transport — the
-   distinction is recorded so future proposals do not conflate them.
+1. **Top-k bandwidth sweep on b75 first** (b75 is the frontier row):
+   `b75/L1024/prefix/all_past/dense`, `router_topk={16,32,64,128,256,512,1023}`,
+   seeds 0-2. Question: how much routing bandwidth does the winning blur
+   allocation need before quality collapses? b25 only as secondary control
+   if compute is cheap.
+2. **L2048 pilot EARLY** (before any top-k x pooling grid; do not
+   over-optimize L1024 behavior that may not transfer): rows token prefix,
+   b75 full routing, b75 best-sparse-topk (or topk=256 + full if unknown),
+   seed 0 smoke first, seeds 0-2 if feasible. Caveat recorded: full routing
+   at L2048 may lose the VRAM advantage (dense all-past scores remain
+   O(L^2)); if b75 full is near/above token VRAM there, sparse top-k
+   bandwidth becomes essential, not optional.
+3. **Pooling isolation only if b75 still has a quality gap after a viable
+   top-k is chosen**: soft-trimmed Boltzmann (current) vs mean pooling vs
+   oracle count control; fixed alpha values allowed, avoid learnable alpha
+   until the previous instability is understood.
+4. **Highway architecture deferred** until 1-3 are exhausted. If ever
+   tested, it is an explicit new branch (`set + causal token highway`) with
+   its own memory accounting and ablations: highway off / pointwise only /
+   local causal conv / EMA-low-rank. `anchor_span` already provides a
+   pointwise gradient path (thin_anchor + routed_repr), but that is not
+   context transport — the distinction is recorded so future proposals do
+   not conflate them.
 
 - `model.implementation in {baseline_token,set_only}` only.
 - `attention_family=dense`, `backend=exact`; landmark/sparse/fixed-k are not
