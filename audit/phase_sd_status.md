@@ -510,9 +510,9 @@ L2048 pilot (2026-07-24, Lizmark, seed 0, 3/3 clean): token prefix
 @ 7325.4 MiB. Quality gap widens vs L1024 (−0.128 vs −0.021); token is
 flat across L, so the set row degrades. Open: seeds 1-2 (pre-approved
 "0-2 if feasible"), 2000-update budget sufficiency at L2048 (check
-curves), and the "multiscale disabled; using single-scale bank" warning
-(`set_only_lm.py:311`) on all_past runs before interpreting the b75
-fine/coarse story. TSV `out/lca_cmp/l2048pilot/l2048pilot_lizmark.tsv`.
+curves). The "multiscale disabled; using single-scale bank" warning is
+resolved benign: the flag is unimplemented and unrelated to the
+multiresolution head groups that define b75's fine/coarse split. TSV `out/lca_cmp/l2048pilot/l2048pilot_lizmark.tsv`.
 Details: `audit/LCA_calibration_20260718.md`.
 
 Health check after first rows (2026-07-18): both workers alive, containers

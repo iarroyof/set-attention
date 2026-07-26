@@ -412,10 +412,12 @@ Open questions before interpretation: (1) seed-0 only — L1024 taught us
 single seeds mislead by up to ±0.04; seeds 1-2 needed (user pre-approved
 "seeds 0-2 if feasible"). (2) Budget: 2000 updates may be short for
 L2048 — check `*_curve.csv` for whether b75full loss was still descending
-at update 2000. (3) The RuntimeWarning "multiscale disabled; using
-single-scale bank" (`set_only_lm.py:311`) fires on all_past runs — verify
-what bank b75 actually used before over-interpreting the fine/coarse
-story.
+at update 2000. (3) RESOLVED: the RuntimeWarning "multiscale disabled;
+using single-scale bank" (`set_only_lm.py:312`) is benign — the
+`multiscale` flag is unimplemented (True raises) and unrelated to the
+multiresolution head groups; b75's fine/coarse split comes from
+`model.multiresolution.groups` (fine w2/s1 2 heads + coarse w4/s2 6
+heads), so the fine/coarse story is intact.
 
 Driver `scripts/run_lca_l2048_pilot.sh`; TSV
 `out/lca_cmp/l2048pilot/l2048pilot_lizmark.tsv` (pulled); per-row CSVs on
