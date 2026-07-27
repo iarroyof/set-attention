@@ -515,6 +515,18 @@ resolved benign: the flag is unimplemented and unrelated to the
 multiresolution head groups that define b75's fine/coarse split. TSV `out/lca_cmp/l2048pilot/l2048pilot_lizmark.tsv`.
 Details: `audit/LCA_calibration_20260718.md`.
 
+L2048 follow-ups (2026-07-26): pilot seeds 1-2 on Blue (6/6 clean;
+3-seed @2000upd: token 0.9407±0.0066, b75full 0.8553±0.0483, b75topk256
+0.8107±0.0476 — high b75 seed variance = undertraining signature) and a
+4000-update budget probe on Lizmark (seed 0 controlled pair): token
+saturated (0.9438 vs 0.9440 @2000), **b75full 0.8158 -> 0.9353 (+0.12),
+within 0.009 of token at −21% VRAM**. The L2048 gap was primarily
+budget, not architecture. Caution recorded: the L1024 bandwidth curve
+and sparse rows were all measured @2000upd and may partially reflect
+training speed; a budget-matched sparse control (topk256 @4000upd) is
+needed before the "aggregation needs bandwidth" claim is a convergence
+fact. Driver `scripts/run_lca_l2048_budget.sh`.
+
 Health check after first rows (2026-07-18): both workers alive, containers
 `lcacmp_blue_*` up on both GPUs, GPU util 39-96%, VRAM ~4.0 GiB per GPU
 (well under the 24 GiB ceiling; historical L<=2048 B4 SD peaks

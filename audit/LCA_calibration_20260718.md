@@ -424,6 +424,49 @@ Driver `scripts/run_lca_l2048_pilot.sh`; TSV
 Lizmark under `out/lca_cmp/l2048pilot/`; logs
 `logs/lca_cmp/lizmark/l2048pilot_*.log`.
 
+### L2048 pilot seeds 1-2 (2026-07-26, Blue): seed0 gap was partly seed noise
+
+Seeds 1-2 on Blue (same driver, `l2048pilot_blue.tsv`), 6/6 rows exit 0.
+3-seed summary at 2000 updates:
+
+| Row | val_acc mean ± sd (n=3) | Peak VRAM |
+|---|---:|---:|
+| token prefix | 0.9407 ± 0.0066 | 9123.9 MiB |
+| b75 full routing | 0.8553 ± 0.0483 | 7201.1 MiB |
+| b75 topk=256 | 0.8107 ± 0.0476 | 7327.2 MiB |
+
+The b75 rows show much larger seed variance than token at 2000 updates
+(b75full seeds: 0.816 / 0.841 / 0.909) — the signature of an undertrained,
+still-descending model rather than a stable quality deficit.
+
+### L2048 budget probe (2026-07-26, Lizmark, 4000 updates, seed 0): gap was mostly budget
+
+Decisive controlled pair, same seed/config as pilot seed0 except
+`max_updates=4000` (curves verified 4000 points):
+
+| Row | val_acc @2000 | val_acc @4000 | Peak VRAM |
+|---|---:|---:|---:|
+| token prefix | 0.9440 | 0.9438 | 9123.9 MiB |
+| b75 full routing | 0.8158 | **0.9353** | 7201.1 MiB |
+
+Token is saturated at 2000 updates; b75full gains **+0.12** from doubling
+budget and lands within 0.009 of token at **−21% VRAM** (7201 vs 9124
+MiB). The "L2048 quality gap" was primarily undertraining, not an
+architectural scaling deficit. Caveat: budget pair is seed-0 only;
+b75full seeds 1-2 at 4000 updates would confirm variance shrinks too.
+
+**Scientific caution (recorded)**: the top-k bandwidth curve (L1024) and
+the pilot sparse row were all measured at 2000 updates. If sparse-top-k
+rows train slower than full-routing rows (plausible: less gradient
+bandwidth per update), the bandwidth curve may be partially a *training
+speed* curve. A budget-matched sparse control (e.g. topk256 at 4000
+updates) is required before claiming "aggregation needs routing
+bandwidth" as a convergence fact rather than an optimization-speed fact.
+
+Driver `scripts/run_lca_l2048_budget.sh`; TSV
+`out/lca_cmp/l2048budget/l2048budget_lizmark.tsv` (pulled); logs
+`logs/lca_cmp/lizmark/l2048budget_*.log`.
+
 ## Artifacts
 
 - Results TSV: `out/lca_cmp/calibration/calibration_runs_blue.tsv` (36 rows)
