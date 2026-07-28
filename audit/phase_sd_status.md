@@ -527,6 +527,17 @@ training speed; a budget-matched sparse control (topk256 @4000upd) is
 needed before the "aggregation needs bandwidth" claim is a convergence
 fact. Driver `scripts/run_lca_l2048_budget.sh`.
 
+L2048 budget-matched confirmation (2026-07-27, Blue+Lizmark, 4000upd,
+3/3 clean, pulled and validated): **b75full 3-seed 0.9078±0.0368**
+(0.9353/0.8660/0.9221) vs token ≈0.941-0.944 — Pareto claim holds on
+average (−21% VRAM, mean gap ~0.033) but the set row is less seed-stable
+than token (sd 0.037 vs 0.007). topk256 @4000 seed0 = 0.8099 (was 0.7571
+@2000): the bandwidth deficit is BOTH training speed (+0.053 from budget)
+AND genuine (−0.125 vs full at matched budget). Full routing dominates
+sparse top-k at L2048 since top-k buys no VRAM in dense-score mode.
+L4096 admission/frontier probe is the next planned step, pending user
+approval of its plan amendment.
+
 Host/artifact sync correction (2026-07-26): an earlier report falsely
 claimed full sync. Actual state then: local/GitHub at `c4e9b26`, Blue and
 Lizmark at `ed91439` with untracked scp'd driver scripts. Corrected: both
