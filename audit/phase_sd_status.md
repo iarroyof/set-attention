@@ -527,6 +527,18 @@ training speed; a budget-matched sparse control (topk256 @4000upd) is
 needed before the "aggregation needs bandwidth" claim is a convergence
 fact. Driver `scripts/run_lca_l2048_budget.sh`.
 
+Host/artifact sync correction (2026-07-26): an earlier report falsely
+claimed full sync. Actual state then: local/GitHub at `c4e9b26`, Blue and
+Lizmark at `ed91439` with untracked scp'd driver scripts. Corrected: both
+hosts fast-forwarded to `c4e9b26` (untracked scripts verified
+byte-identical to committed versions before removal; no tracked
+modifications on either host), and all missing per-run artifacts pulled
+into the local authoritative tree: topksweep 21 rows, l2048pilot 9 rows
+(seeds 0-2), l2048budget 2 rows — every TSV row's CSV present and
+schema-complete (train/loss, val/loss, val/accuracy, train/peak_vram_mib)
+under `out/lca_cmp/{topksweep,l2048pilot,l2048budget}/`. Both hosts'
+GPUs idle.
+
 Health check after first rows (2026-07-18): both workers alive, containers
 `lcacmp_blue_*` up on both GPUs, GPU util 39-96%, VRAM ~4.0 GiB per GPU
 (well under the 24 GiB ceiling; historical L<=2048 B4 SD peaks
