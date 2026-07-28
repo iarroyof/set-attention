@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
 # MRP-lca-cmp L2048 BUDGET probe (diagnostic, user-approved parallel track
-# 2026-07-25). Question: is 2000 updates too short at L2048? Rerun the two
-# decisive pilot rows at MAX_UPDATES=4000, seed 0:
-#   l2048budget_token    token dense
-#   l2048budget_b75full  b75 all_past dense topk=2047 (full)
-# Separate grid root (out/lca_cmp/l2048budget) and labels so results can
-# never be pooled/confused with l2048pilot rows. Resumable; strict log scan.
+# 2026-07-25; confirmation rows approved 2026-07-26). Question: is 2000
+# updates too short at L2048? Runs rows at MAX_UPDATES=4000.
+# ROWS is a space-separated list of "name:seed" pairs; known names:
+#   token       token dense
+#   b75full     b75 all_past dense topk=2047 (full)
+#   b75topk256  b75 all_past dense topk=256
+# Default "b75full:0 token:0" reproduces the original controlled pair.
+# Confirmation set (user staging 2026-07-26): "b75full:1 b75full:2" and
+# "b75topk256:0". Separate grid root (out/lca_cmp/l2048budget) and labels
+# so results can never be pooled/confused with l2048pilot (2000-upd) rows.
+# Resumable; strict log scan.
 set -uo pipefail
 cd "${REPO_ROOT:-$HOME/set-attention}"
 
 HOST_TAG="${HOST_TAG:-lizmark}"
 IMAGE="${IMAGE:-set-attention:latest}"
 MAX_UPDATES="${MAX_UPDATES:-4000}"
-SEEDS="${SEEDS:-0}"
+ROWS="${ROWS:-b75full:0 token:0}"
 GPU0="${GPU0:-0}"
 GPU1="${GPU1:-1}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -135,12 +140,34 @@ run_row () { # label family topk seed gpu ; family=token|b75 ; topk=0 for token
   return 0
 }
 
-echo "=== LCA L2048BUDGET ${HOST_TAG}: SEEDS='${SEEDS}', MAX_UPDATES=${MAX_UPDATES}, DRY_RUN=${DRY_RUN} ==="
-for seed in $SEEDS; do
-  run_row l2048budget_b75full b75 2047 "$seed" "$GPU0" &
+row_spec () { # name -> family topk
+  case "$1" in
+    token)       echo "token 0" ;;
+    b75full)     echo "b75 2047" ;;
+    b75topk256)  echo "b75 256" ;;
+    *) echo "ERROR unknown row $1" >&2; return 1 ;;
+  esac
+}
+
+echo "=== LCA L2048BUDGET ${HOST_TAG}: ROWS='${ROWS}', MAX_UPDATES=${MAX_UPDATES}, DRY_RUN=${DRY_RUN} ==="
+# ROWS: space-separated "name:seed" pairs. First two run in parallel on
+# GPU0/GPU1, remaining rows sequentially on GPU0.
+set -- $ROWS
+while [ $# -gt 0 ]; do
+  spec1="$1"; shift
+  spec2="${1:-}"; [ $# -gt 0 ] && shift
+  name1="${spec1%%:*}"; seed1="${spec1##*:}"
+  read -r fam1 topk1 <<< "$(row_spec "$name1")"
+  run_row "l2048budget_${name1}" "$fam1" "$topk1" "$seed1" "$GPU0" &
   p0=$!
-  run_row l2048budget_token token 0 "$seed" "$GPU1" &
-  p1=$!
-  wait "$p0" "$p1"
+  if [ -n "$spec2" ]; then
+    name2="${spec2%%:*}"; seed2="${spec2##*:}"
+    read -r fam2 topk2 <<< "$(row_spec "$name2")"
+    run_row "l2048budget_${name2}" "$fam2" "$topk2" "$seed2" "$GPU1" &
+    p1=$!
+    wait "$p0" "$p1"
+  else
+    wait "$p0"
+  fi
 done
 echo "=== LCA L2048BUDGET ${HOST_TAG} pass complete ==="

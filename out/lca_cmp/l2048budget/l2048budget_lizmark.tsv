@@ -1,0 +1,3 @@
+ts	host	label	gpu	exit	peak_vram_mib	train_loss	val_loss	val_acc	csv
+2026-07-26 16:17:37	lizmark	l2048budget_token_L2048_seed0	1	0	9123.87353515625	0.25982784942025317	0.11947961205078172	0.9438025951385498	out/lca_cmp/l2048budget/token/L2048/l2048budget_token_L2048_seed0.csv
+2026-07-26 17:55:31	lizmark	l2048budget_b75full_L2048_seed0	0	0	7201.146484375	0.2840773436906748	0.1464322849024029	0.9353032112121582	out/lca_cmp/l2048budget/b75/L2048/l2048budget_b75full_L2048_seed0.csv
