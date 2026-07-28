@@ -538,6 +538,15 @@ sparse top-k at L2048 since top-k buys no VRAM in dense-score mode.
 L4096 admission/frontier probe is the next planned step, pending user
 approval of its plan amendment.
 
+L4096 Stage-A admission (2026-07-28, Lizmark, 30 updates, native B4):
+**token 33745.8 MiB vs b75full 24910.2 MiB (−26.2%)** — the b75 memory
+edge grows with L (−12.5% L1024, −21.1% L2048, −26.2% L4096). Neither
+row fits Blue's 24 GB at L4096; scientific rows are Lizmark-only. No OOM
+fallback needed. Stage B (token + b75full, seeds 0-2, 4000 updates,
+seed 0 first) awaits user confirmation of these numbers. Driver
+`scripts/run_lca_l4096_admission.sh`; TSV
+`out/lca_cmp/l4096admission/l4096admission_lizmark.tsv`.
+
 Host/artifact sync correction (2026-07-26): an earlier report falsely
 claimed full sync. Actual state then: local/GitHub at `c4e9b26`, Blue and
 Lizmark at `ed91439` with untracked scp'd driver scripts. Corrected: both

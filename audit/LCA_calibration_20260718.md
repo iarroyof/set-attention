@@ -505,6 +505,31 @@ Driver `scripts/run_lca_l2048_budget.sh` (ROWS-parameterized); TSVs
 `out/lca_cmp/l2048budget/l2048budget_{blue,lizmark}.tsv` (tracked);
 logs `logs/lca_cmp/{blue,lizmark}/l2048budget_*.log`.
 
+## L4096 Stage-A Admission (2026-07-28, Lizmark): memory asymmetry is real
+
+Plan amendment 2026-07-27, Stage A (admission/memory ONLY; 30 updates;
+val metrics at 30 updates are meaningless and recorded as such): L=4096,
+native B4, prefix supervision, seed 0.
+
+| Row | Peak VRAM (native B4) | Fits Blue 24 GB? |
+|---|---:|---|
+| token prefix | 33745.8 MiB (33.0 GB) | NO |
+| b75 full routing (topk=4095) | 24910.2 MiB (24.3 GB) | NO (marginally over) |
+
+Findings: (a) b75 full routing needs **−26.2%** VRAM vs token at L4096
+(−8835.6 MiB) — the memory edge grows with L (−12.5% at L1024, −21.1% at
+L2048, −26.2% at L4096), consistent with coarse atoms shrinking the
+O(L^2) router score tensor faster than token's O(L^2) attention grows.
+(b) Neither row fits Blue's 24 GB natively at L4096 — L4096 scientific
+rows are Lizmark-only (token un-runnable on Blue at any microbatch that
+keeps B4-native semantics; b75 marginally over). (c) No OOM fallback was
+needed on Lizmark. Stage B (token + b75full, seeds 0-2, 4000 updates,
+seed 0 first) is gated on user confirmation of these numbers.
+
+Driver `scripts/run_lca_l4096_admission.sh`; TSV
+`out/lca_cmp/l4096admission/l4096admission_lizmark.tsv`; logs
+`logs/lca_cmp/lizmark/l4096adm_*.log`.
+
 ## Artifacts
 
 - Results TSV: `out/lca_cmp/calibration/calibration_runs_blue.tsv` (36 rows)

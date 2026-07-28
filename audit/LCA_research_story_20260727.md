@@ -113,10 +113,14 @@ undertraining signature.
   both training speed AND genuine bandwidth.** Since top-k buys no VRAM
   in dense-score mode, full routing dominates topk256 at L2048.
 
-### Node 10 — L4096 admission/frontier (2026-07-27, in flight)
+### Node 10 — L4096 admission/frontier (2026-07-27/28)
 Stage A admission/memory only: token vs b75full at L4096, native B4
-headline numbers, OOM = admission result. Stage B (scientific rows)
-gated on a real memory asymmetry + user confirmation.
+headline numbers, OOM = admission result. **Result: asymmetry confirmed —
+token 33745.8 MiB vs b75full 24910.2 MiB (−26.2%)**; the b75 memory edge
+grows with L (−12.5% L1024, −21.1% L2048, −26.2% L4096). Neither row
+fits Blue's 24 GB at L4096 — scientific rows are Lizmark-only. Stage B
+(scientific rows, seeds 0-2, 4000 updates) is gated on user
+confirmation of the admission numbers.
 
 ## 3. How the nodes connect (the logic of the path)
 
