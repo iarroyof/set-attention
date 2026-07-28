@@ -137,6 +137,26 @@ User directives 2026-07-23 (sequencing after the blur sweep), revised
    context transport — the distinction is recorded so future proposals do
    not conflate them.
 
+User-approved 2026-07-27 (L4096 admission/frontier amendment, staged):
+
+- **Stage A — admission/memory ONLY** (`l4096adm_*` labels, never pooled,
+  no scientific claims): rows token prefix and b75 full routing
+  (`all_past` + `score_mode=dense` + `router_topk=4095`), L=4096,
+  native B4, seed 0, `max_updates=30` (peak-VRAM admission only; Adam
+  states and attention peaks materialize within the first updates), on
+  Lizmark (>24 GB headroom expected; token dense at L4096 estimated
+  ~25-30 GB). The native-B4 peak is the headline number per the standing
+  directive to track un-optimized memory. If a row OOMs natively, record
+  the OOM, then retry with B2 x accum2 (label suffix `_mb2`) as a
+  memory-control fallback — the OOM itself is an admission result.
+- **Stage B — frontier rows, GATED**: launched only if Stage A shows a
+  real memory asymmetry (b75 materially below token, or token OOMs while
+  b75 fits) AND the user confirms after seeing admission numbers. Rows:
+  token + b75full, seeds 0-2, `max_updates=4000` (the L2048 budget
+  lesson), seed 0 first. Host per admission: rows <=24 GB go to Blue.
+- Pooling isolation and highway work remain deferred until L4096 shows
+  whether the current b75 mechanism keeps its frontier value at scale.
+
 - `model.implementation in {baseline_token,set_only}` only.
 - `attention_family=dense`, `backend=exact`; landmark/sparse/fixed-k are not
   active unless a later plan explicitly reopens them.
