@@ -70,6 +70,7 @@ row_spec () { # name -> family topk
   case "$1" in
     token)      echo "token 0" ;;
     b75full)    echo "b75 4095" ;;
+    b75full8k)  echo "b75 4095" ;;  # 8000-update budget-extension row
     *) echo "ERROR unknown row $1" >&2; return 1 ;;
   esac
 }
