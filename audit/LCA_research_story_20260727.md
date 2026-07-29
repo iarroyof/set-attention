@@ -1,7 +1,7 @@
 # LCA Research Story: From the Paper's Results to the L4096 Frontier
 
-Status document, created 2026-07-27, updated 2026-07-28 (Stage A results,
-Stage B seed0 launched, plan motivations added). Purpose: keep the full
+Status document, created 2026-07-27, updated 2026-07-29 (Stage A results,
+Stage B seed0 results, plan motivations added). Purpose: keep the full
 experimental pathway traceable — every question posed, every answer
 obtained, how the nodes connect, what remains open. Authoritative numbers
 live in `audit/LCA_calibration_20260718.md`; this document is the
@@ -182,19 +182,21 @@ signature.
 L (−12.5% L1024, −21.1% L2048, −26.2% L4096). Neither row fits Blue's
 24 GB (Blue total 24564 MiB; b75 exceeds it by ~346 MiB before safety
 margin). L4096 rows are Lizmark-only.
-**Stage B seed0 (DONE 2026-07-28):** token 0.9407 @ 33745.8 MiB in 42
-min (~1.6 upd/s); b75full **0.8382** @ 24915.9 MiB in 4 h 55 min
-(~0.23 upd/s — 7x slower than token). Token is L-insensitive as before
-(0.9443/0.9407/0.9407 at L1024/2048/4096). b75full drops vs its L2048
-seed0 (0.9353 → 0.8382), BUT its train-loss curve is still clearly
-descending at update 4000 (1000-update means: 0.4186 → 0.3591 → 0.2864
-→ 0.2486; −0.038 in the last 1000) — the same undertraining signature
-that preceded the L2048 reversal, so no parity-failure conclusion is
-licensed yet. Notable: b75's late train loss (~0.25) is already below
-token's final train mean (0.31) while its val loss is much worse (0.348
-vs 0.133) — if this survives budget extension it indicates a
-generalization gap, not just slow optimization. The slow admission
-wall-clock was dataset generation, not training.
+**Stage B seed0 (DONE 2026-07-28):** token 0.9407 @ 33745.8 MiB; b75full
+**0.8382** @ 24915.9 MiB. Launcher/result timestamps give 42 min for token
+and 4 h 55 min for b75full, so the practical throughput was about 7x slower
+for b75 on this host. These are external launcher timestamps, not
+framework-internal timers; the training loop currently logs update-indexed
+loss curves but no per-update wall-clock column. Token is L-insensitive as
+before (0.9443/0.9407/0.9407 at L1024/2048/4096). b75full drops vs its L2048
+seed0 (0.9353 → 0.8382), BUT its train-loss curve is still descending at
+update 4000 (1000-update means: 0.5208 → 0.3591 → 0.2864 → 0.2486; −0.038 in
+the last 1000) — the same qualitative undertraining signature that preceded
+the L2048 reversal, so no parity-failure conclusion is licensed yet. A
+possible generalization gap remains a watch item because b75's validation loss
+is much worse than token's (0.348 vs 0.133), but the earlier shorthand
+comparison "b75 late train below token train mean" is not a valid basis for
+that claim: token's own late curve is also below its endpoint run mean.
 
 # Part III — Why Stage B: the theoretical and empirical motivation
 
@@ -229,24 +231,27 @@ largest and token approaches hardware exclusion.**
    compute on an island where the memory premise is untested. Cost: 30
    updates. Answer: asymmetry real (−26.2%), Lizmark-only.
 2. **Stage B seed0 (DONE).** Motivation: quality-parity transfer +
-   honest throughput measurement before committing a matrix. Answer:
-   token 0.9407 (42 min); b75full 0.8382 (4.9 h) with its train loss
-   still descending at update 4000 — interpretation blocked on budget,
-   exactly as at L2048. Next gate is step 2b, not seeds 1-2.
+   practical throughput measurement before committing a matrix. Answer:
+   token 0.9407 (42 min by launcher/result timestamps); b75full 0.8382
+   (4.9 h by the same source) with its train loss still descending at
+   update 4000 — interpretation blocked on budget, exactly as at L2048.
+   These are external wall-clock measurements, not framework-internal timers.
 2b. **L4096 budget extension (PROPOSED, needs user decision).** b75full
-   seed0 at 8000 updates (~10 h). Motivation: the L2048 lesson — the
+   seed0 at 8000 updates (~10 h extrapolated from launcher timestamps).
+   Motivation: the L2048 lesson — the
    apparent L4096 gap may again be mostly budget; seeds 1-2 at a
    possibly-insufficient budget would produce three undertrained points.
    If 8000 upd closes most of the gap, seeds 1-2 follow at the extended
-   budget; if the curve has flattened and the train/val inversion
-   persists, the finding is a genuine L4096 generalization gap and the
-   story changes (pooling/operator work, Part IV step 4, becomes the
-   priority).
+   budget; if the curve has flattened and the validation gap persists,
+   the finding is a genuine L4096 generalization gap and the story changes
+   (pooling/operator work, Part IV step 4, becomes the priority).
 3. **Stage B seeds 1-2 (PENDING user decision).** Motivation: the L2048
    seed-variance finding (sd 0.037 vs token 0.007) makes single-seed
-   L4096 claims unsafe; with measured throughput (~35-70 min/row) the
-   remaining 4 rows cost ~4-5 h, not days. Criteria: launch if seed0 is
-   clean and runtime confirmed.
+   L4096 claims unsafe. Criteria: launch only after the budget decision,
+   because seeds 1-2 at a demonstrably insufficient update budget would
+   mainly replicate undertraining. If the 8000-update extension closes the
+   gap, seeds 1-2 should use that extended budget; if it does not, seeds
+   1-2 at 4000 are lower priority than operator/pooling diagnostics.
 4. **Sum-routing probe (motivated, NOT approved).** P3 + the bandwidth
    curve imply the aggregation operator matters: counting is a sum, but
    softmax routing computes a normalized average. A sum/sigmoid-gated
@@ -299,12 +304,14 @@ largest and token approaches hardware exclusion.**
 9. **The current Pareto claim (defensible phrasing):** b75 full routing
    delivers mean matched-regime quality (within ~0.033 of token) at
    −12.5% VRAM (L1024) and −21% VRAM (L2048), with higher optimization
-   variance in the set row. L4096 quality pending Stage B.
+   variance in the set row. L4096 has a confirmed −26.2% memory edge;
+   quality is not yet settled because the 4000-update b75 curve is still
+   descending.
 
 # Part VI — Open threads (status)
 
-- **Stage B seed0 b75full**: running at writing; then seeds 1-2
-  decision.
+- **Stage B seed0 b75full**: complete at 4000 updates; 8000-update
+  extension decision pending.
 - **Seed-variance origin**: unexplained; no probe yet.
 - **Pooling isolation** (mean vs soft-trimmed-Boltzmann vs oracle):
   deprioritized — the gap it was meant to explain shrank to ~0.03.

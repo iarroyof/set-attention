@@ -532,23 +532,26 @@ Driver `scripts/run_lca_l4096_admission.sh`; TSV
 
 ## L4096 Stage B seed0 (2026-07-28, Lizmark, 4000 updates): gap, but curve still descending
 
-| Row | val_acc | val_loss | Peak VRAM | Wall time |
+| Row | val_acc | val_loss | Peak VRAM | External wall time |
 |---|---:|---:|---:|---:|
 | token prefix | 0.9407 | 0.133 | 33745.8 MiB | 42 min |
 | b75 full routing | 0.8382 | 0.348 | 24915.9 MiB | 4 h 55 min |
 
 Findings: (a) token is L-insensitive (0.9443/0.9407/0.9407 at
-L1024/2048/4096) and 7x faster per update than b75full at L4096.
+L1024/2048/4096) and about 7x faster in launcher/result wall-clock
+throughput than b75full at L4096. The training loop logs update-indexed
+loss curves, not framework-internal per-update wall-clock.
 (b) b75full drops vs its L2048 seed0 (0.9353 -> 0.8382) — but its
 train-loss curve is still clearly descending at update 4000
-(1000-update means 0.4186/0.3591/0.2864/0.2486, −0.038 in the last
+(1000-update means 0.5208/0.3591/0.2864/0.2486, −0.038 in the last
 1000), the same undertraining signature that preceded the L2048
 reversal. NO parity-failure conclusion is licensed at this budget.
-(c) Watch item: b75's late train loss (~0.25) is already below token's
-final train mean (0.31) while val is much worse (0.348 vs 0.133) — if
-this survives budget extension it indicates a generalization gap, not
-slow optimization. Next proposed step: b75full seed0 at 8000 updates
-before any seeds 1-2 (user decision pending).
+(c) Watch item: b75's validation loss remains much worse than token's
+(0.348 vs 0.133), but the generalization-gap conjecture is not settled:
+the b75 curve has not plateaued, and comparing b75's late train loss to
+token's endpoint run mean is misleading because token's own late curve
+is also below its endpoint run mean. Next proposed step: b75full seed0
+at 8000 updates before any seeds 1-2 (user decision pending).
 
 Driver `scripts/run_lca_l4096_stageb.sh`; TSV
 `out/lca_cmp/l4096stageb/l4096stageb_lizmark.tsv`; logs
