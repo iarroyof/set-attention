@@ -547,6 +547,16 @@ seed 0 first) awaits user confirmation of these numbers. Driver
 `scripts/run_lca_l4096_admission.sh`; TSV
 `out/lca_cmp/l4096admission/l4096admission_lizmark.tsv`.
 
+L4096 Stage B seed0 (2026-07-28, Lizmark, 4000upd): token 0.9407 @
+33745.8 MiB (42 min, L-insensitive as before); b75full 0.8382 @
+24915.9 MiB (4h55m, 7x slower per update). b75 train loss still
+descending at update 4000 (−0.038 over last 1000) — same undertraining
+signature as the L2048 seed0 row that later reversed; no parity-failure
+conclusion licensed. Watch item: b75 late train loss below token's
+while val much worse — possible generalization gap if it survives
+budget extension. Proposed next: b75full seed0 @8000upd before seeds
+1-2 (user decision pending).
+
 Host/artifact sync correction (2026-07-26): an earlier report falsely
 claimed full sync. Actual state then: local/GitHub at `c4e9b26`, Blue and
 Lizmark at `ed91439` with untracked scp'd driver scripts. Corrected: both

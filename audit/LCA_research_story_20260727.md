@@ -182,11 +182,19 @@ signature.
 L (−12.5% L1024, −21.1% L2048, −26.2% L4096). Neither row fits Blue's
 24 GB (Blue total 24564 MiB; b75 exceeds it by ~346 MiB before safety
 margin). L4096 rows are Lizmark-only.
-**Stage B seed0 (in flight at writing):** token row completed 4000
-updates in ~33 min — **val_acc 0.9407 @ ~33.7 GB**, matching its L2048
-quality (0.944). The slow admission wall-clock was dataset generation,
-not training; throughput concern resolved (full 6-row matrix is hours,
-not days). b75full seed0 running at writing.
+**Stage B seed0 (DONE 2026-07-28):** token 0.9407 @ 33745.8 MiB in 42
+min (~1.6 upd/s); b75full **0.8382** @ 24915.9 MiB in 4 h 55 min
+(~0.23 upd/s — 7x slower than token). Token is L-insensitive as before
+(0.9443/0.9407/0.9407 at L1024/2048/4096). b75full drops vs its L2048
+seed0 (0.9353 → 0.8382), BUT its train-loss curve is still clearly
+descending at update 4000 (1000-update means: 0.4186 → 0.3591 → 0.2864
+→ 0.2486; −0.038 in the last 1000) — the same undertraining signature
+that preceded the L2048 reversal, so no parity-failure conclusion is
+licensed yet. Notable: b75's late train loss (~0.25) is already below
+token's final train mean (0.31) while its val loss is much worse (0.348
+vs 0.133) — if this survives budget extension it indicates a
+generalization gap, not just slow optimization. The slow admission
+wall-clock was dataset generation, not training.
 
 # Part III — Why Stage B: the theoretical and empirical motivation
 
@@ -220,10 +228,20 @@ largest and token approaches hardware exclusion.**
 1. **Stage A — admission (DONE).** Motivation: never spend training
    compute on an island where the memory premise is untested. Cost: 30
    updates. Answer: asymmetry real (−26.2%), Lizmark-only.
-2. **Stage B seed0 (IN FLIGHT).** Motivation: quality-parity transfer +
-   honest throughput measurement before committing a matrix. Token done
-   (0.9407, ~33 min); b75 pending. Decision gate: if b75 seed0 lands in
-   token's regime, the frontier claim extends to L4096.
+2. **Stage B seed0 (DONE).** Motivation: quality-parity transfer +
+   honest throughput measurement before committing a matrix. Answer:
+   token 0.9407 (42 min); b75full 0.8382 (4.9 h) with its train loss
+   still descending at update 4000 — interpretation blocked on budget,
+   exactly as at L2048. Next gate is step 2b, not seeds 1-2.
+2b. **L4096 budget extension (PROPOSED, needs user decision).** b75full
+   seed0 at 8000 updates (~10 h). Motivation: the L2048 lesson — the
+   apparent L4096 gap may again be mostly budget; seeds 1-2 at a
+   possibly-insufficient budget would produce three undertrained points.
+   If 8000 upd closes most of the gap, seeds 1-2 follow at the extended
+   budget; if the curve has flattened and the train/val inversion
+   persists, the finding is a genuine L4096 generalization gap and the
+   story changes (pooling/operator work, Part IV step 4, becomes the
+   priority).
 3. **Stage B seeds 1-2 (PENDING user decision).** Motivation: the L2048
    seed-variance finding (sd 0.037 vs token 0.007) makes single-seed
    L4096 claims unsafe; with measured throughput (~35-70 min/row) the
