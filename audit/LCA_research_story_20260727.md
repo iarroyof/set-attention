@@ -274,14 +274,23 @@ for b75 on this host. These are external launcher timestamps, not
 framework-internal timers; the training loop currently logs update-indexed
 loss curves but no per-update wall-clock column. Token is L-insensitive as
 before (0.9443/0.9407/0.9407 at L1024/2048/4096). b75full drops vs its L2048
-seed0 (0.9353 → 0.8382), BUT its train-loss curve is still descending at
-update 4000 (1000-update means: 0.5208 → 0.3591 → 0.2864 → 0.2486; −0.038 in
-the last 1000) — the same qualitative undertraining signature that preceded
-the L2048 reversal, so no parity-failure conclusion is licensed yet. A
-possible generalization gap remains a watch item because b75's validation loss
-is much worse than token's (0.348 vs 0.133), but the earlier shorthand
-comparison "b75 late train below token train mean" is not a valid basis for
-that claim: token's own late curve is also below its endpoint run mean.
+seed0 (0.9353 → 0.8382), with its train-loss curve still descending at
+update 4000 (1000-update means: 0.5208 → 0.3591 → 0.2864 → 0.2486).
+**Budget extension verdict (2026-07-29, b75full8k seed0): NOT
+undertraining — overfitting.** At 8000 updates: val_acc 0.7570, val_loss
+0.896 (vs 0.8382/0.348 at 4000) while train loss kept descending
+(0.2486 → 0.1907 over updates 4000-8000, replicating the 4000-upd curve
+exactly through update 4000). The L2048 rescue pattern does not repeat:
+at L4096 the set row overfits the 20k-example training distribution
+before reaching token parity; token is unaffected. The parity transfer
+FAILS at L4096 under the current recipe, and the failure mode is
+generalization. The val trajectory between 4000 and 8000 is unobserved
+(endpoint-only validation — measurement gap recorded); best observed
+b75 point is 0.8382 @4000, −0.103 below token. Per the pre-registered
+decision rule, operator/pooling/hybrid work is now promoted to
+priority, preceded by the cheap diagnostics that localize the
+generalization failure (periodic-eval trajectory probe; data-scale
+probe; regularization probe).
 
 # Part III — Why Stage B: the theoretical and empirical motivation
 
@@ -321,15 +330,23 @@ largest and token approaches hardware exclusion.**
    (4.9 h by the same source) with its train loss still descending at
    update 4000 — interpretation blocked on budget, exactly as at L2048.
    These are external wall-clock measurements, not framework-internal timers.
-2b. **L4096 budget extension (PROPOSED, needs user decision).** b75full
-   seed0 at 8000 updates (~10 h extrapolated from launcher timestamps).
-   Motivation: the L2048 lesson — the
-   apparent L4096 gap may again be mostly budget; seeds 1-2 at a
-   possibly-insufficient budget would produce three undertrained points.
-   If 8000 upd closes most of the gap, seeds 1-2 follow at the extended
-   budget; if the curve has flattened and the validation gap persists,
-   the finding is a genuine L4096 generalization gap and the story changes
-   (pooling/operator work, Part IV step 4, becomes the priority).
+2b. **L4096 budget extension (DONE — verdict: overfitting, not
+   undertraining).** b75full seed0 at 8000 updates: val_acc 0.7570,
+   val_loss 0.896 (vs 0.8382/0.348 @4000) while train loss kept
+   descending (0.2486 → 0.1907 over updates 4000-8000; the first 4000
+   updates replicate the 4000-upd run's curve means exactly). The L2048
+   rescue pattern does not repeat: at L4096 the set row overfits the
+   20k-example training distribution before reaching token parity.
+   Token is unaffected. Per the pre-registered rule, operator/pooling/
+   hybrid work is promoted to priority.
+2c. **Generalization diagnostics (PROPOSED, user decision).** In order:
+   (1) periodic-eval support in the LCA runner (endpoint-only
+   validation today — the val peak between updates 4000 and 8000 is
+   unobserved) + one trajectory probe to locate it; (2) data-scale
+   probe (40k train examples — is 20k too few at L4096 for the set
+   path?); (3) regularization probe (dropout/weight-decay). These
+   decide whether L4096 parity is a recipe problem or an operator
+   problem.
 3. **Stage B seeds 1-2 (PENDING user decision).** Motivation: the L2048
    seed-variance finding (sd 0.037 vs token 0.007) makes single-seed
    L4096 claims unsafe. Criteria: launch only after the budget decision,
@@ -377,27 +394,46 @@ largest and token approaches hardware exclusion.**
 5. **In dense-score mode, top-k is memory-neutral.** Sparse routing
    only saves memory if scoring itself is sparse; otherwise full
    routing dominates it outright.
-6. **Budget confounds are real and asymmetric.** Token saturates by
-   2000 updates at L2048; the set row needs ~2x. Fixed short budgets
-   risk calling undertraining an architecture deficit.
+6. **Budget confounds are real, asymmetric — and bounded.** Token
+   saturates by 2000 updates at L2048; the set row needs ~2x. Fixed
+   short budgets risk calling undertraining an architecture deficit.
+   But the L4096 extension shows the bound: past the val peak, more
+   budget actively hurts the set row, so "train longer" is not a
+   universal rescue either.
 7. **The set row is less seed-stable than token** (sd 0.037 vs 0.007 at
    L2048/4000upd) even when its mean matches token's regime.
 8. **The memory edge grows with L as the coefficient story predicts**
    (−12.5% / −21.1% / −26.2% at L1024/2048/4096), and token becomes
    hardware-excluded first. The frontier value of set attention
    increases exactly where dense token attention stops fitting.
-9. **The current Pareto claim (defensible phrasing):** b75 full routing
+9. **At L4096 the set row overfits where token does not.** With 20k
+   train examples, b75full's validation degrades past its peak
+   (0.8382 @4000 → 0.7570 @8000, val_loss 0.348 → 0.896) while train
+   loss keeps falling; token stays at 0.9407. The parity transfer fails
+   at L4096 under the current recipe — generalization, not
+   optimization, is the binding constraint at scale. Root cause
+   unlocalized: data scale, regularization, or the aggregation operator
+   itself.
+10. **The current Pareto claim (defensible phrasing):** b75 full routing
    delivers mean matched-regime quality (within ~0.033 of token) at
    −12.5% VRAM (L1024) and −21% VRAM (L2048), with higher optimization
-   variance in the set row. L4096 has a confirmed −26.2% memory edge;
-   quality is not yet settled because the 4000-update b75 curve is still
-   descending.
+   variance in the set row. At L4096 the memory edge is largest
+   (−26.2%) but quality parity is NOT established — the set row
+   overfits before reaching it.
 
 # Part VI — Open threads (status)
 
-- **Stage B seed0 b75full**: complete at 4000 updates; 8000-update
-  extension (b75full8k seed0) running on Lizmark since 2026-07-29
-  11:16; seeds 1-2 decision at the extended budget after it lands.
+- **Stage B seed0 b75full**: complete at 4000 (0.8382) and 8000 updates
+  (0.7570 — overfitting verdict). Seeds 1-2 on hold pending the
+  generalization diagnostics (Part IV 2c).
+- **Generalization diagnostics (next decision)**: (1) periodic-eval
+  support + trajectory probe to locate the L4096 val peak; (2)
+  data-scale probe (40k); (3) regularization probe. Then
+  operator/pooling/hybrid work per the pre-registered rule.
+- **Endpoint-only validation measurement gap**: the LCA runner
+  validates only at the endpoint (`scripts/run_lca_cmp.py:127`); the
+  val trajectory between budgets is unobserved. Periodic validation is
+  the missing instrument.
 - **Seed-variance origin**: unexplained; no probe yet.
 - **Pooling isolation** (mean vs soft-trimmed-Boltzmann vs oracle):
   deprioritized — the gap it was meant to explain shrank to ~0.03.
@@ -405,8 +441,6 @@ largest and token approaches hardware exclusion.**
   (Part IV 4-6), awaiting user approval.
 - **Learnable pooling alpha**: banned until the past instability is
   understood (fixed alpha only).
-- **Budget at L4096**: 8000-upd extension in flight; verify curves
-  before conclusions.
 - **Legacy debts surfaced by the bridge audit (I.3), outside the LCA
   line but tracked**: MRP-2 natural AR-hit evaluation (12/12
   checkpoints ready since ~2026-07-10, `evaluate_ar_hits.py` never

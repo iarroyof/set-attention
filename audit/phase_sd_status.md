@@ -560,6 +560,19 @@ extension or additional diagnostics because the curve does not yet show
 a plateau. Proposed next: b75full seed0 @8000upd before seeds 1-2 (user
 decision pending).
 
+L4096 budget-extension verdict (2026-07-29, b75full8k seed0 @8000upd):
+**overfitting, not undertraining.** val_acc 0.7570 / val_loss 0.896 (vs
+0.8382/0.348 @4000) while train loss kept falling (0.2486 -> 0.1907
+over updates 4000-8000; the first 4000 updates replicate the 4000-upd
+run's curve means exactly — deterministic same-seed check). The L2048
+rescue pattern does not repeat: at L4096 the set row overfits the 20k
+train examples before reaching token parity (token unaffected, 0.9407).
+Per the pre-registered rule, operator/pooling/hybrid work is promoted
+to priority, preceded by the proposed generalization diagnostics
+(periodic-eval trajectory probe — the runner validates only at the
+endpoint, so the val peak between 4000 and 8000 is unobserved;
+data-scale probe 40k; regularization probe). Seeds 1-2 on hold.
+
 Host/artifact sync correction (2026-07-26): an earlier report falsely
 claimed full sync. Actual state then: local/GitHub at `c4e9b26`, Blue and
 Lizmark at `ed91439` with untracked scp'd driver scripts. Corrected: both

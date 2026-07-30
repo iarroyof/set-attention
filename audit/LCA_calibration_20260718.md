@@ -557,6 +557,46 @@ Driver `scripts/run_lca_l4096_stageb.sh`; TSV
 `out/lca_cmp/l4096stageb/l4096stageb_lizmark.tsv`; logs
 `logs/lca_cmp/lizmark/l4096sb_*.log`.
 
+## L4096 budget extension (2026-07-29, Lizmark, b75full seed0 @8000): overfitting, not undertraining
+
+Decisive: doubling the budget did NOT close the gap — it degraded
+validation.
+
+| Row | val_acc | val_loss | Peak VRAM |
+|---|---:|---:|---:|
+| b75 full @4000 (seed0) | 0.8382 | 0.348 | 24915.9 MiB |
+| b75 full @8000 (seed0) | **0.7570** | **0.896** | 24915.9 MiB |
+| token @4000 (seed0) | 0.9407 | 0.133 | 33745.8 MiB |
+
+Train-loss curve (1000-update means) keeps descending through 8000:
+0.5208/0.3591/0.2864/0.2486/0.2204/0.2155/0.1902/0.1907 — while val
+loss explodes 0.348 → 0.896. Classic overfitting signature, and the
+first 4000 updates replicate the 4000-upd run's curve means exactly
+(same seed, deterministic). **The L2048 rescue pattern (budget
+extension closes the gap) does NOT repeat at L4096: the set row
+overfits the 20k-example training distribution before reaching token
+parity.** Token shows no such effect.
+
+Measurement gap (recorded): the runner evaluates validation only at the
+endpoint (`scripts/run_lca_cmp.py:127`), so the val trajectory between
+4000 and 8000 — where it peaked, and the peak height — is unobserved.
+Periodic validation is the missing instrument; without it the
+val-optimal budget at L4096 is unknown. Best observed b75full L4096
+point so far: 0.8382 @4000upd, still −0.103 below token.
+
+Interpretation status (per the pre-registered decision rule "if it
+plateaus with bad validation, operator/pooling/hybrid work becomes
+priority"): the L4096 quality-parity transfer FAILS at seed0 under the
+current recipe, and the failure mode is generalization, not
+optimization. Open levers, in order of information per GPU-hour:
+(1) periodic-eval trajectory probe (locate the val peak; needs a small
+runner change + tests); (2) data-scale probe (40k train examples — is
+20k simply too few at L4096 for the set path?); (3) regularization
+probe (dropout/wd); (4) operator work (sum-routing/hybrid — if the
+model memorizes marker configurations instead of learning an additive
+operator, the operator hypothesis becomes the prime suspect). Seeds 1-2
+at 4000 upd remain unlaunched; their value now depends on (1).
+
 ## Artifacts
 
 - Results TSV: `out/lca_cmp/calibration/calibration_runs_blue.tsv` (36 rows)
