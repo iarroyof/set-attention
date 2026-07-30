@@ -1,7 +1,8 @@
 # LCA Research Story: From the Paper's Results to the L4096 Frontier
 
-Status document, created 2026-07-27, updated 2026-07-29 (Stage A results,
-Stage B seed0 results, plan motivations added). Purpose: keep the full
+Status document, created 2026-07-27, updated 2026-07-29 (unreported
+Codex-era bridge section I.3 added; Stage A results, Stage B seed0
+results, plan motivations). Purpose: keep the full
 experimental pathway traceable — every question posed, every answer
 obtained, how the nodes connect, what remains open. Authoritative numbers
 live in `audit/LCA_calibration_20260718.md`; this document is the
@@ -94,6 +95,90 @@ does it preserve the paper's memory frontier while doing so? The LCA
 (long-context aggregation) task was built as the minimal decisive
 probe: count markers distributed over L∈{1024,2048,4096} positions,
 bucketed answer, synthetic, seed-deterministic, matched token baseline.
+
+## I.3 The unreported bridge (2026-07-08 → 2026-07-18)
+
+The 2026-07-08 "freeze" was a *results* freeze (the 255-row paper5
+bundle, `audit/SD_dense_paper5_final_20260708.md`); the Codex session
+kept working for ten more days, and the paper `.tex` kept absorbing
+results through ~07-15. This section reports that period from the
+session rollout and the audit trail — including the results that never
+made it into the paper — because the LCA line is its direct
+continuation, not a new departure.
+
+**Work absorbed into the paper during the bridge (for completeness):**
+
+1. **Short-B3 bridge extension** (`sd_grid_seeded_v1` namespace,
+   2026-07-10 → 07-13): the missing L512/B3 and L1024/B3 islands,
+   60 cells, seeds 0-4, token + b0..b100, split blue/lizmark in
+   accelerated co-resident mode. Both islands 30/30 endpoint-valid. b25
+   was the best mean-PPL set row at BOTH islands (L512/B3:
+   943.7±26.4 @ 3272.8 MiB vs token 1048.0±30.0 @ 3195.0; L1024/B3:
+   969.2±41.9 @ 6250.3 vs token 988.0±23.8 @ 6207.8) — supporting the
+   interior-optimum claim and adding the batch-sensitivity nuance the
+   paper now states. Caveat recorded: co-resident runs give valid
+   PPL/per-process peak but not exclusive-capacity wall-time.
+   Evidence: `audit/SD_short_b3_bridge_20260713.md`.
+2. **MRP-3 MQAR primary completion** (2026-07-09 → 07-15): after a
+   calibration incident (runner evaluated only at endpoint; patched to
+   the registered 500-update cadence —
+   `audit/incident_mrp3_calibration_eval_cadence_20260708.md`) the LR
+   was frozen at 1e-3/12500 updates. The 18-row primary matrix
+   (interrupted by a blue shutdown at 8/18, resumed 07-13) completed
+   null: all rows at chance (b25 0.0002474 vs the 0.90 gate; 2.304M
+   queries/row), MRP-4 NOT_TRIGGERED. Descriptively: token best loss
+   (8.3424), b25 best set-row loss (8.4891) and cheapest-but-one VRAM.
+   Reported in the paper as `tab:mqar-prototype-comparison`.
+   Evidence: `audit/MRP_3_mqar_mechanism.md`.
+
+**Results that were never reported in the paper:**
+
+3. **L4096/B4/Dkv512 MQAR capacity preflight** (2026-07-09, Lizmark,
+   one update, frozen LR/budget, 6 rows): peak VRAM descends
+   monotonically with blur — token 34239.0, b0 39922.4, b25 30342.1,
+   b50 23539.8, b75 18919.1, b100 12880.6 MiB; no NaN/OOM. Directional
+   support for the feasibility-extension claim (b25 saves ~3.9 GiB vs
+   token; b100 ~21.4 GiB) but a different task/config than the WT2
+   L4096/B4 censored boundary, and one-update feasibility only — it
+   cannot rescue the paper's b25-at-L4096/B4 hole. This is the direct
+   ancestor of our L4096 admission probe: same question (does blur
+   keep buying memory at L4096?), now asked on the task that matters.
+   Evidence: `audit/server_copy_provenance_20260709.md`, artifacts
+   `out/mqar_capacity_preflight_L4096_B4_lr0p001_u12500/`.
+4. **MRP-3 B4 common-batch preflight** (2026-07-09, minor): token
+   9365.9 / b0 10951.7 / b25 8826.3 / b50 7396.5 / b75 6050.4 / b100
+   3969.1 MiB — same monotone memory story at L2048. Feasibility only.
+5. **MRP-2 natural AR-hit: retrained but NEVER evaluated.** No
+   compatible checkpoints existed anywhere, so the registered 12-cell
+   retrain (token/b0/b25/b100, L2048/B4, seeds 0-2) ran 2026-07-08 →
+   ~07-10 and completed 12/12 finals (after two failed launches: HF
+   cache mount, then a zero-head b0/b100 encoding bug). **The
+   registered `evaluate_ar_hits.py` pass was never launched — no hit
+   rates exist.** The paper's "next mechanism test" language still
+   stands on nothing; MRP-5 (tokenizer-matched WT2/PG-19) remains
+   blocked behind it. Evidence: `audit/MRP_2_natural_ar_hits.md`,
+   `audit/phase_sd_status.md` §"MRP-2 Natural AR-Hit Launch State".
+
+**The pivot (2026-07-16 → 07-18):** the MQAR null was read as
+"token-precision recall is the wrong probe for a compressive memory —
+test aggregation instead". MRP-lca-cmp was planned; grad-accumulation
+and eval-microbatching were added with batching-preservation tests; a
+false-start branch (`mrp-lca-cmp` from `origin/main`) was corrected to
+`mrp-lca-cmp-sd` before any scientific run
+(`audit/incident_branch_host_context_20260717.md`); both host checkouts
+were repaired to clean `mrp-lca-cmp-sd@2ded5d1`. On 07-18 the
+registered 36-row LCA calibration completed — Gate 1 PASS (token
+learns), Gate 2 FAIL (all 30 set rows at chance) — which is Node 1 of
+Part II. The pending debts at the moment this chat started were:
+MRP-2 AR-hit evaluation (checkpoints ready), MRP-5 (blocked), PG-19
+transfer table (missing), and the Gate-2 follow-up decision (executed
+as Nodes 2-3 below).
+
+**Minor provenance flags from the cross-check:** the audit names only
+two of the three MRP-2 launch logs (the middle `175220` launch appears
+only in the rollout); the short-B3 launch date differs by local-vs-UTC
+labeling (07-10 local = 07-11 UTC); no numeric disagreements were found
+between the rollout, the audits, and the artifact TSVs.
 
 # Part II — The pathway, node by node
 
@@ -311,7 +396,8 @@ largest and token approaches hardware exclusion.**
 # Part VI — Open threads (status)
 
 - **Stage B seed0 b75full**: complete at 4000 updates; 8000-update
-  extension decision pending.
+  extension (b75full8k seed0) running on Lizmark since 2026-07-29
+  11:16; seeds 1-2 decision at the extended budget after it lands.
 - **Seed-variance origin**: unexplained; no probe yet.
 - **Pooling isolation** (mean vs soft-trimmed-Boltzmann vs oracle):
   deprioritized — the gap it was meant to explain shrank to ~0.03.
@@ -319,7 +405,13 @@ largest and token approaches hardware exclusion.**
   (Part IV 4-6), awaiting user approval.
 - **Learnable pooling alpha**: banned until the past instability is
   understood (fixed alpha only).
-- **Budget at L4096**: 4000 upd used; verify curves before conclusions.
+- **Budget at L4096**: 8000-upd extension in flight; verify curves
+  before conclusions.
+- **Legacy debts surfaced by the bridge audit (I.3), outside the LCA
+  line but tracked**: MRP-2 natural AR-hit evaluation (12/12
+  checkpoints ready since ~2026-07-10, `evaluate_ar_hits.py` never
+  launched — no hit rates exist); MRP-5 (tokenizer-matched WT2/PG-19)
+  blocked behind MRP-2; PG-19 transfer table missing from the paper.
 
 # Part VII — Retrospective: why top-k was never swept before the matrix
 
