@@ -1,0 +1,24 @@
+\begin{table}[t]
+\centering
+\caption{LCA calibration and mechanistic-probe cascade at $L=1024$.  All probe
+rows are the b25 set row (six fine/two coarse heads) at seed 0 and 2000
+updates; the registered calibration row instead spans all blur allocations and
+seeds $0,\ldots,2$ under the paper's frozen configuration
+(\texttt{endpoint\_window} fiber, \texttt{router\_topk=16}, final-token loss).
+Chance accuracy is $0.5$.  Single-seed probe values are diagnostic, not
+matrix evidence; the multi-seed follow-up is reported in the text.}
+\label{tab:lca-calibration-probes}
+\begin{tabular}{llr}
+\toprule
+Probe & Configuration change & Val.\ acc.\ \\
+\midrule
+Registered calibration & frozen config, all set rows & $0.483$--$0.524$ \\
+Router-dense probe & \texttt{all\_past} fiber, dense scoring, top-$k{=}16$ & $0.498$ \\
+P1 & ${}+{}$ full routing (top-$k{=}1023$) & $0.827$ \\
+P2 & ${}+{}$ prefix supervision (top-$k{=}16$) & $0.787$ \\
+P2 token control & prefix supervision, dense token row & $0.903$ \\
+P3 & oracle count feature (top-$k{=}16$, final-token loss) & $0.985$ \\
+Combined & full routing ${}+{}$ prefix supervision & $0.936$ \\
+\bottomrule
+\end{tabular}
+\end{table}

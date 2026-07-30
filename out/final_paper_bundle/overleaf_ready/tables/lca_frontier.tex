@@ -1,0 +1,28 @@
+\begin{table}[t]
+\centering
+\caption{Quality--memory frontier on the LCA marker-counting task.  The b75
+row is two fine $(w,s)=(2,1)$ and six coarse $(4,2)$ heads with the
+\texttt{all\_past} candidate fiber, dense router scoring, full routing
+(top-$k{=}$\texttt{candidate\_count\_max}), prefix supervision, and
+\texttt{anchor\_span} readout; token rows are dense token attention under the
+same data, supervision, and update budget.  $L=1024$ rows are three-seed
+means at 2000 updates; $L=2048$ rows are at 4000 updates (b75 three-seed,
+token seed 0, already saturated at 2000); $L=4096$ rows are seed 0 at 4000
+updates.  Peak VRAM is reported in MiB.  The $L=4096$ token peak exceeds the
+24\,GB card of the short-context host, so $L=4096$ rows exist only on the
+larger host.  The $L=4096$ b75 value is the best observed point; extended
+budget degrades it (see text), so quality parity at $L=4096$ is not
+established.}
+\label{tab:lca-frontier}
+\begin{tabular}{cccrccr}
+\toprule
+& \multicolumn{2}{c}{token} & \multicolumn{2}{c}{b75 full routing} & \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5}
+$L$ & Val.\ acc.\ & Peak MiB & Val.\ acc.\ & Peak MiB & $\Delta$ VRAM \\
+\midrule
+1024 & $0.9443\pm0.0317$ & 2681 & $0.9233\pm0.0157$ & 2347 & $-12.5$\% \\
+2048 & $0.9438$ & 9124 & $0.9078\pm0.0368$ & 7201 & $-21.1$\% \\
+4096 & $0.9407$ & 33746 & $0.8382$ & 24916 & $-26.2$\% \\
+\bottomrule
+\end{tabular}
+\end{table}

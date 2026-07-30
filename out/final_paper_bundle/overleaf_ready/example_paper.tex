@@ -720,6 +720,206 @@ natural AR-hit evaluation still uses the frozen b25 operating point and
 token/b0/b100 controls to test repeated-token associative recall without
 changing the architecture.
 
+\subsection{From Perplexity to Global Aggregation: the LCA Diagnostic}
+\label{sec:results-lca-task}
+
+The frontier and null results above leave one mechanism question open.  Every
+set row in the registered matrix ran the same frozen routing configuration:
+\texttt{endpoint\_window} candidate fiber, \texttt{router\_topk=16},
+\texttt{router.score\_mode=candidate\_gather}, and a final-token language-model
+loss.  Perplexity is dominated by local context, so a failure of \emph{global}
+aggregation would be invisible in it, and the only non-LM probe (MQAR) returned
+null at chance.  After the registered matrix there was therefore no evidence
+about what set states retain of information distributed across the whole
+context, and no evidence about whether the memory frontier survives on a task
+that requires such retention.  We built the LCA (long-context aggregation)
+diagnostic to force exactly this question: synthetic sequences of length
+$L\in\{1024,2048,4096\}$ contain marker tokens distributed across the context,
+and the target is a bucketed count of those markers (a binary count bucket in
+the registered configuration, so chance accuracy is $0.5$).  The task is
+seed-deterministic, token and set rows share data, supervision, architecture
+guards, and optimizer-update budget, and models train on 20{,}000 generated
+examples.  LCA is a controlled diagnostic that complements the WikiText-2
+perplexity matrix; it does not replace it, and we do not draw natural-language
+conclusions from it.
+
+\subsection{Calibration: Supervision and Routing Bandwidth, Not Aggregation per se}
+\label{sec:results-lca-calibration}
+
+The registered 36-row calibration matrix (token plus b0--b100, $L=1024$ and
+$L=2048$, seeds $0,\ldots,2$, 2000 updates) produced a clean failure.  The
+token control learns the task ($0.713\pm0.083$ mean accuracy at $L=1024$,
+individual seeds $0.618$--$0.770$), while every set row stays at chance
+($0.483$--$0.524$ across all blur allocations, both lengths, and all seeds).
+The cause is topological, not statistical: under \texttt{endpoint\_window},
+each query routes only to the roughly two set atoms adjacent to its own
+position, so distant markers are unreachable from the supervised final token,
+and six layers of local diffusion cannot bridge $L=1024$.  The paper's frozen
+fiber is incapable of global aggregation by construction, which means the
+WikiText-2 frontier was measured entirely inside a local regime.
+
+Repairing reachability was necessary but not sufficient.  Switching to an
+\texttt{all\_past} fiber is memory-infeasible in \texttt{candidate\_gather}
+mode (the router materializes a $[B,H,T,C,d_\phi]$ tensor; the probe was
+OOM-censored on both hosts, an implementation boundary rather than a
+scientific result).  Scoring densely instead
+(\texttt{router.score\_mode=dense}, scores materialized as $[B,H,T,M]$ with
+invalid entries masked) fits at $3216$ MiB with
+\texttt{candidate\_count\_max=1023}, but the row still does not learn under
+final-token-only supervision (validation accuracy $0.498$ versus $0.770$ for
+the matched token seed).  Three mechanistic probes then localized the residual
+deficit (Table~\ref{tab:lca-calibration-probes}).  P1, full routing
+(\texttt{router\_topk=1023}), reaches $0.827$: top-$k{=}16$ sparse selection
+was discarding the many weak evidence paths that global counting needs.  P2,
+prefix supervision (every position predicts its own prefix count), reaches
+$0.787$ against a token control at $0.903$: final-token-only supervision was an
+independent bottleneck that token attention tolerates, because its gradient
+routes directly to all positions, and sparse-fiber set attention does not.
+P3, an oracle count feature, reaches $0.985$: when the count is represented,
+routing and readout solve the task, so the residual deficit lives in the
+training-signal/routing interface rather than in an intrinsic inability of
+set-dictionary attention to aggregate.  The combined configuration
+(\texttt{all\_past} $+$ dense scoring $+$ full routing $+$ prefix supervision)
+reaches $0.936$ on seed 0, apparently above the token control --- but a
+three-seed mini-calibration showed this to be seed noise: token
+$0.9443\pm0.0317$, b25 with full routing $0.8956\pm0.0407$, b25 with
+top-$k{=}16$ $0.8171\pm0.0114$.  We apply the resulting lesson throughout this
+section: no single-seed conclusions, and set rows carry higher seed variance
+than token rows.
+
+\input{tables/lca_calibration_probes}
+
+\subsection{The Memory Frontier on Long-Context Aggregation}
+\label{sec:results-lca-frontier}
+
+Table~\ref{tab:lca-frontier} reports the frontier under the repaired
+configuration, using b75 (two fine, six coarse heads) as the set row.  The
+choice of b75 is itself a result: a blur sweep at $L=1024$ over
+$\{$b25, b50, b75, b100$\}$ found quality non-monotone in blur, with
+b75 ($0.9233\pm0.0157$) above b50 $\approx$ b25 ($0.8956$--$0.8974$ means)
+above b100.  Coarse atoms both shrink the $O(L^2)$ score tensor and act as
+better evidence units for counting, while the all-coarse row loses detail.
+Note the inversion against the WikiText-2 matrix, where b25 was the interior
+optimum: resolution and compression trade differently across task classes.
+
+\input{tables/lca_frontier}
+
+Three patterns matter.  First, the memory advantage is real and grows with
+context length: $-12.5$\% at $L=1024$, $-21.1$\% at $L=2048$, and $-26.2$\% at
+$L=4096$.  This is the exact-dense coefficient story materializing: blur
+reduces the score-memory coefficient while the backend stays dense, and as $L$
+grows the score term dominates total memory, so the b75/token peak ratio falls
+toward its asymptotic value.  At $L=4096$ the token row peaks at $33746$ MiB,
+which excludes it from the 24\,GB card of the short-context host, while the
+b75 row at $24910$ MiB (Stage A admission measurement, 30 updates) nearly fits;
+$L=4096$ rows therefore exist only on the larger host.  This is the same
+regime as the censored $L=4096$/B4 boundary of the WikiText-2 matrix: exactly
+where dense token attention stops fitting.
+
+Second, matched-regime quality holds at $L=1024$ and $L=2048$ but with higher
+set-row variance.  At $L=1024$ b75 is within seed noise of token
+($0.9233\pm0.0157$ versus $0.9443\pm0.0317$).  At $L=2048$ an apparent quality
+gap at 2000 updates (b75 seed 0 at $0.8158$ versus token $0.9440$) proved to
+be mostly a budget confound: at 4000 updates the same seed reaches $0.9353$,
+and the three-seed mean is $0.9078\pm0.0368$ at $-21.1$\% VRAM, with token
+already saturated at $0.9438$.  The Pareto statement holds on average but not
+per seed (seed 1 reaches $0.8660$), and the set row's seed standard deviation
+is $0.037$ against $0.007$ for token at this island.  Token quality is
+$L$-insensitive throughout ($0.9443$, $0.9438$, $0.9407$ at
+$L=1024,2048,4096$).
+
+Third, sparse top-$k$ routing is dominated by full routing in the current
+implementation.  A bandwidth sweep at b75/$L=1024$ over
+top-$k\in\{16,\ldots,1023\}$ (three seeds per $k$) is monotone in quality with
+no plateau (Table~\ref{tab:lca-topk-bandwidth}), while peak VRAM is flat
+across $k$ ($2347$--$2408$ MiB): in dense-score mode the $[B,H,T,M]$ tensor is
+materialized regardless of $k$, so top-$k$ sparsity is not a memory lever.
+The deficit is also not only training speed: at $L=2048$ and a matched
+4000-update budget, top-$k{=}256$ reaches $0.8099$ against $0.9353$ for full
+routing (both seed 0), a genuine bandwidth loss.  Sparsity would have to move
+into scoring itself to buy memory; we do not claim it does.
+
+\begin{table}[t]
+\centering
+\caption{Routing-bandwidth sweep at b75/$L=1024$ under dense scoring (three
+seeds per $k$, 2000 updates).  Validation accuracy is the three-seed mean and
+is monotone in top-$k$ with no plateau; peak VRAM is flat across $k$ because
+the dense $[B,H,T,M]$ score tensor is materialized regardless of $k$.  Full
+routing ($k{=}1023=\texttt{candidate\_count\_max}$) is therefore the dominant
+operating point in this router mode.}
+\label{tab:lca-topk-bandwidth}
+\begin{tabular}{rrr}
+\toprule
+top-$k$ & Val.\ acc.\ (mean) & Peak MiB \\
+\midrule
+16 & $0.7836$ & 2349 \\
+32 & $0.8181$ & 2352 \\
+64 & $0.8501$ & 2360 \\
+128 & $0.8509$ & 2378 \\
+256 & $0.8707$ & 2408 \\
+512 & $0.8821$ & 2375 \\
+1023 (full) & $0.9233$ & 2347 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The $L=4096$ island is where the frontier claim currently breaks, and we
+report the failure mode rather than the gap alone.  At 4000 updates the token
+row reaches $0.9407$ and the b75 full-routing row reaches $0.8382$ (both seed
+0), with the set row's train loss still descending (1000-update means $0.5208
+\to 0.3591 \to 0.2864 \to 0.2486$) --- the same undertraining signature that
+the budget extension rescued at $L=2048$.  Here it does not.  Doubling the
+budget to 8000 updates degrades validation accuracy to $0.7570$ and validation
+loss from $0.348$ to $0.896$, while train loss keeps falling ($0.2486 \to
+0.1907$, replicating the 4000-update curve exactly through update 4000).  The
+set row overfits the 20{,}000-example training distribution before reaching
+token parity; token is unaffected.  Quality parity at $L=4096$ is therefore
+not established, and the binding constraint at scale is generalization of the
+set path --- data scale, regularization, or the aggregation operator itself ---
+not optimization budget and not memory.  Two measurement caveats apply: the
+$L=4096$ rows are single-seed, and the runner validates only at the endpoint,
+so the validation peak between updates 4000 and 8000 is unobserved; the best
+observed b75 point is $0.8382$, $-0.103$ below token.  We also note a
+practical cost: by external launcher timestamps the $L=4096$ b75 run took
+about $4.9$ hours against $42$ minutes for token on the same host, roughly
+$7\times$ slower; these are wall-clock launcher measurements, not
+framework-internal timers.
+
+\subsection{Updated Claim Boundary}
+\label{sec:results-lca-claim-boundary}
+
+The LCA campaign tightens the claim boundary of
+Section~\ref{sec:results-claim-boundary} in four ways.  (i) The memory
+frontier advantage is real on a task that requires global aggregation, and it
+grows with context length ($-12.5$\% $\to$ $-21.1$\% $\to$ $-26.2$\%), exactly
+where dense token attention becomes hardware-excluded; this is the regime in
+which set attention must win if the frontier story is true.  (ii) The paper's
+frozen endpoint-window/final-token configuration badly understated the set
+path's aggregation ability: reachability, supervision density, and routing
+bandwidth are configuration-level properties, and under the repaired
+configuration the set path aggregates globally at all.  Configuration matters
+as much as blur allocation.  (iii) Matched-regime quality parity holds at
+$L=1024$ and $L=2048$ (within about $0.02$--$0.03$ of token in mean accuracy,
+with higher set-row seed variance and overlapping intervals), but it fails so
+far at $L=4096$, where the set row overfits the 20{,}000-example training
+distribution before reaching parity.  (iv) The non-claims stand and gain one
+member: no subquadratic scaling (router scoring is still dense), no universal
+token-attention superiority, no token equivalence of b0, no associative-recall
+mechanism, and no benefit from sparse top-$k$ routing, which is currently
+dominated by full routing at equal memory.
+
+The immediate next steps follow from the $L=4096$ generalization verdict: a
+periodic-eval trajectory probe to locate the unobserved validation peak, a
+data-scale probe at 40{,}000 training examples, and a regularization probe, in
+that order, to decide whether parity at $L=4096$ is a recipe problem or an
+operator problem.  The operator question is motivated independently: counting
+is a sum, but softmax routing computes a normalized average, and the P3 oracle
+result ($0.985$) shows the task is solvable once the count is represented, so
+a sum/additive-routing variant is the natural mechanistic test.  A hybrid
+linear$+$sparse-retrieval branch may follow from that diagnosis; if pursued it
+will be labeled explicitly as a new branch with its own memory accounting, and
+never used to rescue the set-only claims above.
+
 \iffalse
 Legacy Results content from here through the capacity-diagnostics subsection
 is deprecated for the current set-dictionary paper direction.  It is retained
