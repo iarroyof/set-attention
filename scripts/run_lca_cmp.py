@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 from pathlib import Path
 import sys
 
@@ -124,6 +125,11 @@ def main() -> None:
     eval_microbatch_size = None if eval_microbatch_size is None else int(eval_microbatch_size)
     eval_every = int(cfg["training"].get("eval_every", 0) or 0)
     use_periodic_eval = eval_every > 0 and not args.preflight_one_step
+    lr_schedule = str(cfg["training"].get("lr_schedule", "none") or "none")
+    if lr_schedule not in {"none", "cosine"}:
+        raise ValueError(f"unsupported training.lr_schedule={lr_schedule!r} (expected 'none' or 'cosine')")
+    if lr_schedule != "none" and not use_periodic_eval:
+        raise ValueError("training.lr_schedule requires training.eval_every > 0 (periodic-eval path)")
     try:
         logger.start_epoch(
             num_train_samples=max_updates * int(cfg["data"]["batch_size"]) * grad_accum_steps
@@ -142,6 +148,13 @@ def main() -> None:
             val_metrics = None
             while completed_updates < max_updates:
                 chunk = min(eval_every, max_updates - completed_updates)
+                if lr_schedule == "cosine":
+                    # Cosine decay applied as a per-chunk staircase: lr is set
+                    # at chunk starts to lr0 * 0.5 * (1 + cos(pi * progress)).
+                    progress = completed_updates / max(max_updates, 1)
+                    lr_now = float(cfg["training"]["lr"]) * 0.5 * (1.0 + math.cos(math.pi * progress))
+                    for group in optimizer.param_groups:
+                        group["lr"] = lr_now
                 block = train_lca_update_block(
                     model,
                     batch_iter,
@@ -172,7 +185,8 @@ def main() -> None:
                 )
                 print(
                     f"[periodic-eval] update={completed_updates} "
-                    f"val_loss={val_metrics['loss']:.4f} val_acc={val_metrics['accuracy']:.4f}",
+                    f"val_loss={val_metrics['loss']:.4f} val_acc={val_metrics['accuracy']:.4f} "
+                    f"lr={optimizer.param_groups[0]['lr']:.3e}",
                     flush=True,
                 )
             loss_avg = total_loss / max(total_tokens, 1)
