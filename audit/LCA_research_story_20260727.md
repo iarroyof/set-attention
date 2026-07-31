@@ -276,21 +276,39 @@ loss curves but no per-update wall-clock column. Token is L-insensitive as
 before (0.9443/0.9407/0.9407 at L1024/2048/4096). b75full drops vs its L2048
 seed0 (0.9353 → 0.8382), with its train-loss curve still descending at
 update 4000 (1000-update means: 0.5208 → 0.3591 → 0.2864 → 0.2486).
-**Budget extension verdict (2026-07-29, b75full8k seed0): NOT
-undertraining — overfitting.** At 8000 updates: val_acc 0.7570, val_loss
-0.896 (vs 0.8382/0.348 at 4000) while train loss kept descending
+**Budget extension (2026-07-29, b75full8k seed0): endpoint 0.7570/
+val_loss 0.896 at 8000 updates** while train loss kept descending
 (0.2486 → 0.1907 over updates 4000-8000, replicating the 4000-upd curve
-exactly through update 4000). The L2048 rescue pattern does not repeat:
-at L4096 the set row overfits the 20k-example training distribution
-before reaching token parity; token is unaffected. The parity transfer
-FAILS at L4096 under the current recipe, and the failure mode is
-generalization. The val trajectory between 4000 and 8000 is unobserved
-(endpoint-only validation — measurement gap recorded); best observed
-b75 point is 0.8382 @4000, −0.103 below token. Per the pre-registered
-decision rule, operator/pooling/hybrid work is now promoted to
-priority, preceded by the cheap diagnostics that localize the
-generalization failure (periodic-eval trajectory probe; data-scale
-probe; regularization probe).
+exactly through update 4000). This was initially recorded as an
+overfitting verdict — and RETRACTED two days later (below).
+**Trajectory probe verdict (2026-07-30/31, l4096tj seed0, periodic
+eval every 500 upd; commits 9ab8104+25481f3): NOT overfitting —
+endpoint oscillation.** The b75 val trajectory oscillates with
+amplitude ~0.15 across the whole run (0.650, 0.694, 0.609, 0.872,
+0.765, 0.728, 0.854, 0.838, 0.741, 0.749, 0.788, 0.928, 0.932, 0.863,
+0.932, 0.927; val_loss range 0.155-1.64). Token oscillates too
+(0.825-0.971). Val N=2048 (binomial sd ~0.011), so the swings are real
+model behavior under constant lr=1e-4, not eval noise. The stageb8k
+endpoint 0.7570 was a TROUGH sample; the trajectory endpoint 0.9269 is
+a near-peak sample — neither is a reliable estimator. Consistency
+checks: eval @4000 bitwise-matches the stageb 4000-upd endpoint
+(0.838196) for b75 and token (0.940659); the two b75 8k train curves
+are bitwise-identical through update 5000 and diverge at 5001, the
+epoch-2 boundary (20000/4 = 5000 upd/epoch), via the reshuffle
+permutation RNG draw — periodic-eval runs do not reproduce
+endpoint-only runs past an epoch boundary. Endpoints: token @8000 =
+0.9603/0.0934 @ 33745.8 MiB (still improving; no-overfit control
+confirmed); b75full @8000 = 0.9269/0.1628 @ 24915.9 MiB. b75 peaks:
+0.9319 @7500, 0.9318 @6500, 0.9282 @6000. Revised L4096 picture:
+matched-regime gap ~0.03-0.04 (b75 best 0.932 vs token best 0.971) at
+−26.2% VRAM — consistent with L1024/L2048, NOT a breakdown at scale.
+The binding issue at L4096 is estimator instability (endpoint-only
+validation is unreliable; both rows oscillate, the set row more so),
+plus epoch-2 data-order sensitivity — not generalization. Operator
+work returns to "motivated, not urgent"; the top recipe lever is now
+an lr-schedule probe and best-of-trajectory reporting; the 40k
+data-scale probe is deprioritized (its overfitting premise is gone);
+L4096 seeds 1-2 WITH periodic eval are now justified.
 
 # Part III — Why Stage B: the theoretical and empirical motivation
 
@@ -330,30 +348,29 @@ largest and token approaches hardware exclusion.**
    (4.9 h by the same source) with its train loss still descending at
    update 4000 — interpretation blocked on budget, exactly as at L2048.
    These are external wall-clock measurements, not framework-internal timers.
-2b. **L4096 budget extension (DONE — verdict: overfitting, not
-   undertraining).** b75full seed0 at 8000 updates: val_acc 0.7570,
-   val_loss 0.896 (vs 0.8382/0.348 @4000) while train loss kept
-   descending (0.2486 → 0.1907 over updates 4000-8000; the first 4000
-   updates replicate the 4000-upd run's curve means exactly). The L2048
-   rescue pattern does not repeat: at L4096 the set row overfits the
-   20k-example training distribution before reaching token parity.
-   Token is unaffected. Per the pre-registered rule, operator/pooling/
-   hybrid work is promoted to priority.
-2c. **Generalization diagnostics (PROPOSED, user decision).** In order:
-   (1) periodic-eval support in the LCA runner (endpoint-only
-   validation today — the val peak between updates 4000 and 8000 is
-   unobserved) + one trajectory probe to locate it; (2) data-scale
-   probe (40k train examples — is 20k too few at L4096 for the set
-   path?); (3) regularization probe (dropout/weight-decay). These
-   decide whether L4096 parity is a recipe problem or an operator
-   problem.
-3. **Stage B seeds 1-2 (PENDING user decision).** Motivation: the L2048
-   seed-variance finding (sd 0.037 vs token 0.007) makes single-seed
-   L4096 claims unsafe. Criteria: launch only after the budget decision,
-   because seeds 1-2 at a demonstrably insufficient update budget would
-   mainly replicate undertraining. If the 8000-update extension closes the
-   gap, seeds 1-2 should use that extended budget; if it does not, seeds
-   1-2 at 4000 are lower priority than operator/pooling diagnostics.
+2b. **L4096 budget extension (DONE — initial verdict overfitting,
+   RETRACTED by 2c.1).** b75full seed0 at 8000 updates (endpoint-only):
+   val_acc 0.7570, val_loss 0.896 while train loss kept descending. Now
+   known to be a trough sample of the validation oscillation, not a
+   generalization trend — see 2c.1.
+2c. **Generalization diagnostics.** (1) periodic-eval support +
+   trajectory probe: DONE 2026-07-30/31 (commits 9ab8104+25481f3,
+   l4096tj b75full+token seed0, 8000 upd, eval every 500). Outcome:
+   NO overfitting — the val trajectory oscillates ±0.15 for both rows;
+   b75 reaches 0.932 best / 0.9269 endpoint vs token 0.971/0.960 at
+   −26.2% VRAM; endpoint-only validation is an unreliable estimator at
+   L4096; epoch-2 data-order sensitivity identified (runs bitwise-
+   identical through update 5000, diverging at the reshuffle). (2)
+   data-scale probe (40k): DEPRIORITIZED — its overfitting premise is
+   gone. (3) regularization probe: reframed — the open recipe lever is
+   the lr schedule (constant lr=1e-4 underlies the oscillation), plus
+   best-of-trajectory / last-k-mean reporting instead of endpoint.
+3. **Stage B seeds 1-2 (PENDING user decision — now WITH periodic
+   eval).** Motivation: the L2048 seed-variance finding (sd 0.037 vs
+   token 0.007) plus the L4096 oscillation make single-seed endpoint
+   claims unsafe. With periodic eval now available, seeds 1-2 at L4096
+   (8000 upd, eval every 500) directly measure both seed variance and
+   oscillation structure; recommended next launch on Lizmark.
 4. **Sum-routing probe (motivated, NOT approved).** P3 + the bandwidth
    curve imply the aggregation operator matters: counting is a sum, but
    softmax routing computes a normalized average. A sum/sigmoid-gated
@@ -394,47 +411,54 @@ largest and token approaches hardware exclusion.**
 5. **In dense-score mode, top-k is memory-neutral.** Sparse routing
    only saves memory if scoring itself is sparse; otherwise full
    routing dominates it outright.
-6. **Budget confounds are real, asymmetric — and bounded.** Token
-   saturates by 2000 updates at L2048; the set row needs ~2x. Fixed
-   short budgets risk calling undertraining an architecture deficit.
-   But the L4096 extension shows the bound: past the val peak, more
-   budget actively hurts the set row, so "train longer" is not a
-   universal rescue either.
+6. **Budget confounds are real, asymmetric — and budget effects are
+   estimable only with periodic validation.** Token saturates by 2000
+   updates at L2048; the set row needs ~2x. Fixed short budgets risk
+   calling undertraining an architecture deficit. The L4096 trajectory
+   probe adds the mirror-image lesson: endpoint-only validation at a
+   long budget risks calling an oscillation trough overfitting.
 7. **The set row is less seed-stable than token** (sd 0.037 vs 0.007 at
    L2048/4000upd) even when its mean matches token's regime.
 8. **The memory edge grows with L as the coefficient story predicts**
    (−12.5% / −21.1% / −26.2% at L1024/2048/4096), and token becomes
    hardware-excluded first. The frontier value of set attention
    increases exactly where dense token attention stops fitting.
-9. **At L4096 the set row overfits where token does not.** With 20k
-   train examples, b75full's validation degrades past its peak
-   (0.8382 @4000 → 0.7570 @8000, val_loss 0.348 → 0.896) while train
-   loss keeps falling; token stays at 0.9407. The parity transfer fails
-   at L4096 under the current recipe — generalization, not
-   optimization, is the binding constraint at scale. Root cause
-   unlocalized: data scale, regularization, or the aggregation operator
-   itself.
+9. **At L4096 both rows oscillate under constant lr, and endpoint-only
+   validation is an unreliable estimator.** The b75 val trajectory
+   swings 0.61–0.93 (val_loss 0.155–1.64) across 8000 updates; token
+   swings 0.825–0.971. Val N=2048, so the swings are real model
+   behavior, not eval noise. Two same-seed 8000-update runs are
+   bitwise-identical through update 5000 and diverge at the epoch-2
+   reshuffle, landing on different oscillation phases (0.7570 vs
+   0.9269 endpoints). There is no monotone validation degradation with
+   budget: the best b75 val_loss/accuracy values occur in the
+   6000–8000 region.
 10. **The current Pareto claim (defensible phrasing):** b75 full routing
-   delivers mean matched-regime quality (within ~0.033 of token) at
-   −12.5% VRAM (L1024) and −21% VRAM (L2048), with higher optimization
-   variance in the set row. At L4096 the memory edge is largest
-   (−26.2%) but quality parity is NOT established — the set row
-   overfits before reaching it.
+   delivers matched-regime quality at −12.5% VRAM (L1024: 0.9233±0.0157
+   vs 0.9443±0.0317), −21.1% VRAM (L2048: 0.9078±0.0368 vs 0.9438, set
+   row higher variance), and −26.2% VRAM (L4096: best-of-trajectory
+   0.932 vs token best 0.971, endpoints 0.927 vs 0.960, single seed,
+   high oscillation). The L4096 gap is ~0.03–0.04 — the same regime as
+   L1024/L2048 — but the L4096 numbers rest on one seed and an
+   oscillating estimator, so they carry the widest caveat.
 
 # Part VI — Open threads (status)
 
-- **Stage B seed0 b75full**: complete at 4000 (0.8382) and 8000 updates
-  (0.7570 — overfitting verdict). Seeds 1-2 on hold pending the
-  generalization diagnostics (Part IV 2c).
-- **Generalization diagnostics (next decision)**: (1) periodic-eval
-  support + trajectory probe to locate the L4096 val peak; (2)
-  data-scale probe (40k); (3) regularization probe. Then
-  operator/pooling/hybrid work per the pre-registered rule.
-- **Endpoint-only validation measurement gap**: the LCA runner
-  validates only at the endpoint (`scripts/run_lca_cmp.py:127`); the
-  val trajectory between budgets is unobserved. Periodic validation is
-  the missing instrument.
-- **Seed-variance origin**: unexplained; no probe yet.
+- **Stage B seed0 b75full**: complete at 4000 (0.8382), 8000
+  endpoint-only (0.7570 — trough sample), and 8000 with periodic eval
+  (trajectory: oscillating, best 0.9319 @7500, endpoint 0.9269). Seeds
+  1-2 with periodic eval are the recommended next launch (Part IV 3).
+- **Generalization diagnostics**: trajectory probe DONE (no
+  overfitting — oscillation). Data-scale (40k) DEPRIORITIZED (premise
+  gone). New top recipe lever: lr-schedule probe + best-of-trajectory /
+  last-k-mean reporting.
+- **Endpoint-only validation measurement gap**: CLOSED 2026-07-30 —
+  the runner now supports `training.eval_every` with an evalcurve
+  sidecar (commit 9ab8104, smoke-verified). All future long-budget LCA
+  rows should use it.
+- **Seed-variance origin**: unexplained; no probe yet. The L4096
+  oscillation and epoch-2 data-order sensitivity are likely related
+  variance sources.
 - **Pooling isolation** (mean vs soft-trimmed-Boltzmann vs oracle):
   deprioritized — the gap it was meant to explain shrank to ~0.03.
 - **Sum-routing / sparse scoring / hybrid branch**: motivated

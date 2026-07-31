@@ -608,3 +608,74 @@ at 4000 upd remain unlaunched; their value now depends on (1).
 - Plan: `docs/agent_plans/mrp_lca_cmp.md`; matrix: `configs/lca_cmp/matrix.md`
 - Host state after completion: both blue-demon GPUs idle (1 MiB, 0% util),
   calibration driver exited, no `lcacmp_*` containers running.
+
+## L4096 trajectory probe (2026-07-30/31, l4096tj): the overfitting verdict is RETRACTED — endpoint oscillation, not generalization failure
+
+Periodic-eval support was added to the LCA runner (commit `9ab8104`:
+`training.eval_every`, chunked training over one shared data iterator,
+`<stem>_evalcurve.csv` sidecar; smoke-verified on Blue, endpoint val ==
+last periodic eval). The trajectory driver
+`scripts/run_lca_l4096_trajectory.sh` (commit `25481f3`) ran
+`l4096tj_b75full_L4096_seed0` (GPU0) and `l4096tj_token_L4096_seed0`
+(GPU1) on Lizmark: L4096/prefix/B4, 8000 updates, validation every 500
+updates (16 points). Token is the no-overfit control.
+
+Endpoints: token @8000 = 0.9603 / val_loss 0.0934 @ 33745.8 MiB (up
+from 0.9407 @4000 — token keeps improving); b75full @8000 = 0.9269 /
+val_loss 0.1628 @ 24915.9 MiB (−26.2% VRAM).
+
+Replication/consistency checks (all pass):
+- Trajectory eval @4000 = 0.838196, bitwise-identical to the stageb
+  4000-upd endpoint (0.8381962776184082); token eval @4000 = 0.940659,
+  bitwise-identical to its stageb endpoint.
+- Train curves of the two b75 8k runs (stageb8k vs trajectory) are
+  BITWISE identical for updates 1–5000 and diverge at update 5001,
+  exactly the epoch-2 boundary (20000 examples / B4 = 5000 updates per
+  epoch): the epoch-2 reshuffle permutation draws from the global RNG,
+  and the periodic-eval path offsets the RNG state at that draw.
+  Consequence: periodic-eval runs do not reproduce endpoint-only runs
+  past the next epoch boundary; both remain valid same-distribution
+  trajectories.
+
+The val trajectory oscillates, it does not decay. b75 val_acc across
+the 16 points: 0.650, 0.694, 0.609, 0.872, 0.765, 0.728, 0.854, 0.838,
+0.741, 0.749, 0.788, 0.928, 0.932, 0.863, 0.932, 0.927 (val_loss range
+0.155–1.64). Token also oscillates (0.825–0.971, e.g. 0.855 @6000 vs
+0.971 @6500). Val N=2048 gives binomial sd ~0.011, so the ±0.15 swings
+are real model behavior under constant lr=1e-4 with dropout 0.1 — not
+evaluation noise.
+
+b75 peaks: 0.9319 @7500 (val_loss 0.1552), 0.9318 @6500 (0.1589),
+0.9282 @6000 (0.1630), endpoint 0.9269 @8000 (0.1628); last-4-point
+mean 0.9135. Token peak 0.9712 @6500, endpoint 0.9603. The best b75
+val_loss values of the whole trajectory occur in the 6000–8000 region.
+
+RETRACTION: the 2026-07-29 verdict "overfitting, not undertraining"
+was an artifact of endpoint-only validation. The stageb8k endpoint
+(0.7570/0.896) was a TROUGH sample of this oscillation; the trajectory
+endpoint (0.9269/0.163) is a near-peak sample. Neither is a reliable
+estimator. There is no monotone validation degradation with budget at
+L4096; the generalization-failure interpretation is withdrawn.
+
+Revised interpretation: the L4096 matched-regime gap is ~0.03–0.04
+(b75 best 0.932 vs token best 0.971; endpoints 0.927 vs 0.960) at
+−26.2% VRAM — consistent with the L1024/L2048 frontier picture, not a
+breakdown at scale. The binding measurement issue at L4096 is
+estimator instability: endpoint-only validation is unreliable, both
+rows oscillate (task/optimizer-level, constant lr), the set row more
+so. Sensitivity to epoch-2 data order is an additional variance
+source.
+
+Plan consequences (supersedes the 2026-07-29 lever ordering):
+(2c.1) trajectory probe DONE (this section). Data-scale (40k) probe
+premise (overfitting on 20k) is no longer supported — DEPRIORITIZED.
+New top recipe lever: lr schedule (decay) probe and/or reporting
+best-of-trajectory / last-k-mean instead of endpoint. Seeds 1–2 at
+L4096 are now scientifically justified WITH periodic eval. Operator
+work (sum-routing/hybrid) returns to "motivated, not urgent": it is no
+longer promoted by a generalization verdict.
+
+Artifacts: `out/lca_cmp/l4096trajectory/{b75,token}/L4096/l4096tj_*.{csv,
+_curve.csv,_evalcurve.csv}`, `out/lca_cmp/l4096trajectory/l4096trajectory_
+lizmark.tsv`, logs `logs/lca_cmp/lizmark/l4096tj_*.log` (remote),
+driver log `logs/lca_cmp/lizmark/l4096trajectory_driver.log` (remote).

@@ -651,3 +651,19 @@ null. MRP-lca-cmp is now active as a separate long-context aggregation branch;
 it is not an authorization to reopen MQAR or MRP-4. MRP-5 remains blocked until
 MRP-2 completion and explicit transfer approval. Do not launch B2, landmark,
 sparse, fixed-k, SD-10a, SD-11, MRP-4, or MRP-5 from this tracker alone.
+
+2026-07-31 — MRP-lca-cmp L4096 trajectory probe (l4096tj, commits 9ab8104 +
+25481f3): b75full + token control, L4096/prefix/B4, 8000 upd, validation every
+500 upd. Token @8000 = 0.9603/0.0934; b75full @8000 = 0.9269/0.1628 @ 24915.9
+MiB (−26.2% VRAM). Train curves bitwise-replicate the stageb8k run through
+update 5000 and diverge at the epoch-2 reshuffle; eval @4000 bitwise-matches
+the stageb endpoint. The val trajectory OSCILLATES (b75 0.61–0.93, token
+0.825–0.971; val N=2048, so swings are real). The 2026-07-29 "overfitting"
+verdict is RETRACTED: the stageb8k endpoint 0.7570 was a trough sample of the
+oscillation, not generalization failure. L4096 matched-regime gap is ~0.03–0.04
+at −26.2% VRAM, consistent with L1024/L2048. Endpoint-only validation is an
+unreliable estimator at L4096; lr-schedule probe and best-of-trajectory
+reporting are the new top levers; the 40k data-scale probe is deprioritized;
+seeds 1–2 with periodic eval are now justified. Full record:
+audit/LCA_calibration_20260718.md (trajectory section),
+audit/LCA_research_story_20260727.md.

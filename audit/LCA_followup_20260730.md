@@ -6,6 +6,14 @@ before 2026-07-30 (topksweep, l2048budget, l4096admission, l4096stageb). No new
 runs were launched by this report; both hosts were GPU-idle at verification time.
 The approved NEW next steps (periodic-eval trajectory probe, data-scale probe)
 are still pending and are NOT covered here.  
+AMENDMENT 2026-07-31: the trajectory probe (l4096tj) has since run and the
+"overfitting" interpretation referenced below is RETRACTED — the stageb8k
+endpoint 0.7570 was a trough sample of a ±0.15 validation oscillation, not a
+generalization trend. See `audit/LCA_calibration_20260718.md` (L4096 trajectory
+probe section) and `audit/LCA_research_story_20260727.md` for the corrected
+record. The recommendation section below is likewise superseded: the top lever
+is now an lr-schedule probe plus best-of-trajectory reporting, then L4096
+seeds 1-2 with periodic eval; the 40k data-scale probe is deprioritized.  
 Branch: `mrp-lca-cmp-sd`  
 Source revision: `8b0754e`
 
