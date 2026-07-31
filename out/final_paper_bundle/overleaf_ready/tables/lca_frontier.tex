@@ -8,8 +8,9 @@ row is two fine $(w,s)=(2,1)$ and six coarse $(4,2)$ heads with the
 same data, supervision, and update budget.  $L=1024$ rows are three-seed
 means at 2000 updates; $L=2048$ rows are at 4000 updates (b75 three-seed,
 token seed 0, already saturated at 2000); $L=4096$ rows are seed 0 at 8000
-updates with validation every 500 updates, reporting the endpoint with the
-best-of-trajectory value in parentheses, because the $L=4096$ validation
+updates with validation evaluated every 500 updates, reporting the endpoint
+(final-update) value with the best-of-trajectory value (the best score at any
+periodic checkpoint) in parentheses, because the $L=4096$ validation
 signal oscillates and a bare endpoint is an unreliable point estimate (see
 text).  Peak VRAM is reported in MiB.  The $L=4096$ token peak exceeds the
 24\,GB card of the short-context host, so $L=4096$ rows exist only on the

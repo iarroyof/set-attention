@@ -388,6 +388,101 @@ b100 is all-coarse.  Every populated cell below uses full WikiText-2 and
 applied seeds $0,\ldots,4$.  Perplexity comparisons are made only within the
 same sequence-length and native-batch island.
 
+\subsection{Research History: How the Experiment Line Led Here}
+\label{sec:results-research-history}
+
+The results below come from an extended campaign in which each phase was
+designed to answer questions the previous phase left open.  We record that
+sequence here for two reasons: several design choices only make sense in
+chronological order, and the campaign developed a small working vocabulary
+that the rest of this section uses.  Terms are defined where they first
+appear in this subsection; later subsections use them without further gloss.
+
+\paragraph{Phase 1: the registered WikiText-2 matrix.}  The campaign began
+with a pre-registered experiment grid on WikiText-2 language modeling:
+\emph{registered} means the configurations, seeds, and stopping rules were
+frozen before launch, and later analysis was not allowed to quietly redefine
+them.  We call each configuration a \emph{row} (token attention, or one of
+the set blur allocations b0--b100 defined in the protocol above), and each
+fixed combination of sequence length and batch size an \emph{island},
+because comparisons are only valid inside one.  A row that could not run to
+completion under the registered implementation --- typically because it
+exceeded GPU memory --- is \emph{censored}: recorded as missing rather than
+assigned a bad number.  This phase produced the frontier results of
+Sections~\ref{sec:results-sd-grid-final}--\ref{sec:results-claim-boundary}:
+an interior blur allocation (b25) is usually the best set row, and heavier
+blur extends the feasible region at the memory boundary.  What it could not
+produce was mechanism evidence, because perplexity is dominated by local
+context.
+
+\paragraph{Phase 2: mechanism probes.}  To ask mechanism questions we used
+\emph{probes}: small, single-purpose diagnostic runs outside the registered
+matrix, designed to answer one question rather than to fill a comparable
+matrix cell.  The registered MQAR probe (multi-query associative recall ---
+retrieve a value seen earlier under a matching key) returned null: every row,
+including token attention, stayed near chance, so recall specialization
+could not be attributed to any part of the architecture.  A second recall
+evaluation (natural repeated-token hits) is still pending and is reported as
+such.  After Phase 2 we therefore knew the memory frontier was real but had
+no evidence about what set states preserve from the distant past.
+
+\paragraph{Phase 3: the LCA diagnostic.}  We built the LCA (long-context
+aggregation) task to force exactly the question perplexity cannot ask: can
+the model use information distributed across the \emph{whole} context
+(\emph{global aggregation}), rather than the recent local neighborhood?
+Synthetic sequences contain marker tokens spread over the context, and the
+target is a bucketed count of them.  The task is generated deterministically
+from the seed, and token and set rows share data, supervision, fixed
+architecture settings, and optimizer-update budget, so any quality
+difference is attributable to the attention path alone.
+
+\paragraph{Phase 4: calibration and repair.}  The first LCA grid failed
+instructively: token attention learned the task while every set row stayed
+at chance.  The cause was the frozen routing configuration, not the
+architecture: under the \texttt{endpoint\_window} \emph{candidate fiber}
+(the rule deciding which set atoms a query is allowed to read), the
+supervised final token could only reach the two atoms nearest its own
+position.  Three configuration properties turned out to govern whether the
+set path aggregates at all: \emph{reachability} (which atoms a query can
+read), \emph{supervision density} (at how many sequence positions a training
+signal is given --- only the final token in the frozen configuration, or
+every position under \emph{prefix supervision}, where each position predicts
+the count so far), and \emph{routing bandwidth} (how many atoms each query
+may read --- 16 under the frozen \texttt{router\_topk=16}, or all of them
+under \emph{full routing}, where top-$k$ pruning is disabled).  Repairing
+these three properties moved the set rows from chance to near-token quality.
+
+\paragraph{Phase 5: the memory frontier on LCA.}  With the repaired
+configuration we re-measured the quality--memory frontier at
+$L\in\{1024,2048,4096\}$.  Two lessons resulted.  First, the set row trains
+more slowly than token attention, so a fixed short update budget can mistake
+undertraining for a quality ceiling; we call this a \emph{budget confound},
+and it is why rows are compared at matched and sufficient budgets.  Second,
+the set row's memory advantage grows with context length, exactly where
+token attention stops fitting in GPU memory.
+
+\paragraph{Phase 6: a measurement correction.}  The first $L=4096$ runs
+appeared to show that the set row overfits at scale: its final validation
+score degraded when the budget was doubled.  This was an artifact of how we
+measured.  Our default was \emph{endpoint-only validation}: evaluating
+validation metrics once, at the final update.  A \emph{trajectory probe} ---
+a run that also evaluates validation \emph{periodically} during training,
+tracing the validation curve instead of a single point --- showed that the
+$L=4096$ validation signal oscillates strongly throughout training, so a
+single endpoint is a luck-of-the-phase sample rather than a trend.  The
+apparent overfitting was a trough of that oscillation; we retracted the
+corresponding internal report, and we now report $L=4096$ as the endpoint
+together with the \emph{best-of-trajectory} value (the best validation score
+observed at any periodic checkpoint).
+
+\paragraph{Where the line stands.}  The frontier claim survives the
+correction, with one honest caveat per island size: seed variance at
+$L=2048$, and estimator instability at $L=4096$.  The open threads are the
+seed stability of the $L=4096$ rows, the role of the constant learning rate
+in the oscillation, and whether the aggregation operator itself (a
+normalized average, where the task rewards a sum) is the next mechanism
+worth changing.
+
 \subsection{Exact-Dense Multiresolution Set-Dictionary Frontier}
 \label{sec:results-sd-grid-final}
 
@@ -737,9 +832,9 @@ diagnostic to force exactly this question: synthetic sequences of length
 $L\in\{1024,2048,4096\}$ contain marker tokens distributed across the context,
 and the target is a bucketed count of those markers (a binary count bucket in
 the registered configuration, so chance accuracy is $0.5$).  The task is
-seed-deterministic, token and set rows share data, supervision, architecture
-guards, and optimizer-update budget, and models train on 20{,}000 generated
-examples.  LCA is a controlled diagnostic that complements the WikiText-2
+generated deterministically from the seed, token and set rows share data,
+supervision, fixed architecture settings, and optimizer-update budget, and
+models train on 20{,}000 generated examples.  LCA is a controlled diagnostic that complements the WikiText-2
 perplexity matrix; it does not replace it, and we do not draw natural-language
 conclusions from it.
 
@@ -753,35 +848,40 @@ individual seeds $0.618$--$0.770$), while every set row stays at chance
 ($0.483$--$0.524$ across all blur allocations, both lengths, and all seeds).
 The cause is topological, not statistical: under \texttt{endpoint\_window},
 each query routes only to the roughly two set atoms adjacent to its own
-position, so distant markers are unreachable from the supervised final token,
-and six layers of local diffusion cannot bridge $L=1024$.  The paper's frozen
+position, so distant markers are unreachable from the supervised final token;
+their information could only arrive by propagating through neighboring atoms
+one layer at a time, and six layers of such local propagation cannot bridge
+$L=1024$.  The paper's frozen
 fiber is incapable of global aggregation by construction, which means the
 WikiText-2 frontier was measured entirely inside a local regime.
 
 Repairing reachability was necessary but not sufficient.  Switching to an
 \texttt{all\_past} fiber is memory-infeasible in \texttt{candidate\_gather}
-mode (the router materializes a $[B,H,T,C,d_\phi]$ tensor; the probe was
-OOM-censored on both hosts, an implementation boundary rather than a
-scientific result).  Scoring densely instead
+mode (the router materializes a $[B,H,T,C,d_\phi]$ tensor; that run exceeded
+GPU memory on both hosts, which we record as a censored implementation
+boundary rather than a scientific result).  Scoring densely instead
 (\texttt{router.score\_mode=dense}, scores materialized as $[B,H,T,M]$ with
 invalid entries masked) fits at $3216$ MiB with
 \texttt{candidate\_count\_max=1023}, but the row still does not learn under
 final-token-only supervision (validation accuracy $0.498$ versus $0.770$ for
-the matched token seed).  Three mechanistic probes then localized the residual
+the matched token seed).  Three probes (P1--P3) then localized the residual
 deficit (Table~\ref{tab:lca-calibration-probes}).  P1, full routing
-(\texttt{router\_topk=1023}), reaches $0.827$: top-$k{=}16$ sparse selection
+(top-$k$ opened to all $1023$ candidate atoms, \texttt{router\_topk=1023},
+i.e.\ no pruning), reaches $0.827$: top-$k{=}16$ sparse selection
 was discarding the many weak evidence paths that global counting needs.  P2,
 prefix supervision (every position predicts its own prefix count), reaches
 $0.787$ against a token control at $0.903$: final-token-only supervision was an
 independent bottleneck that token attention tolerates, because its gradient
 routes directly to all positions, and sparse-fiber set attention does not.
-P3, an oracle count feature, reaches $0.985$: when the count is represented,
+P3, which hands the model the true marker count as an input feature (an
+oracle that bypasses representation learning), reaches $0.985$: when the
+count is represented,
 routing and readout solve the task, so the residual deficit lives in the
 training-signal/routing interface rather than in an intrinsic inability of
 set-dictionary attention to aggregate.  The combined configuration
 (\texttt{all\_past} $+$ dense scoring $+$ full routing $+$ prefix supervision)
 reaches $0.936$ on seed 0, apparently above the token control --- but a
-three-seed mini-calibration showed this to be seed noise: token
+three-seed follow-up showed this to be within seed-to-seed variation: token
 $0.9443\pm0.0317$, b25 with full routing $0.8956\pm0.0407$, b25 with
 top-$k{=}16$ $0.8171\pm0.0114$.  We apply the resulting lesson throughout this
 section: no single-seed conclusions, and set rows carry higher seed variance
@@ -797,8 +897,9 @@ configuration, using b75 (two fine, six coarse heads) as the set row.  The
 choice of b75 is itself a result: a blur sweep at $L=1024$ over
 $\{$b25, b50, b75, b100$\}$ found quality non-monotone in blur, with
 b75 ($0.9233\pm0.0157$) above b50 $\approx$ b25 ($0.8956$--$0.8974$ means)
-above b100.  Coarse atoms both shrink the $O(L^2)$ score tensor and act as
-better evidence units for counting, while the all-coarse row loses detail.
+above b100.  Coarse atoms both shrink the $O(L^2)$ score tensor and pool
+wider token spans, so counting evidence is gathered into fewer, larger
+units, while the all-coarse row loses detail.
 Note the inversion against the WikiText-2 matrix, where b25 was the interior
 optimum: resolution and compression trade differently across task classes.
 
@@ -806,24 +907,28 @@ optimum: resolution and compression trade differently across task classes.
 
 Three patterns matter.  First, the memory advantage is real and grows with
 context length: $-12.5$\% at $L=1024$, $-21.1$\% at $L=2048$, and $-26.2$\% at
-$L=4096$.  This is the exact-dense coefficient story materializing: blur
+$L=4096$.  This is the memory-coefficient analysis of
+Section~\ref{sec:theory} made concrete: blur
 reduces the score-memory coefficient while the backend stays dense, and as $L$
 grows the score term dominates total memory, so the b75/token peak ratio falls
 toward its asymptotic value.  At $L=4096$ the token row peaks at $33746$ MiB,
-which excludes it from the 24\,GB card of the short-context host, while the
-b75 row at $24910$ MiB (Stage A admission measurement, 30 updates) nearly fits;
-$L=4096$ rows therefore exist only on the larger host.  This is the same
+which exceeds a 24\,GB GPU, while the
+b75 row at $24910$ MiB (measured by a short 30-update admission run that
+records peak memory without training to completion) nearly fits it;
+$L=4096$ rows therefore ran only on a larger 48\,GB host.  This is the same
 regime as the censored $L=4096$/B4 boundary of the WikiText-2 matrix: exactly
 where dense token attention stops fitting.
 
-Second, matched-regime quality holds at $L=1024$ and $L=2048$ but with higher
-set-row variance.  At $L=1024$ b75 is within seed noise of token
+Second, quality in the same regime as the token control holds at $L=1024$
+and $L=2048$, but with higher
+set-row variance.  At $L=1024$ b75 is within seed-to-seed variation of token
 ($0.9233\pm0.0157$ versus $0.9443\pm0.0317$).  At $L=2048$ an apparent quality
 gap at 2000 updates (b75 seed 0 at $0.8158$ versus token $0.9440$) proved to
 be mostly a budget confound: at 4000 updates the same seed reaches $0.9353$,
 and the three-seed mean is $0.9078\pm0.0368$ at $-21.1$\% VRAM, with token
-already saturated at $0.9438$.  The Pareto statement holds on average but not
-per seed (seed 1 reaches $0.8660$), and the set row's seed standard deviation
+already saturated at $0.9438$.  The quality--memory advantage holds on
+average but not for every seed (seed 1 reaches $0.8660$), and the set row's
+seed standard deviation
 is $0.037$ against $0.007$ for token at this island.  Token quality is
 $L$-insensitive throughout ($0.9443$, $0.9438$, $0.9407$ at
 $L=1024,2048,4096$).
@@ -864,12 +969,14 @@ top-$k$ & Val.\ acc.\ (mean) & Peak MiB \\
 \end{table}
 
 At $L=4096$ the frontier claim survives, but only after correcting a
-measurement artifact that initially looked like a failure.  Endpoint-only
-runs first suggested a breakdown: at 4000 updates the b75 row reached
+measurement artifact that initially looked like a failure.  The first runs
+were measured endpoint-only, and they suggested a breakdown: at 4000 updates
+the b75 row reached
 $0.8382$ against token $0.9407$, and an 8000-update extension degraded to
 $0.7570$ with validation loss rising from $0.348$ to $0.896$ while train
-loss kept falling --- the signature of overfitting.  A trajectory probe with
-validation every 500 updates showed this interpretation to be wrong.  The
+loss kept falling --- the signature of overfitting.  A trajectory probe
+(validation evaluated every 500 updates) showed this interpretation to be
+wrong.  The
 validation signal at $L=4096$ oscillates with amplitude about $0.15$
 throughout training (b75 between $0.61$ and $0.93$; even token between
 $0.825$ and $0.971$), far above the binomial noise of the 2048-example
@@ -878,8 +985,10 @@ not a trend.  The degraded extension endpoint was a trough; the trajectory
 endpoint is a near-peak.  Two consistency checks anchor this reading: the
 trajectory's evaluation at update 4000 reproduces the earlier 4000-update
 endpoint bitwise ($0.838196$), and its training curve is bitwise-identical
-to the earlier extension run through update 5000, diverging only at the
-second-epoch reshuffle.  Under trajectory measurement the $L=4096$ picture
+to the earlier extension run through update 5000, diverging only when the
+data loader re-shuffles the 20{,}000 training examples at the start of the
+second pass over the data --- a draw whose outcome depends on the random
+generator's state, which the periodic evaluations had shifted.  Under trajectory measurement the $L=4096$ picture
 is the same matched regime as at shorter contexts: the b75 row reaches
 $0.9319$ at its best point ($0.9269$ at the 8000-update endpoint) against
 token's $0.9712$ best ($0.9603$ endpoint), a gap of about $0.03$--$0.04$ at
