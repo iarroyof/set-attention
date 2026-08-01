@@ -478,8 +478,9 @@ observed at any periodic checkpoint).
 \paragraph{Where the line stands.}  The frontier claim survives the
 correction, with one honest caveat per island size: seed variance at
 $L=2048$ (with a host-mixing caveat on that number), and estimator
-instability at $L=4096$.  The open threads are the
-seed stability of the $L=4096$ rows, the origin of the validation
+instability at $L=4096$ (now bounded by three seeds on one host: the token
+ceiling is seed-deterministic, the set row's ceiling is not).  The open
+threads are the origin of the validation
 oscillation (the learning rate has been ruled out by a decay control; a
 data-driven component is the current suspect), and whether the aggregation
 operator itself (a
@@ -997,12 +998,20 @@ to the earlier extension run through update 5000, diverging only when the
 data loader re-shuffles the 20{,}000 training examples at the start of the
 second pass over the data --- a draw whose outcome depends on the random
 generator's state, which the periodic evaluations had shifted.  Under trajectory measurement the $L=4096$ picture
-is the same matched regime as at shorter contexts: the b75 row reaches
-$0.9319$ at its best point ($0.9269$ at the 8000-update endpoint) against
-token's $0.9712$ best ($0.9603$ endpoint), a gap of about $0.03$--$0.04$ at
+is the same matched regime as at shorter contexts, now over three seeds on
+one host: the b75 row averages
+$0.9222\pm0.0085$ at its best checkpoints ($0.9077\pm0.0191$ at the
+8000-update endpoints) against token's $0.9702\pm0.0010$ best
+($0.9344\pm0.0276$ endpoints), a gap of about $0.05$ under the more reliable
+best-of-trajectory estimator and $0.03$ at endpoints, at
 $-26.2$\% peak VRAM, with the set row's best validation losses occurring in
-the 6000--8000 region --- no monotone degradation with budget.  Three
-caveats stand: the $L=4096$ rows are single-seed; the oscillation itself is
+the 6000--8000 region --- no monotone degradation with budget.  The seeded
+view also sharpens the oscillation reading: token's best-of-trajectory is
+essentially seed-deterministic (every seed reaches about $0.97$ somewhere;
+its endpoint standard deviation of $0.028$ is pure oscillation phase), while
+the set row's ceiling varies more across seeds ($0.916$--$0.932$).  Three
+caveats stand: the $L=4096$ gap is wider under the reliable estimator than
+at $L=2048$; the oscillation itself is
 unexplained --- a cosine learning-rate-decay control at $L=2048$ neither
 damped it nor changed the endpoint, ruling out the constant learning rate as
 the cause, while partially aligned troughs between that control and its
@@ -1034,9 +1043,10 @@ configuration the set path aggregates globally at all.  Configuration matters
 as much as blur allocation.  (iii) Matched-regime quality holds at
 all three context lengths: within about $0.02$--$0.03$ of token in mean
 accuracy at $L=1024$ and $L=2048$ (with higher set-row seed variance and
-overlapping intervals), and within about $0.03$--$0.04$ at $L=4096$ under
-best-of-trajectory measurement, where the single-seed estimate and the
-oscillating validation signal carry the widest uncertainty.  (iv) The
+overlapping intervals), and at $L=4096$ within about $0.03$ of token at
+endpoints and about $0.05$ under best-of-trajectory measurement (three
+seeds, one host) --- the widest gap of the three islands, measured under the
+widest estimator uncertainty.  (iv) The
 non-claims stand and gain one member: no subquadratic scaling (router scoring
 is still dense), no universal token-attention superiority, no token
 equivalence of b0, no associative-recall mechanism, and no benefit from
@@ -1046,10 +1056,9 @@ memory.
 The immediate next steps follow from the $L=4096$ oscillation finding:
 localizing the oscillation itself (the cosine-decay control at $L=2048$
 rules out the learning rate; the aligned-trough evidence points at the data
-distribution, and the dropout rate is untested),
+distribution, and the dropout rate is untested), and
 best-of-trajectory or averaged-checkpoint reporting in
-place of bare endpoints, and $L=4096$ seeds 1--2 with periodic validation to
-bound the estimator instability.  The operator question is motivated
+place of bare endpoints.  The operator question is motivated
 independently: counting is a sum, but softmax routing computes a normalized
 average, and the P3 oracle result ($0.985$) shows the task is solvable once
 the count is represented, so a sum/additive-routing variant is the natural

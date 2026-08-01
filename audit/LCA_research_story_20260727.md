@@ -365,12 +365,16 @@ largest and token approaches hardware exclusion.**
    gone. (3) regularization probe: reframed — the open recipe lever is
    the lr schedule (constant lr=1e-4 underlies the oscillation), plus
    best-of-trajectory / last-k-mean reporting instead of endpoint.
-3. **Stage B seeds 1-2 (PENDING user decision — now WITH periodic
-   eval).** Motivation: the L2048 seed-variance finding (sd 0.037 vs
-   token 0.007) plus the L4096 oscillation make single-seed endpoint
-   claims unsafe. With periodic eval now available, seeds 1-2 at L4096
-   (8000 upd, eval every 500) directly measure both seed variance and
-   oscillation structure; recommended next launch on Lizmark.
+3. **Stage B seeds 1-2 (DONE 2026-08-01, all-Lizmark, host-consistent).**
+   b75full + token seeds 1-2, L4096/prefix/B4, 8000 upd, eval every 500.
+   3-seed L4096 statistics: b75 endpoints 0.9077+-0.0191, best-of-
+   trajectory 0.9222+-0.0085; token endpoints 0.9344+-0.0276, best
+   0.9702+-0.0010. Token's reachable ceiling is seed-deterministic
+   (~0.97 every seed; its endpoint sd 0.028 is pure oscillation phase);
+   b75's ceiling is 0.916-0.932. Gap ~0.027 at endpoints, ~0.048 at
+   best-of-trajectory, −26.2% VRAM. Endpoint-only validation at L4096
+   is phase luck for BOTH families (token seed1: 0.9054 endpoint vs
+   0.9702 best).
 4. **Sum-routing probe (motivated, NOT approved).** P3 + the bandwidth
    curve imply the aggregation operator matters: counting is a sum, but
    softmax routing computes a normalized average. A sum/sigmoid-gated
@@ -446,19 +450,21 @@ largest and token approaches hardware exclusion.**
    in the 6000-8000 region.
 10. **The current Pareto claim (defensible phrasing):** b75 full routing
    delivers matched-regime quality at −12.5% VRAM (L1024: 0.9233±0.0157
-   vs 0.9443±0.0317), −21.1% VRAM (L2048: 0.9078±0.0368 vs 0.9438, set
-   row higher variance), and −26.2% VRAM (L4096: best-of-trajectory
-   0.932 vs token best 0.971, endpoints 0.927 vs 0.960, single seed,
-   high oscillation). The L4096 gap is ~0.03–0.04 — the same regime as
-   L1024/L2048 — but the L4096 numbers rest on one seed and an
-   oscillating estimator, so they carry the widest caveat.
+   vs 0.9443±0.0317), −21.1% VRAM (L2048: 0.9078±0.0368 vs 0.9438 —
+   host-mixed, see discovery 7), and −26.2% VRAM (L4096, 3 seeds,
+   host-consistent: endpoints 0.9077±0.0191 vs 0.9344±0.0276,
+   best-of-trajectory 0.9222±0.0085 vs 0.9702±0.0010). The L4096 gap is
+   ~0.03 at endpoints and ~0.05 at best-of-trajectory — wider than at
+   L2048 under the more reliable estimator. Token's reachable ceiling is
+   seed-deterministic (~0.97); b75's is 0.916-0.932.
 
 # Part VI — Open threads (status)
 
-- **Stage B seed0 b75full**: complete at 4000 (0.8382), 8000
-  endpoint-only (0.7570 — trough sample), and 8000 with periodic eval
-  (trajectory: oscillating, best 0.9319 @7500, endpoint 0.9269). Seeds
-  1-2 with periodic eval are the recommended next launch (Part IV 3).
+- **Stage B seed0 b75full + seeds 1-2**: COMPLETE (2026-08-01). L4096
+  3-seed set, all-Lizmark, with periodic eval: b75 endpoints
+  0.9077+-0.0191 / best 0.9222+-0.0085; token endpoints 0.9344+-0.0276 /
+  best 0.9702+-0.0010. Token ceiling seed-deterministic; b75 ceiling
+  0.916-0.932. No further L4096 seed rows pending.
 - **Generalization diagnostics**: trajectory probe DONE (no
   overfitting — oscillation). Data-scale (40k) DEPRIORITIZED (premise
   gone). lr-schedule probe DONE 2026-07-31 (l2048lr, Blue): cosine

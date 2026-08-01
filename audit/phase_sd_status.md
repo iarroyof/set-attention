@@ -667,3 +667,12 @@ reporting are the new top levers; the 40k data-scale probe is deprioritized;
 seeds 1–2 with periodic eval are now justified. Full record:
 audit/LCA_calibration_20260718.md (trajectory section),
 audit/LCA_research_story_20260727.md.
+
+2026-08-01 — MRP-lca-cmp L4096 seed extension complete (l4096tj seeds 1-2,
+all-Lizmark, host-consistent): b75full 3-seed endpoints 0.9077+-0.0191,
+best-of-trajectory 0.9222+-0.0085; token endpoints 0.9344+-0.0276, best
+0.9702+-0.0010. Token's reachable ceiling is seed-deterministic (~0.97 every
+seed); b75's ceiling is 0.916-0.932. Gap ~0.027 at endpoints, ~0.048 at
+best-of-trajectory, at −26.2% VRAM. Endpoint-only validation at L4096 is
+phase luck for both families. Record: audit/LCA_calibration_20260718.md
+(L4096 seeds 1-2 section), audit/LCA_research_story_20260727.md.

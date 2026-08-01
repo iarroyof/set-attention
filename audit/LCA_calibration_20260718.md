@@ -735,3 +735,41 @@ Artifacts: `out/lca_cmp/l2048lrdecay/b75/L2048/l2048lr_*.{csv,_curve.csv,
 _evalcurve.csv}`, `out/lca_cmp/l2048lrdecay/l2048lrdecay_blue.tsv`, logs
 `logs/lca_cmp/blue/l2048lr_*.log` (remote), driver log
 `logs/lca_cmp/blue/l2048lrdecay_driver.log` (remote).
+
+## L4096 seeds 1-2 trajectory rows (2026-08-01, l4096tj): host-consistent 3-seed L4096 statistics
+
+Completed the pre-registered L4096 seed extension (Part IV step 3): b75full
+and token, seeds 1-2, same trajectory protocol as seed0 (L4096/prefix/B4,
+8000 updates, validation every 500), ALL on Lizmark — so the L4096 3-seed
+set is host-consistent (unlike the L2048 set; see the lr-decay probe
+section's host-confound finding). Endpoints: b75 seed1 0.8887 / seed2 0.9075
+@ 24915.9 MiB; token seed1 0.9054 / seed2 0.9376 @ 33745.8 MiB.
+
+3-seed statistics (endpoint @8000 | best-of-trajectory):
+- b75full: 0.9077+-0.0191 | 0.9222+-0.0085 (bests at updates 7500/6500/4000;
+  per-seed minima 0.61-0.69 — every seed oscillates)
+- token:   0.9344+-0.0276 | 0.9702+-0.0010 (bests at 6500/7000/6000)
+
+Findings:
+1. **Token's best-of-trajectory is essentially deterministic**
+   (0.9702+-0.0010): every seed reaches ~0.97 somewhere in the trajectory;
+   its endpoint sd (0.0276) is pure oscillation phase, not capability.
+   Endpoint-only validation at L4096 is phase luck for BOTH families (token
+   seed1 endpoint 0.9054 vs best 0.9702).
+2. **The b75-vs-token gap is estimator-dependent: ~0.027 at endpoints,
+   ~0.048 at best-of-trajectory.** Token's peaks are uniformly ~0.97; b75's
+   peaks are 0.916-0.932 with more seed spread (sd 0.0085 vs 0.0010). Under
+   the more reliable estimator the L4096 gap is ~0.05 — wider than the
+   L2048 matched-budget gap (~0.03). Reported as a range, not a point.
+3. **The "set row less stable than token" ordering flips at L4096
+   endpoints** (b75 sd 0.019 vs token sd 0.028) — but both are phase
+   samples; the stability statement that survives is about the CEILING:
+   token's reachable ceiling is seed-consistent, b75's is not.
+4. Memory unchanged: b75 24915.9 MiB vs token 33745.8 MiB (−26.2%), all
+   seeds, matching the Stage A admission measurement.
+
+Artifacts: `out/lca_cmp/l4096trajectory/{b75,token}/L4096/l4096tj_*_seed{1,2}.
+{csv,_curve.csv,_evalcurve.csv}`, updated
+`out/lca_cmp/l4096trajectory/l4096trajectory_lizmark.tsv` (6 rows), logs
+`logs/lca_cmp/lizmark/l4096tj_*seed{1,2}.log` (remote), driver log
+`logs/lca_cmp/lizmark/l4096trajectory_s12_driver.log` (remote).
