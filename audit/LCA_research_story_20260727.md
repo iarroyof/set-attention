@@ -417,22 +417,33 @@ largest and token approaches hardware exclusion.**
    calling undertraining an architecture deficit. The L4096 trajectory
    probe adds the mirror-image lesson: endpoint-only validation at a
    long budget risks calling an oscillation trough overfitting.
-7. **The set row is less seed-stable than token** (sd 0.037 vs 0.007 at
-   L2048/4000upd) even when its mean matches token's regime.
+7. **The set row is less seed-stable than token — with a host-mixing
+   caveat.** The L2048/4000upd numbers (sd 0.037 vs token 0.007) come
+   from a host-mixed set: b75 seed 0 ran on Lizmark (0.9353), seeds 1-2
+   on Blue (0.8660, 0.9221), and a Blue seed0 rerun ends at 0.8779 —
+   0.057 below the Lizmark row at identical config/seed/budget.
+   Cross-host numerics diverge (same-host replication is bitwise), so
+   L2048 seed variance is confounded with host; the L4096 3-seed set is
+   all-Lizmark and clean.
 8. **The memory edge grows with L as the coefficient story predicts**
    (−12.5% / −21.1% / −26.2% at L1024/2048/4096), and token becomes
    hardware-excluded first. The frontier value of set attention
    increases exactly where dense token attention stops fitting.
-9. **At L4096 both rows oscillate under constant lr, and endpoint-only
-   validation is an unreliable estimator.** The b75 val trajectory
-   swings 0.61–0.93 (val_loss 0.155–1.64) across 8000 updates; token
-   swings 0.825–0.971. Val N=2048, so the swings are real model
-   behavior, not eval noise. Two same-seed 8000-update runs are
-   bitwise-identical through update 5000 and diverge at the epoch-2
-   reshuffle, landing on different oscillation phases (0.7570 vs
-   0.9269 endpoints). There is no monotone validation degradation with
-   budget: the best b75 val_loss/accuracy values occur in the
-   6000–8000 region.
+9. **Both rows oscillate under constant lr at L2048 AND L4096, and the
+   learning rate is not the cause.** Endpoint-only validation is an
+   unreliable estimator: the b75 val trajectory swings ~0.145 at L2048
+   (0.735-0.880) and ~0.15 at L4096 (0.61-0.93); token also swings
+   (0.825-0.971 at L4096). Val N=2048, so the swings are real model
+   behavior, not eval noise. A cosine-decay control at L2048 neither
+   damps the oscillation nor changes the endpoint (0.8785 vs 0.8779),
+   rejecting the constant-lr hypothesis; partially aligned troughs
+   between the const/cosine rows (identical batch order, divergent
+   weights) point to a data-driven component. At L4096, two same-seed
+   8000-update runs are bitwise-identical through update 5000 and
+   diverge at the epoch-2 reshuffle, landing on different oscillation
+   phases (0.7570 vs 0.9269 endpoints). There is no monotone validation
+   degradation with budget: the best b75 val_loss/accuracy values occur
+   in the 6000-8000 region.
 10. **The current Pareto claim (defensible phrasing):** b75 full routing
    delivers matched-regime quality at −12.5% VRAM (L1024: 0.9233±0.0157
    vs 0.9443±0.0317), −21.1% VRAM (L2048: 0.9078±0.0368 vs 0.9438, set
@@ -450,8 +461,17 @@ largest and token approaches hardware exclusion.**
   1-2 with periodic eval are the recommended next launch (Part IV 3).
 - **Generalization diagnostics**: trajectory probe DONE (no
   overfitting — oscillation). Data-scale (40k) DEPRIORITIZED (premise
-  gone). New top recipe lever: lr-schedule probe + best-of-trajectory /
-  last-k-mean reporting.
+  gone). lr-schedule probe DONE 2026-07-31 (l2048lr, Blue): cosine
+  decay does NOT damp the oscillation or change the endpoint at L2048
+  — constant lr rejected as the cause; trough alignment points to a
+  data-driven component. Oscillation-origin refocuses on data segments
+  and dropout 0.1. Best-of-trajectory / last-k-mean reporting is the
+  robust estimator.
+- **Host-consistency rule (new)**: cross-host same-seed runs diverge
+  (~0.06 at L2048); same-host replication is bitwise. All future
+  multi-seed LCA rows are pinned to one host per island. The L2048
+  3-seed set is host-mixed (caveat in discovery 7); the L4096 3-seed
+  set is all-Lizmark.
 - **Endpoint-only validation measurement gap**: CLOSED 2026-07-30 —
   the runner now supports `training.eval_every` with an evalcurve
   sidecar (commit 9ab8104, smoke-verified). All future long-budget LCA

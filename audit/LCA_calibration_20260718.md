@@ -679,3 +679,59 @@ Artifacts: `out/lca_cmp/l4096trajectory/{b75,token}/L4096/l4096tj_*.{csv,
 _curve.csv,_evalcurve.csv}`, `out/lca_cmp/l4096trajectory/l4096trajectory_
 lizmark.tsv`, logs `logs/lca_cmp/lizmark/l4096tj_*.log` (remote),
 driver log `logs/lca_cmp/lizmark/l4096trajectory_driver.log` (remote).
+
+## L2048 lr-decay probe (2026-07-31, l2048lr): oscillation is cross-L, and cosine decay does NOT remove it; plus a host-confound discovery
+
+Motivation: the L4096 trajectory probe left the constant learning rate
+(lr=1e-4) as the leading suspect for the validation oscillation. Driver
+`scripts/run_lca_l2048_lrdecay.sh` (commit `1ef4d4a`, runner support:
+`training.lr_schedule=cosine` as a per-chunk staircase in the periodic-eval
+path, smoke-verified). Two b75 full-routing rows at L2048/prefix/B4 on Blue,
+seed 0, 4000 updates, validation every 500: `l2048lr_b75const` (constant lr,
+control — the first L2048 trajectory) and `l2048lr_b75cosine` (cosine decay
+to zero). Same seed and same eval schedule => identical batch order for both
+rows; weights are bitwise-identical through update 500 (first eval:
+0.408743/0.785780 for both), then the lr paths differ.
+
+Eval trajectories (val_acc @ updates 500..4000):
+- const:  0.786, 0.868, 0.754, 0.735, 0.863, 0.880, 0.775, 0.878
+  (endpoint val_loss 0.279; range 0.735-0.880, amplitude ~0.145)
+- cosine: 0.786, 0.677, 0.730, 0.732, 0.809, 0.887, 0.848, 0.878
+  (endpoint val_loss 0.263; range 0.677-0.887, amplitude ~0.21)
+
+Findings:
+1. **The oscillation is not an L4096 phenomenon.** Under constant lr the
+   L2048 b75 validation signal swings ~0.145 — same structure as L4096.
+2. **Cosine decay does not remove it.** Endpoints are identical
+   (0.8779 vs 0.8785; val_loss 0.279 vs 0.263) and the cosine row's
+   mid-training amplitude is, if anything, larger. The constant-lr
+   hypothesis for the oscillation's cause is REJECTED at L2048.
+3. **Troughs partially align across the two rows** (both dip hard at
+   updates 1500-2000; both recover by 3000) despite divergent weights from
+   update 501 — the two rows share the exact batch sequence, so the
+   oscillation has a data-driven component (specific stretches of the
+   training distribution destabilize validation), not only optimization
+   noise. The extreme sensitivity is itself notable: a ~15% lr difference
+   flips val_acc by 0.19 within 500 updates (0.868 vs 0.677 @1000).
+4. **Host confound discovered in the L2048 3-seed statistics.** The
+   reported b75 L2048 3-seed set (0.9078+-0.0368) is host-mixed: seed 0 ran
+   on Lizmark (0.9353), seeds 1-2 on Blue (0.8660, 0.9221). The new Blue
+   seed0 const row ends at 0.8779 — 0.057 below the Lizmark seed0 row at
+   identical config/seed/budget. Same-host same-seed replication is bitwise
+   (verified at L4096), but cross-host numerics diverge (different GPU
+   architectures, chaotic amplification over thousands of updates), so the
+   L2048 "seed variance" (sd 0.037) is confounded with host. The L4096
+   seeds 1-2 rows now running are all-Lizmark, so the L4096 3-seed set will
+   be host-consistent; the L2048 set must be reported with the host-mixing
+   caveat (or re-run) before seed-variance claims rely on it.
+
+Plan consequences: the lr-schedule lever is exhausted (no effect); the
+oscillation-origin question refocuses on the data component (marker-count
+distribution per segment) and on dropout 0.1; best-of-trajectory /
+last-k-mean reporting remains the robust estimator; future multi-seed LCA
+rows must be pinned to one host per island (or balanced by design).
+
+Artifacts: `out/lca_cmp/l2048lrdecay/b75/L2048/l2048lr_*.{csv,_curve.csv,
+_evalcurve.csv}`, `out/lca_cmp/l2048lrdecay/l2048lrdecay_blue.tsv`, logs
+`logs/lca_cmp/blue/l2048lr_*.log` (remote), driver log
+`logs/lca_cmp/blue/l2048lrdecay_driver.log` (remote).

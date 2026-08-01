@@ -477,9 +477,12 @@ observed at any periodic checkpoint).
 
 \paragraph{Where the line stands.}  The frontier claim survives the
 correction, with one honest caveat per island size: seed variance at
-$L=2048$, and estimator instability at $L=4096$.  The open threads are the
-seed stability of the $L=4096$ rows, the role of the constant learning rate
-in the oscillation, and whether the aggregation operator itself (a
+$L=2048$ (with a host-mixing caveat on that number), and estimator
+instability at $L=4096$.  The open threads are the
+seed stability of the $L=4096$ rows, the origin of the validation
+oscillation (the learning rate has been ruled out by a decay control; a
+data-driven component is the current suspect), and whether the aggregation
+operator itself (a
 normalized average, where the task rewards a sum) is the next mechanism
 worth changing.
 
@@ -929,7 +932,12 @@ and the three-seed mean is $0.9078\pm0.0368$ at $-21.1$\% VRAM, with token
 already saturated at $0.9438$.  The quality--memory advantage holds on
 average but not for every seed (seed 1 reaches $0.8660$), and the set row's
 seed standard deviation
-is $0.037$ against $0.007$ for token at this island.  Token quality is
+is $0.037$ against $0.007$ for token at this island.  One provenance caveat
+applies to that variance number: the three b75 seeds were split across two
+GPU hosts (seed 0 on the larger host, seeds 1--2 on the smaller), and a
+same-seed rerun across hosts differs by about $0.06$ --- cross-host numerics
+diverge even though same-host replication is bitwise --- so part of the
+apparent seed variance may be host variance.  Token quality is
 $L$-insensitive throughout ($0.9443$, $0.9438$, $0.9407$ at
 $L=1024,2048,4096$).
 
@@ -995,8 +1003,12 @@ token's $0.9712$ best ($0.9603$ endpoint), a gap of about $0.03$--$0.04$ at
 $-26.2$\% peak VRAM, with the set row's best validation losses occurring in
 the 6000--8000 region --- no monotone degradation with budget.  Three
 caveats stand: the $L=4096$ rows are single-seed; the oscillation itself is
-unexplained (constant learning rate is the leading suspect, and both
-families oscillate, the set row more); and same-seed runs are sensitive to
+unexplained --- a cosine learning-rate-decay control at $L=2048$ neither
+damped it nor changed the endpoint, ruling out the constant learning rate as
+the cause, while partially aligned troughs between that control and its
+constant-rate twin (identical batch order, divergent weights) point to a
+data-driven component --- and both families oscillate, the set row more; and
+same-seed runs are sensitive to
 second-epoch data order, an additional variance source.  We therefore
 report $L=4096$ as best-of-trajectory with the endpoint alongside, and we
 do not claim quality parity there --- we claim the same matched-quality
@@ -1031,9 +1043,11 @@ equivalence of b0, no associative-recall mechanism, and no benefit from
 sparse top-$k$ routing, which is currently dominated by full routing at equal
 memory.
 
-The immediate next steps follow from the $L=4096$ oscillation finding: a
-learning-rate-schedule probe (constant $10^{-4}$ is the leading suspect for
-the oscillation), best-of-trajectory or averaged-checkpoint reporting in
+The immediate next steps follow from the $L=4096$ oscillation finding:
+localizing the oscillation itself (the cosine-decay control at $L=2048$
+rules out the learning rate; the aligned-trough evidence points at the data
+distribution, and the dropout rate is untested),
+best-of-trajectory or averaged-checkpoint reporting in
 place of bare endpoints, and $L=4096$ seeds 1--2 with periodic validation to
 bound the estimator instability.  The operator question is motivated
 independently: counting is a sum, but softmax routing computes a normalized
