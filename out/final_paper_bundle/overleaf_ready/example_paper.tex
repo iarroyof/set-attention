@@ -480,9 +480,10 @@ correction, with one honest caveat per island size: seed variance at
 $L=2048$ (with a host-mixing caveat on that number), and estimator
 instability at $L=4096$ (now bounded by three seeds on one host: the token
 ceiling is seed-deterministic, the set row's ceiling is not).  The open
-threads are the origin of the validation
-oscillation (the learning rate has been ruled out by a decay control; a
-data-driven component is the current suspect), and whether the aggregation
+threads are the dropout-free set recipe (a dropout-free control raised the
+set row's trajectory ceiling from $0.880$ to $0.941$ and cut its peak
+memory by about $25$\% at $L=2048$; confirmation against a dropout-free
+token control is pending), and whether the aggregation
 operator itself (a
 normalized average, where the task rewards a sum) is the next mechanism
 worth changing.
@@ -1011,12 +1012,15 @@ essentially seed-deterministic (every seed reaches about $0.97$ somewhere;
 its endpoint standard deviation of $0.028$ is pure oscillation phase), while
 the set row's ceiling varies more across seeds ($0.916$--$0.932$).  Three
 caveats stand: the $L=4096$ gap is wider under the reliable estimator than
-at $L=2048$; the oscillation itself is
-unexplained --- a cosine learning-rate-decay control at $L=2048$ neither
+at $L=2048$; the oscillation itself is only partly explained --- a cosine
+learning-rate-decay control at $L=2048$ neither
 damped it nor changed the endpoint, ruling out the constant learning rate as
-the cause, while partially aligned troughs between that control and its
-constant-rate twin (identical batch order, divergent weights) point to a
-data-driven component --- and both families oscillate, the set row more; and
+the cause, and a seed-swap control shows the trough positions track the
+training-data sequence rather than the update count, while a dropout-free
+control shows dropout amplifies the swings (raising the trajectory floor
+from $0.735$ to $0.819$ and its ceiling from $0.880$ to $0.941$) and costs
+about $25$\% additional peak memory on the set row --- and both families
+oscillate, the set row more; and
 same-seed runs are sensitive to
 second-epoch data order, an additional variance source.  We therefore
 report $L=4096$ as best-of-trajectory with the endpoint alongside, and we
@@ -1053,10 +1057,12 @@ equivalence of b0, no associative-recall mechanism, and no benefit from
 sparse top-$k$ routing, which is currently dominated by full routing at equal
 memory.
 
-The immediate next steps follow from the $L=4096$ oscillation finding:
-localizing the oscillation itself (the cosine-decay control at $L=2048$
-rules out the learning rate; the aligned-trough evidence points at the data
-distribution, and the dropout rate is untested), and
+The immediate next steps follow from the $L=4096$ oscillation finding and
+its two follow-up controls: re-measuring the frontier with the dropout-free
+set recipe (the dropout-free control at $L=2048$ raised the set row's
+trajectory ceiling from $0.880$ to $0.941$ and cut its peak memory by about
+$25$\%, pending a seeded, host-consistent confirmation against a dropout-free
+token control), and
 best-of-trajectory or averaged-checkpoint reporting in
 place of bare endpoints.  The operator question is motivated
 independently: counting is a sum, but softmax routing computes a normalized

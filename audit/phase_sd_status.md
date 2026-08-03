@@ -676,3 +676,15 @@ seed); b75's ceiling is 0.916-0.932. Gap ~0.027 at endpoints, ~0.048 at
 best-of-trajectory, at −26.2% VRAM. Endpoint-only validation at L4096 is
 phase luck for both families. Record: audit/LCA_calibration_20260718.md
 (L4096 seeds 1-2 section), audit/LCA_research_story_20260727.md.
+
+2026-08-03 — MRP-lca-cmp L2048 oscillation-origin probes complete (l2048osc,
+Blue): trough positions track the data sequence (seed0-order rows const/
+cosine/nodrop all dip at updates 1500-2000; seed3 with a different order dips
+at 1000) — update-indexed dynamics rejected. Dropout does not create the
+oscillation but amplifies it: dropout=0 raises the b75 trajectory floor
+0.735->0.819, mean +0.070, ceiling 0.880->0.9412, and cuts peak VRAM
+7201->5388 MiB (-25%). b75-nodrop best 0.9412 ~= token reference 0.9438 but
+host-inconsistent; dropout=0 is the candidate default set recipe pending a
+seeded host-consistent confirmation wave (nodrop seeds 1-2 + token-nodrop
+control on Blue). Record: audit/LCA_calibration_20260718.md,
+audit/LCA_research_story_20260727.md.

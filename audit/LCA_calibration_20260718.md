@@ -773,3 +773,57 @@ Artifacts: `out/lca_cmp/l4096trajectory/{b75,token}/L4096/l4096tj_*_seed{1,2}.
 `out/lca_cmp/l4096trajectory/l4096trajectory_lizmark.tsv` (6 rows), logs
 `logs/lca_cmp/lizmark/l4096tj_*seed{1,2}.log` (remote), driver log
 `logs/lca_cmp/lizmark/l4096trajectory_s12_driver.log` (remote).
+
+## L2048 oscillation-origin probes (2026-08-03, l2048osc): troughs track the data sequence; dropout amplifies and depresses — and costs 1.8 GB
+
+Driver `scripts/run_lca_l2048_oscorigin.sh` (commit `501b0ee`), Blue,
+b75 full-routing L2048/prefix/B4, 4000 upd, validation every 500, against
+the lr-decay probe's const/cosine controls. Rows:
+- `l2048osc_b75seed3` (training.seed=3): SAME dataset_seed=1729 and SAME
+  val set as the const control; different batch order + init + dropout
+  masks. Endpoint 0.9204, best 0.9204 @4000, min 0.6479 @1000.
+- `l2048osc_b75nodrop` (all four dropout knobs 0.0): same seed 0 as const
+  => same init and same batch sequence; only dropout randomness removed.
+  Endpoint 0.8894, best 0.9412 @3500, min 0.8192 @2000,
+  peak 5387.6 MiB (vs 7201.1 with dropout).
+
+Val trajectories (updates 500..4000):
+- const:  0.786, 0.869, 0.754, 0.735, 0.863, 0.880, 0.775, 0.878
+- cosine: 0.786, 0.677, 0.730, 0.732, 0.809, 0.887, 0.848, 0.878
+- seed3:  0.861, 0.648, 0.905, 0.836, 0.903, 0.868, 0.912, 0.920
+- nodrop: 0.883, 0.902, 0.841, 0.819, 0.938, 0.889, 0.941, 0.889
+
+Findings:
+1. **Trough positions track the data sequence, not the update count.**
+   const, cosine, AND nodrop — all sharing seed 0's batch order — dip in
+   the 1500-2000 region (nodrop's own minimum is at update 2000). seed3,
+   with the same data but a different order/init, shows no trough there
+   (its dip is at 1000). The oscillation phase is data-sequence/RNG
+   driven, not update-indexed dynamics. (init is a residual confound in
+   the seed3 row; the nodrop alignment at update 2000 is the cleaner
+   evidence, since it shares seed 0's exact batch sequence.)
+2. **Dropout does not create the oscillation but amplifies it — and is a
+   major quality and memory depressant on the set row.** Removing it:
+   floor 0.735 -> 0.819, trajectory mean +0.070, ceiling 0.880 -> 0.9412,
+   and peak VRAM 7201 -> 5388 MiB (-25%). Dropout 0.1 was silently
+   costing ~0.06-0.07 quality AND ~1.8 GB on every b75 row to date.
+3. **The b75-nodrop best-of-trajectory (0.9412) essentially touches the
+   token L2048 reference (0.9438)** — but that token number is from
+   Lizmark while these rows are Blue, so the comparison is
+   host-inconsistent. A host-consistent nodrop token control plus nodrop
+   seeds 1-2 are required before claiming the L2048 gap is a dropout
+   artifact.
+
+Plan consequences: dropout=0 becomes the candidate default recipe for
+set LCA rows (quality AND memory), pending a seeded host-consistent
+confirmation wave: b75nodrop seeds 1-2 + token-nodrop control on Blue at
+L2048; if confirmed, re-measure the L4096 frontier with dropout=0 (the
+frontier table's quality AND VRAM numbers both shift). The oscillation
+itself is now attributed to data-sequence content (specific training
+segments destabilize validation); further localization would need
+per-segment data logging (a data-pipeline change — deferred).
+
+Artifacts: `out/lca_cmp/l2048oscorigin/b75/L2048/l2048osc_*.{csv,
+_curve.csv,_evalcurve.csv}`, `out/lca_cmp/l2048oscorigin/l2048oscorigin_
+blue.tsv`, logs `logs/lca_cmp/blue/l2048osc_*.log` (remote), driver log
+`logs/lca_cmp/blue/l2048oscorigin_driver.log` (remote).

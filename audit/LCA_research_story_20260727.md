@@ -433,21 +433,23 @@ largest and token approaches hardware exclusion.**
    (−12.5% / −21.1% / −26.2% at L1024/2048/4096), and token becomes
    hardware-excluded first. The frontier value of set attention
    increases exactly where dense token attention stops fitting.
-9. **Both rows oscillate under constant lr at L2048 AND L4096, and the
-   learning rate is not the cause.** Endpoint-only validation is an
-   unreliable estimator: the b75 val trajectory swings ~0.145 at L2048
-   (0.735-0.880) and ~0.15 at L4096 (0.61-0.93); token also swings
-   (0.825-0.971 at L4096). Val N=2048, so the swings are real model
-   behavior, not eval noise. A cosine-decay control at L2048 neither
-   damps the oscillation nor changes the endpoint (0.8785 vs 0.8779),
-   rejecting the constant-lr hypothesis; partially aligned troughs
-   between the const/cosine rows (identical batch order, divergent
-   weights) point to a data-driven component. At L4096, two same-seed
+9. **Both rows oscillate under constant lr at L2048 AND L4096; the
+   troughs track the data sequence; dropout amplifies.** Endpoint-only
+   validation is an unreliable estimator: the b75 val trajectory swings
+   ~0.145 at L2048 and ~0.15 at L4096; token also swings (0.825-0.971
+   at L4096). Val N=2048, so the swings are real model behavior, not
+   eval noise. Cosine decay neither damps the oscillation nor changes
+   the endpoint (lr rejected as cause). Rows sharing seed 0's batch
+   order (const, cosine, nodrop) all dip in the 1500-2000 region, while
+   a seed-3 row with a different order dips elsewhere — the troughs are
+   data-sequence driven, not update-indexed dynamics. Dropout=0 does
+   not remove the oscillation but raises its floor (0.735 -> 0.819),
+   its mean (+0.070), and its ceiling (0.880 -> 0.9412 at L2048), and
+   cuts peak VRAM by 25% (7201 -> 5388 MiB). At L4096, two same-seed
    8000-update runs are bitwise-identical through update 5000 and
    diverge at the epoch-2 reshuffle, landing on different oscillation
    phases (0.7570 vs 0.9269 endpoints). There is no monotone validation
-   degradation with budget: the best b75 val_loss/accuracy values occur
-   in the 6000-8000 region.
+   degradation with budget.
 10. **The current Pareto claim (defensible phrasing):** b75 full routing
    delivers matched-regime quality at −12.5% VRAM (L1024: 0.9233±0.0157
    vs 0.9443±0.0317), −21.1% VRAM (L2048: 0.9078±0.0368 vs 0.9438 —
@@ -469,10 +471,16 @@ largest and token approaches hardware exclusion.**
   overfitting — oscillation). Data-scale (40k) DEPRIORITIZED (premise
   gone). lr-schedule probe DONE 2026-07-31 (l2048lr, Blue): cosine
   decay does NOT damp the oscillation or change the endpoint at L2048
-  — constant lr rejected as the cause; trough alignment points to a
-  data-driven component. Oscillation-origin refocuses on data segments
-  and dropout 0.1. Best-of-trajectory / last-k-mean reporting is the
-  robust estimator.
+  — constant lr rejected as the cause. Oscillation-origin probes DONE
+  2026-08-03 (l2048osc, Blue): trough positions track the data sequence
+  (seed0-order rows all dip at updates 1500-2000; seed3 with a
+  different order dips elsewhere) — update-indexed dynamics rejected;
+  dropout does not create the oscillation but amplifies it, and
+  dropout=0 lifts the b75 trajectory mean by +0.070, the ceiling from
+  0.880 to 0.9412, and cuts peak VRAM from 7201 to 5388 MiB (-25%).
+  b75-nodrop best 0.9412 ≈ token reference 0.9438 (host-inconsistent —
+  confirmation wave needed). DROPOUT=0 IS THE CANDIDATE DEFAULT SET
+  RECIPE pending seeded host-consistent confirmation.
 - **Host-consistency rule (new)**: cross-host same-seed runs diverge
   (~0.06 at L2048); same-host replication is bitwise. All future
   multi-seed LCA rows are pinned to one host per island. The L2048
