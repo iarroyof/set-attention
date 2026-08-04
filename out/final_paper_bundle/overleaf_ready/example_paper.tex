@@ -480,10 +480,13 @@ correction, with one honest caveat per island size: seed variance at
 $L=2048$ (with a host-mixing caveat on that number), and estimator
 instability at $L=4096$ (now bounded by three seeds on one host: the token
 ceiling is seed-deterministic, the set row's ceiling is not).  The open
-threads are the dropout-free set recipe (a dropout-free control raised the
-set row's trajectory ceiling from $0.880$ to $0.941$ and cut its peak
-memory by about $25$\% at $L=2048$; confirmation against a dropout-free
-token control is pending), and whether the aggregation
+threads are the dropout-free frontier re-measurement at $L=4096$ (the
+dropout-free set recipe is now confirmed at $L=2048$ by three seeds on one
+host against dropout-free token controls: it raises the set row's
+trajectory ceiling from $0.880$ to $0.936 \pm 0.007$ and cuts its peak
+memory by about $25$\%, narrowing the token gap to $0.021$ at endpoints,
+though the memory edge at $L=2048$ shrinks to about $7.5$\% because the
+token row's memory also drops), and whether the aggregation
 operator itself (a
 normalized average, where the task rewards a sum) is the next mechanism
 worth changing.
@@ -1058,11 +1061,12 @@ sparse top-$k$ routing, which is currently dominated by full routing at equal
 memory.
 
 The immediate next steps follow from the $L=4096$ oscillation finding and
-its two follow-up controls: re-measuring the frontier with the dropout-free
-set recipe (the dropout-free control at $L=2048$ raised the set row's
-trajectory ceiling from $0.880$ to $0.941$ and cut its peak memory by about
-$25$\%, pending a seeded, host-consistent confirmation against a dropout-free
-token control), and
+its two follow-up controls: re-measuring the $L=4096$ frontier with the
+dropout-free set recipe (now confirmed at $L=2048$ by three seeds on one
+host against dropout-free token controls: the set row's trajectory ceiling
+rises from $0.880$ to $0.936 \pm 0.007$ and its peak memory drops by about
+$25$\%, with the caveat that the $L=2048$ memory edge shrinks to about
+$7.5$\% because the token row's memory also drops by about $36$\%), and
 best-of-trajectory or averaged-checkpoint reporting in
 place of bare endpoints.  The operator question is motivated
 independently: counting is a sum, but softmax routing computes a normalized

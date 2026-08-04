@@ -827,3 +827,55 @@ Artifacts: `out/lca_cmp/l2048oscorigin/b75/L2048/l2048osc_*.{csv,
 _curve.csv,_evalcurve.csv}`, `out/lca_cmp/l2048oscorigin/l2048oscorigin_
 blue.tsv`, logs `logs/lca_cmp/blue/l2048osc_*.log` (remote), driver log
 `logs/lca_cmp/blue/l2048oscorigin_driver.log` (remote).
+
+## L2048 dropout-free 3-seed confirmation (2026-08-04, l2048nd): ceiling lift CONFIRMED and seed-stable; memory edge shrinks at L2048
+
+Driver `scripts/run_lca_l2048_nodrop3seed.sh` (commit `8852405`), ALL on
+Blue, dropout=0 on all four knobs, L2048/prefix/B4, 4000 upd, validation
+every 500. b75nodrop seeds 0-2 (seed0 reused from l2048oscorigin — identical
+config, artifacts copied with provenance note) + tokennodrop seeds 0-2
+(host-consistent controls).
+
+3-seed statistics (endpoint | best-of-trajectory | traj mean | peak MiB):
+- b75nodrop:   0.9090+-0.0195 | 0.9358+-0.0067 | 0.8859 | 5387.6
+- tokennodrop: 0.9298+-0.0406 | 0.9617+-0.0067 | 0.9120 | 5827.7
+
+Clean same-host/seed before-after (Blue, seed0, same data): b75 with
+dropout (const control): endpoint 0.8779, best 0.8804, floor 0.7346,
+7201 MiB. b75 dropout=0: endpoint 0.8894, best 0.9412, floor 0.8192,
+5388 MiB. Ceiling +0.061, floor +0.085, VRAM -25%.
+
+Findings:
+1. **The dropout=0 ceiling lift is CONFIRMED and seed-stable** for b75:
+   all three seeds reach 0.928-0.941 (best-of-trajectory mean
+   0.9358+-0.0067 vs 0.880 with dropout). Dropout=0 becomes the default
+   set recipe on this task family.
+2. **The L2048 gap narrows but does not vanish**: b75 vs token under
+   dropout=0 on one host: 0.021 at endpoints, 0.026 at best-of-
+   trajectory (0.9358 vs 0.9617), 0.026 at trajectory mean. The previous
+   ~0.06 comparison was inflated by dropout and host-mixing.
+3. **CAVEAT — the memory edge shrinks at L2048 under dropout=0**: token
+   VRAM drops more (9124 -> 5828 MiB, -36%) than b75's (7201 -> 5388,
+   -25%), so the b75/token peak ratio goes from -21.1% to -7.5% at this
+   island. Activation memory dominates at L2048; at L4096 the score
+   tensor is 4x larger, so the structural edge should hold better there
+   — the L4096 dropout=0 re-measurement is now the decisive frontier row.
+4. **Oscillation persists under dropout=0 for both families** (mean
+   ranges: b75 0.155, token 0.136) — dropout amplifies but does not
+   create, for the third time.
+5. Known measurement gap: no with-dropout TOKEN control on Blue, so the
+   token-side dropout cost is only measurable cross-host (weak); the
+   b75 before/after is clean (same host, seed, data).
+
+Plan consequences: proceed to the L4096 dropout=0 frontier
+re-measurement (user pre-approved sequence: seed0 first, 3 seeds if
+promising): b75nodrop + tokennodrop at L4096/prefix/B4, 8000 upd,
+eval every 500, Lizmark (token L4096 nodrop VRAM will drop from 33.7 GB
+but stay well above Blue's 24 GB). The sum-routing operator probe is
+next after the recipe is settled.
+
+Artifacts: `out/lca_cmp/l2048nodrop3seed/{b75,token}/L2048/l2048nd_*.
+{csv,_curve.csv,_evalcurve.csv}`, `out/lca_cmp/l2048nodrop3seed/
+l2048nodrop3seed_blue.tsv`, logs `logs/lca_cmp/blue/l2048nd_*.log`
+(remote), driver log `logs/lca_cmp/blue/l2048nodrop3seed_driver.log`
+(remote).

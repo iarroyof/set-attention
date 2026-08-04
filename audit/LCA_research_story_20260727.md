@@ -449,7 +449,12 @@ largest and token approaches hardware exclusion.**
    8000-update runs are bitwise-identical through update 5000 and
    diverge at the epoch-2 reshuffle, landing on different oscillation
    phases (0.7570 vs 0.9269 endpoints). There is no monotone validation
-   degradation with budget.
+   degradation with budget. Addendum 2026-08-04: the dropout=0 ceiling
+   lift is confirmed seed-stable at L2048 (3 seeds, all-Blue, with
+   dropout-free token controls — see Part VI); the L2048 memory edge
+   shrinks to -7.5% under dropout=0 because token VRAM drops more
+   (-36% vs b75's -25%), so the decisive memory comparison moves to
+   L4096.
 10. **The current Pareto claim (defensible phrasing):** b75 full routing
    delivers matched-regime quality at −12.5% VRAM (L1024: 0.9233±0.0157
    vs 0.9443±0.0317), −21.1% VRAM (L2048: 0.9078±0.0368 vs 0.9438 —
@@ -478,9 +483,17 @@ largest and token approaches hardware exclusion.**
   dropout does not create the oscillation but amplifies it, and
   dropout=0 lifts the b75 trajectory mean by +0.070, the ceiling from
   0.880 to 0.9412, and cuts peak VRAM from 7201 to 5388 MiB (-25%).
-  b75-nodrop best 0.9412 ≈ token reference 0.9438 (host-inconsistent —
-  confirmation wave needed). DROPOUT=0 IS THE CANDIDATE DEFAULT SET
-  RECIPE pending seeded host-consistent confirmation.
+  b75-nodrop best 0.9412 ≈ token reference 0.9438 (host-inconsistent).
+  Confirmation wave DONE 2026-08-04 (l2048nd, all-Blue, 3 seeds,
+  dropout-free token controls): b75nodrop endpoints 0.9090+-0.0195 /
+  best 0.9358+-0.0067 @ 5387.6 MiB; tokennodrop endpoints
+  0.9298+-0.0406 / best 0.9617+-0.0067 @ 5827.7 MiB. The ceiling lift
+  is CONFIRMED and seed-stable (all seeds best 0.928-0.941); the L2048
+  gap narrows to ~0.021 endpoints / ~0.026 best. DROPOUT=0 IS THE
+  DEFAULT SET RECIPE on this task family. CAVEAT: the L2048 memory
+  edge shrinks to -7.5% under dropout=0 (token VRAM also drops, -36%)
+  — activation memory dominates at L2048; the L4096 dropout=0
+  re-measurement is the decisive frontier row.
 - **Host-consistency rule (new)**: cross-host same-seed runs diverge
   (~0.06 at L2048); same-host replication is bitwise. All future
   multi-seed LCA rows are pinned to one host per island. The L2048

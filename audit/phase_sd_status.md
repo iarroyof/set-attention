@@ -688,3 +688,15 @@ host-inconsistent; dropout=0 is the candidate default set recipe pending a
 seeded host-consistent confirmation wave (nodrop seeds 1-2 + token-nodrop
 control on Blue). Record: audit/LCA_calibration_20260718.md,
 audit/LCA_research_story_20260727.md.
+
+2026-08-04 — MRP-lca-cmp L2048 dropout-free 3-seed confirmation complete
+(l2048nd, all-Blue, 3 seeds, dropout-free token controls): b75nodrop
+endpoints 0.9090+-0.0195, best-of-trajectory 0.9358+-0.0067 @ 5387.6 MiB;
+tokennodrop endpoints 0.9298+-0.0406, best 0.9617+-0.0067 @ 5827.7 MiB.
+Ceiling lift CONFIRMED seed-stable (all b75 seeds best 0.928-0.941);
+dropout=0 is now the default set recipe on this task family. L2048 gap
+narrows to 0.021 endpoints / 0.026 best. CAVEAT: the L2048 memory edge
+shrinks to -7.5% under dropout=0 (token VRAM drops -36% vs b75's -25%;
+activation memory dominates at L2048) — the L4096 dropout=0 re-measurement
+is the decisive frontier row. Record: audit/LCA_calibration_20260718.md
+(l2048nd section), audit/LCA_research_story_20260727.md.
