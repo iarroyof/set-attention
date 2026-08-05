@@ -700,3 +700,16 @@ shrinks to -7.5% under dropout=0 (token VRAM drops -36% vs b75's -25%;
 activation memory dominates at L2048) — the L4096 dropout=0 re-measurement
 is the decisive frontier row. Record: audit/LCA_calibration_20260718.md
 (l2048nd section), audit/LCA_research_story_20260727.md.
+
+2026-08-04 — MRP-lca-cmp L4096 dropout-free frontier seed0 complete
+(l4096nd, Lizmark, 8000 upd, eval every 500): b75nodrop endpoint=best
+0.9474 (still rising at u8000) @ 17925.2 MiB; tokennodrop endpoint=best
+0.9728 @ 20765.5 MiB. Ceiling lift transfers to L4096 (+0.025 over the
+with-dropout b75 3-seed best mean 0.9222); gap narrows to 0.0254 with
+neither endpoint being phase-luck. CAVEAT: memory edge shrinks to -13.7%
+under dropout=0 (token VRAM -38.5% vs b75 -28.1%) — better than L2048's
+-7.5% as predicted, but the dropout buffer was a large part of the
+with-dropout edge. Oscillation persists (ranges 0.174 b75 / 0.274 token).
+Seeds 1-2 launched (user pre-approved). Record:
+audit/LCA_calibration_20260718.md (l4096nd section),
+audit/LCA_research_story_20260727.md.

@@ -494,6 +494,17 @@ largest and token approaches hardware exclusion.**
   edge shrinks to -7.5% under dropout=0 (token VRAM also drops, -36%)
   — activation memory dominates at L2048; the L4096 dropout=0
   re-measurement is the decisive frontier row.
+- **L4096 dropout-free frontier**: seed0 DONE 2026-08-04 (l4096nd,
+  Lizmark, 8000 upd, eval every 500): b75nodrop endpoint=best 0.9474
+  (still rising at u8000) @ 17925.2 MiB; tokennodrop endpoint=best
+  0.9728 @ 20765.5 MiB. The ceiling lift transfers (+0.025 over the
+  with-dropout b75 3-seed best mean); the gap narrows to 0.0254 at
+  endpoint=best for both. CAVEAT: the memory edge shrinks to -13.7%
+  under dropout=0 (token VRAM -38.5% vs b75 -28.1%) — better than
+  L2048's -7.5% as the score-tensor share grows, but the dropout
+  buffer was a large part of the with-dropout edge. Seeds 1-2 running
+  (user pre-approved); paper frontier table update waits for the
+  3-seed set.
 - **Host-consistency rule (new)**: cross-host same-seed runs diverge
   (~0.06 at L2048); same-host replication is bitwise. All future
   multi-seed LCA rows are pinned to one host per island. The L2048
