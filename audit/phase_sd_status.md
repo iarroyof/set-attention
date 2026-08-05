@@ -713,3 +713,16 @@ with-dropout edge. Oscillation persists (ranges 0.174 b75 / 0.274 token).
 Seeds 1-2 launched (user pre-approved). Record:
 audit/LCA_calibration_20260718.md (l4096nd section),
 audit/LCA_research_story_20260727.md.
+
+2026-08-05 — MRP-lca-cmp L4096 dropout-free 3-seed frontier COMPLETE
+(l4096nd, all-Lizmark, 8000 upd, eval every 500): b75nodrop endpoints =
+best 0.9448+-0.0029 @ 17925.2 MiB; tokennodrop endpoints 0.9461+-0.0315 /
+best 0.9680+-0.0046 @ 20765.5 MiB. ENDPOINT PARITY (means within 0.0013)
+at -13.7% peak VRAM; b75 endpoint variance 10x lower (every b75 seed ends
+at its ceiling; token seed2 endpoint 0.9114 is a trough of best 0.9636).
+Token retains the higher best-checkpoint ceiling (0.968 vs 0.945,
+near-seed-deterministic). The with-dropout -26.2% memory edge is not
+recoverable — mostly dropout buffer; the structural edge settles at
+-13.7% (L4096) / -7.5% (L2048). Both families still rise at u8000.
+Record: audit/LCA_calibration_20260718.md (l4096nd 3-seed section),
+audit/LCA_research_story_20260727.md.

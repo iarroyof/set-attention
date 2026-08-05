@@ -478,16 +478,17 @@ observed at any periodic checkpoint).
 \paragraph{Where the line stands.}  The frontier claim survives the
 correction, with one honest caveat per island size: seed variance at
 $L=2048$ (with a host-mixing caveat on that number), and estimator
-instability at $L=4096$ (now bounded by three seeds on one host: the token
-ceiling is seed-deterministic, the set row's ceiling is not).  The open
-threads are the dropout-free frontier re-measurement at $L=4096$ (the
-dropout-free set recipe is now confirmed at $L=2048$ by three seeds on one
-host against dropout-free token controls: it raises the set row's
-trajectory ceiling from $0.880$ to $0.936 \pm 0.007$ and cuts its peak
-memory by about $25$\%, narrowing the token gap to $0.021$ at endpoints,
-though the memory edge at $L=2048$ shrinks to about $7.5$\% because the
-token row's memory also drops), and whether the aggregation
-operator itself (a
+instability at $L=4096$ (bounded by three seeds on one host: the token
+ceiling is seed-deterministic, the set row's ceiling is not).  The
+dropout-free set recipe is confirmed at $L=2048$ (three seeds, one host,
+dropout-free token controls: the set row's trajectory ceiling rises from
+$0.880$ to $0.936 \pm 0.007$ and its peak memory drops by about $25$\%),
+and the dropout-free $L=4096$ frontier re-measurement it motivated is now
+complete: endpoint parity with token ($0.9448\pm0.0029$ versus
+$0.9461\pm0.0315$) at $-13.7$\% peak VRAM, with the set row's endpoint
+variance tenfold lower and token retaining a higher best-checkpoint
+ceiling ($0.9680\pm0.0046$).  The remaining open thread is whether the
+aggregation operator itself (a
 normalized average, where the task rewards a sum) is the next mechanism
 worth changing.
 
@@ -1027,12 +1028,40 @@ oscillate, the set row more; and
 same-seed runs are sensitive to
 second-epoch data order, an additional variance source.  We therefore
 report $L=4096$ as best-of-trajectory with the endpoint alongside, and we
-do not claim quality parity there --- we claim the same matched-quality
-regime with the widest uncertainty of the three islands.  We also note a
+do not claim quality parity for those dropout rows --- we claim the same
+matched-quality regime with the widest uncertainty of the three islands
+(the dropout-free re-measurement below sharpens this to endpoint parity).  We also note a
 practical cost: by external launcher timestamps the $L=4096$ b75 run took
 about $4.9$ hours per 4000 updates against $42$ minutes for token on the same
 host, roughly $7\times$ slower; these are wall-clock launcher measurements,
 not framework-internal timers.
+
+\paragraph{The dropout-free frontier at $L=4096$.}  Repeating the full
+three-seed, single-host $L=4096$ protocol with the confirmed dropout-free
+recipe on both rows changes the picture again (last rows of
+Table~\ref{tab:lca-frontier}).  The set row reaches
+$0.9448\pm0.0029$ at the 8000-update endpoints against token's
+$0.9461\pm0.0315$: the means are within $0.002$, far inside token's own
+spread, at $-13.7$\% peak VRAM ($17925$ versus $20766$ MiB).  Two further
+observations matter more than the means.  First, the set row's endpoint
+variance collapses ($\pm0.003$, against $\pm0.019$ with dropout), because
+every set seed ends exactly at its own trajectory ceiling --- the
+oscillation-phase endpoint lottery is gone for the set row at this budget,
+while token still oscillates at update 8000 (its seed-2 endpoint $0.9114$
+is a trough of a $0.9636$ trajectory best).  Second, token retains a higher
+reachable ceiling: $0.9680\pm0.0046$ best-of-trajectory against the set
+row's $0.9448$, and near-seed-deterministic as before --- but reaching it
+requires checkpoint selection, since a bare token endpoint is now the
+noisier estimate.  The honest summary is endpoint parity with tenfold
+lower endpoint variance at $-13.7$\% memory, against a higher
+best-checkpoint token ceiling.  The memory edge itself is smaller than the
+$-26.2$\% of the dropout rows because dropout removal saves the token row
+more ($-38.5$\% peak) than the set row ($-28.1$\%): part of the with-dropout
+edge was dropout buffer, not structure, and the structural edge is the part
+that grows with $L$ ($-7.5$\% at $L=2048$ under dropout-free measurement,
+$-13.7$\% at $L=4096$).  Both families' trajectories are still rising at
+update 8000 under this recipe, so the budget, not the model, is the binding
+constraint at this island.
 
 \subsection{Updated Claim Boundary}
 \label{sec:results-lca-claim-boundary}
@@ -1050,23 +1079,20 @@ configuration the set path aggregates globally at all.  Configuration matters
 as much as blur allocation.  (iii) Matched-regime quality holds at
 all three context lengths: within about $0.02$--$0.03$ of token in mean
 accuracy at $L=1024$ and $L=2048$ (with higher set-row seed variance and
-overlapping intervals), and at $L=4096$ within about $0.03$ of token at
-endpoints and about $0.05$ under best-of-trajectory measurement (three
-seeds, one host) --- the widest gap of the three islands, measured under the
-widest estimator uncertainty.  (iv) The
+overlapping intervals), and at $L=4096$ the dropout-free re-measurement
+reaches endpoint parity ($0.9448\pm0.0029$ versus $0.9461\pm0.0315$) at
+$-13.7$\% peak VRAM, with the set row's endpoint variance tenfold lower;
+token retains a higher best-checkpoint ceiling ($0.9680\pm0.0046$ versus
+$0.9448\pm0.0029$).  (iv) The
 non-claims stand and gain one member: no subquadratic scaling (router scoring
 is still dense), no universal token-attention superiority, no token
 equivalence of b0, no associative-recall mechanism, and no benefit from
 sparse top-$k$ routing, which is currently dominated by full routing at equal
 memory.
 
-The immediate next steps follow from the $L=4096$ oscillation finding and
-its two follow-up controls: re-measuring the $L=4096$ frontier with the
-dropout-free set recipe (now confirmed at $L=2048$ by three seeds on one
-host against dropout-free token controls: the set row's trajectory ceiling
-rises from $0.880$ to $0.936 \pm 0.007$ and its peak memory drops by about
-$25$\%, with the caveat that the $L=2048$ memory edge shrinks to about
-$7.5$\% because the token row's memory also drops by about $36$\%), and
+The immediate next steps follow from the $L=4096$ dropout-free frontier
+result: an extended-budget probe, because both families' trajectories are
+still rising at update 8000 under the confirmed recipe, and continued
 best-of-trajectory or averaged-checkpoint reporting in
 place of bare endpoints.  The operator question is motivated
 independently: counting is a sum, but softmax routing computes a normalized

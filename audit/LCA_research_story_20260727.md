@@ -463,7 +463,14 @@ largest and token approaches hardware exclusion.**
    best-of-trajectory 0.9222±0.0085 vs 0.9702±0.0010). The L4096 gap is
    ~0.03 at endpoints and ~0.05 at best-of-trajectory — wider than at
    L2048 under the more reliable estimator. Token's reachable ceiling is
-   seed-deterministic (~0.97); b75's is 0.916-0.932.
+   seed-deterministic (~0.97); b75's is 0.916-0.932. Addendum 2026-08-05
+   (dropout-free recipe, l4096nd): at L4096 under dropout=0 the claim
+   sharpens to ENDPOINT PARITY — b75 0.9448+-0.0029 vs token
+   0.9461+-0.0315 at -13.7% peak VRAM, with b75 endpoint variance 10x
+   lower (every b75 seed ends at its ceiling; token endpoints remain
+   phase-luck). Token retains a higher best-checkpoint ceiling
+   (0.9680+-0.0046 vs 0.9448+-0.0029). The with-dropout -26.2% edge is
+   not recoverable: most of it was dropout buffer.
 
 # Part VI — Open threads (status)
 
@@ -494,17 +501,19 @@ largest and token approaches hardware exclusion.**
   edge shrinks to -7.5% under dropout=0 (token VRAM also drops, -36%)
   — activation memory dominates at L2048; the L4096 dropout=0
   re-measurement is the decisive frontier row.
-- **L4096 dropout-free frontier**: seed0 DONE 2026-08-04 (l4096nd,
-  Lizmark, 8000 upd, eval every 500): b75nodrop endpoint=best 0.9474
-  (still rising at u8000) @ 17925.2 MiB; tokennodrop endpoint=best
-  0.9728 @ 20765.5 MiB. The ceiling lift transfers (+0.025 over the
-  with-dropout b75 3-seed best mean); the gap narrows to 0.0254 at
-  endpoint=best for both. CAVEAT: the memory edge shrinks to -13.7%
-  under dropout=0 (token VRAM -38.5% vs b75 -28.1%) — better than
-  L2048's -7.5% as the score-tensor share grows, but the dropout
-  buffer was a large part of the with-dropout edge. Seeds 1-2 running
-  (user pre-approved); paper frontier table update waits for the
-  3-seed set.
+- **L4096 dropout-free frontier**: COMPLETE 2026-08-05 (l4096nd,
+  Lizmark, 3 seeds, 8000 upd, eval every 500): b75nodrop endpoints =
+  best 0.9448+-0.0029 @ 17925.2 MiB; tokennodrop endpoints
+  0.9461+-0.0315 / best 0.9680+-0.0046 @ 20765.5 MiB. ENDPOINT PARITY
+  (means within 0.0013) at -13.7% peak VRAM, with b75 endpoint
+  variance 10x lower (all three b75 seeds end AT their ceiling; token
+  still oscillates at u8000 — seed2 endpoint 0.9114 is a trough of
+  best 0.9636). Token retains a higher best-checkpoint ceiling
+  (0.9680+-0.0046, near-seed-deterministic). The memory edge under
+  dropout=0 settles at -13.7% for L4096 (vs -7.5% at L2048): the
+  score-tensor share grows with L as predicted, but the with-dropout
+  -26.2% is not recoverable — most of it was dropout buffer. Both
+  families still rise at u8000: extended budget motivated.
 - **Host-consistency rule (new)**: cross-host same-seed runs diverge
   (~0.06 at L2048); same-host replication is bitwise. All future
   multi-seed LCA rows are pinned to one host per island. The L2048

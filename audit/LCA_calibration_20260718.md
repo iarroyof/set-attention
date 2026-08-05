@@ -933,3 +933,55 @@ Artifacts: `out/lca_cmp/l4096nodrop/{b75,token}/L4096/l4096nd_*_seed0.
 l4096nodrop_lizmark.tsv`, logs `logs/lca_cmp/lizmark/l4096nd_*.log`
 (remote), driver log `logs/lca_cmp/lizmark/l4096nodrop_driver.log`
 (remote).
+
+## L4096 dropout-free 3-seed frontier (2026-08-05, l4096nd): endpoint parity with token at -13.7% VRAM, endpoint variance collapses
+
+Driver `scripts/run_lca_l4096_nodrop.sh` (commit `7632470`), ALL on
+Lizmark, dropout=0 on all four knobs, L4096/prefix/B4, 8000 upd,
+validation every 500. Full 3-seed set: b75nodrop + tokennodrop,
+seeds 0-2 (seed0 reported in the previous section).
+
+3-seed statistics (endpoints | best-of-trajectory | traj mean | peak MiB):
+- b75nodrop:   0.9448+-0.0029 | 0.9448+-0.0029 | 0.8863+-0.0123 | 17925.2
+- tokennodrop: 0.9461+-0.0315 | 0.9680+-0.0046 | 0.9122+-0.0107 | 20765.5
+
+Per-seed endpoints: b75 {0.9474, 0.9455, 0.9416}; token {0.9728,
+0.9541, 0.9114}. Per-seed best: b75 = endpoints (all three seeds end
+AT their trajectory ceiling); token {0.9728, 0.9678, 0.9636}.
+
+Findings:
+1. **Endpoint parity at L4096 under the confirmed recipe**: b75
+   0.9448+-0.0029 vs token 0.9461+-0.0315 — the means are within
+   0.0013, far inside token's own spread, at -13.7% peak VRAM
+   (17925.2 vs 20765.5 MiB).
+2. **b75 endpoint variance collapses under dropout=0**: +-0.0029 (vs
+   +-0.0191 with dropout at L4096). All three b75 seeds end exactly at
+   their trajectory ceiling — the oscillation-phase endpoint luck is
+   GONE for the set row at this budget. Token endpoint variance is now
+   the larger one (+-0.0315): token still oscillates at u8000 (seed2
+   endpoint 0.9114 sits in a trough; its best is 0.9636).
+3. **Token retains a higher reachable ceiling**: best-of-trajectory
+   0.9680+-0.0046 vs b75's 0.9448+-0.0029 (gap 0.023), and token's
+   ceiling stays near-seed-deterministic (0.9636-0.9728). But hitting
+   it requires checkpoint selection / phase luck; its endpoint is a
+   lottery. The defensible claim is now: matched endpoint quality with
+   10x lower endpoint variance at -13.7% VRAM; token keeps a higher
+   best-checkpoint ceiling.
+4. **Both families still rise at u8000** (seed0 curves ended at their
+   max; seeds 1-2 b75 endpoints are their ceilings too) — an
+   extended-budget (>8000 upd) probe is motivated.
+5. The memory edge under dropout=0 settles at -13.7% for L4096 (vs
+   -7.5% at L2048): the structural score-tensor share grows with L as
+   predicted, but the with-dropout -26.2% edge is not recoverable —
+   most of it was dropout buffer.
+
+Plan consequences: paper frontier table updated with the dropout-free
+L4096 3-seed set (this section is the record of it). Next: sum-routing
+operator probe; optional extended-budget probe (>8000 upd) if the
+operator work does not displace it.
+
+Artifacts: `out/lca_cmp/l4096nodrop/{b75,token}/L4096/l4096nd_*_seed{0,1,2}.
+{csv,_curve.csv,_evalcurve.csv}`, `out/lca_cmp/l4096nodrop/
+l4096nodrop_lizmark.tsv`, logs `logs/lca_cmp/lizmark/l4096nd_*.log`
+(remote), driver logs `logs/lca_cmp/lizmark/l4096nodrop{,_s12}_driver.log`
+(remote).
