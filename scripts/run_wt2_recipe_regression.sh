@@ -20,7 +20,10 @@
 #
 # Labels wt2rr_*; GRID_ROOT=out/wt2_recipe_regression. NEVER pooled with
 # the registered sd_grid matrix — this is a bridge/control, not a
-# replacement matrix. Interpretation guard (user): if the old frontier
+# replacement matrix. These rows carry NO experiment_contract on purpose:
+# sd_grid_seeded_v1 pins the old recipe (endpoint_window, topk16,
+# candidate_gather, dropout 0.1), which is exactly what this bridge varies.
+# Interpretation guard (user): if the old frontier
 # does not survive, say "the original WT2 frontier was measured under the
 # local-fiber recipe; the repaired global-fiber recipe changes the
 # quality-memory operating point" — NOT "the frontier was an artifact".
@@ -122,8 +125,8 @@ run_row () { # label seed gpu
     "training.output_dir=${csv%.csv}" logging.wandb.enable=false "logging.wandb.run_name=${name}"
     data.dataset=wikitext2 "data.batch_size=${BATCH}" "data.seq_len=${L}"
     "training.seed=${seed}" "training.epochs=${EPOCHS}" "training.lr=${LR}" "training.warmup_steps=${WARMUP}"
-    training.deterministic=false training.benchmark_mode=false
-    training.experiment_contract=sd_grid_seeded_v1 training.diagnostics_contract=current_matrix_v1
+    training.deterministic=true training.benchmark_mode=false
+    training.diagnostics_contract=current_matrix_v1
     model.d_model=384 model.dim_feedforward=1536 model.num_layers=6 model.num_heads=8
     "model.max_seq_len=${L}"
   )
