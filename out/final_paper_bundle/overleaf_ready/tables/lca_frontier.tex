@@ -14,10 +14,11 @@ updates, reporting the endpoint
 periodic checkpoint, averaged over seeds) in parentheses, because the $L=4096$
 validation
 signal oscillates and a bare endpoint is an unreliable point estimate (see
-text).  The $L=4096$ dropout-free rows repeat the same protocol with all
-dropout disabled (the confirmed recipe, see text); for the set row every
-seed's endpoint is its own best checkpoint, so endpoint and
-best-of-trajectory coincide.  Peak VRAM is reported in MiB.  The $L=4096$
+text).  The dropout-free rows repeat the same protocol with all
+dropout disabled (the confirmed recipe, see text), at 4000 updates for
+$L=2048$ and 8000 for $L=4096$; at $L=4096$ every set seed's endpoint is
+its own best checkpoint, so endpoint and best-of-trajectory coincide
+there.  Peak VRAM is reported in MiB.  The $L=4096$
 token peak exceeds the
 24\,GB card of the short-context host, so $L=4096$ rows exist only on the
 larger host.}
@@ -33,6 +34,7 @@ $L$ & Val.\ acc.\ & Peak MiB & Val.\ acc.\ & Peak MiB & $\Delta$ VRAM \\
 4096 & $0.9344\pm0.0276$ ($0.9702\pm0.0010$) & 33746 & $0.9077\pm0.0191$ ($0.9222\pm0.0085$) & 24916 & $-26.2$\% \\
 \midrule
 \multicolumn{7}{l}{\emph{dropout-free recipe (confirmed at $L=2048$, three seeds, one host)}}\\
+2048 & $0.9298\pm0.0406$ ($0.9617\pm0.0067$) & 5828 & $0.9090\pm0.0195$ ($0.9358\pm0.0067$) & 5388 & $-7.5$\% \\
 4096 & $0.9461\pm0.0315$ ($0.9680\pm0.0046$) & 20766 & $0.9448\pm0.0029$ ($0.9448\pm0.0029$) & 17925 & $-13.7$\% \\
 \bottomrule
 \end{tabular}

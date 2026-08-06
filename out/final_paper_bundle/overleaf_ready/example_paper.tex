@@ -1063,6 +1063,21 @@ $-13.7$\% at $L=4096$).  Both families' trajectories are still rising at
 update 8000 under this recipe, so the budget, not the model, is the binding
 constraint at this island.
 
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{../plots/main/fig_lca_l4096_trajectories.pdf}
+\caption{Validation trajectories at $L=4096$ (three seeds, one host,
+validation every 500 updates).  Left: with dropout, both families
+oscillate with amplitude $\approx 0.15$ throughout training, so any single
+endpoint is a phase sample.  Right: under the confirmed dropout-free
+recipe the set row's endpoints coincide with its trajectory ceiling on
+every seed (endpoint variance $\pm 0.003$), while token still oscillates
+at update 8000 (endpoint variance $\pm 0.032$); token retains the higher
+best-checkpoint ceiling.  Thin lines are individual seeds, thick lines the
+seed mean.}
+\label{fig:lca-l4096-trajectories}
+\end{figure}
+
 \subsection{Updated Claim Boundary}
 \label{sec:results-lca-claim-boundary}
 
@@ -1101,7 +1116,9 @@ the count is represented, so a sum/additive-routing variant is the natural
 mechanistic test.  A hybrid linear$+$sparse-retrieval branch may follow from
 that diagnosis; if pursued it will be labeled explicitly as a new branch with
 its own memory accounting, and never used to rescue the set-only claims
-above.
+above.  Both are next-stage work: neither is required for the frontier
+claims of this section, which stand on the measured rows of
+Table~\ref{tab:lca-frontier} alone.
 
 \iffalse
 Legacy Results content from here through the capacity-diagnostics subsection
