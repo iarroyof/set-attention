@@ -1,0 +1,5 @@
+ts	host	label	gpu	exit	epochs	peak_vram_mib	train_ppl	val_ppl	csv
+2026-08-06 11:06:29	blue	wt2rr_tokennodrop_L512b16_seed0	0	0	10	12342.970703125	229.19161987304688	834.3497314453125	out/wt2_recipe_regression/token/L512/wt2rr_tokennodrop_L512b16_seed0.csv
+2026-08-06 12:37:57	blue	wt2rr_b25nodrop_L512b16_seed0	1	0	10	13029.73779296875	334.2845764160156	1033.82568359375	out/wt2_recipe_regression/set/L512/wt2rr_b25nodrop_L512b16_seed0.csv
+2026-08-06 14:07:27	blue	wt2rr_b75nodrop_L512b16_seed0	0	0	10	12462.66748046875	343.1963195800781	1208.1236572265625	out/wt2_recipe_regression/set/L512/wt2rr_b75nodrop_L512b16_seed0.csv
+2026-08-06 14:16:09	blue	wt2rr_b75drop_L512b16_seed0	1	0	10	13018.68896484375	346.8924255371094	1209.179443359375	out/wt2_recipe_regression/set/L512/wt2rr_b75drop_L512b16_seed0.csv

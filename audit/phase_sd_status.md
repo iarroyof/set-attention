@@ -726,3 +726,17 @@ recoverable — mostly dropout buffer; the structural edge settles at
 -13.7% (L4096) / -7.5% (L2048). Both families still rise at u8000.
 Record: audit/LCA_calibration_20260718.md (l4096nd 3-seed section),
 audit/LCA_research_story_20260727.md.
+
+2026-08-06 — WT2 recipe regression bridge seed0 complete (wt2rr, Blue,
+GOLD island L512/B16): the repaired LCA recipe does NOT transfer to WT2
+LM — b25 861.6 -> 1033.8 (+20%) and b75 972.4 -> 1208.1 (+24%) val PPL
+with train PPL also worse (not overfitting), and no memory edge under
+the new recipe (set ~ token peak VRAM). Dropout near-neutral for the set
+row on WT2 (task-dependent recipe, not universal). Blur ordering
+preserved (b25 < b75 under both recipes). Guard phrasing: the WT2
+frontier stands as measured under the local-fiber recipe; the repaired
+recipe is a different operating point for a different task class. Seeds
+1-2 running per protocol. Close-loop paper package committed (2c8e5e2):
+L2048 nodrop frontier rows + L4096 trajectory figure + next-stage
+marking. Record: audit/WT2_recipe_regression_20260806.md,
+audit/LCA_research_story_20260727.md.
