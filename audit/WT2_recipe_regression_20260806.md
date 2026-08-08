@@ -111,6 +111,33 @@ admission headroom). All L3584/B3 rows therefore run on Lizmark, which
 also keeps host-consistency with the registered L3584/B3 reference rows
 (also Lizmark).
 
+CORRECTION (2026-08-08, user prompt): the "only adds memory" reasoning
+was wrong — dropout removal LOWERS VRAM and at this island it dominates.
+Measured new-recipe seed0 peaks (Lizmark): b75nodrop 20297 MiB
+(old 22979, -11.7%), b25nodrop 23791 (old 29175, -18.5%), tokennodrop
+22072 (old 31035, -28.9%). b75nodrop therefore DOES fit Blue (4.3 GB
+headroom). tokennodrop does NOT in practice: it OOM'd on Blue in
+backward at 23.53 GiB capacity despite 2.5 GB nominal headroom
+(cross-host allocator difference) — the >=4 GB headroom rule is now in
+memory/launch-provenance-and-vram-hygiene.md.
+
+5-seed wave (user-directed 2026-08-08, comparable to the 5-seed old
+recipe; seed0 stays on Lizmark for all four rows — HOST-MIXING CAVEAT
+that must travel into any paper wording):
+- Blue: b75nodrop seeds 1-4 (gpu1: seeds 1,3 sequential via first
+  driver; gpu0: seeds 2,4 via second driver). tokennodrop seeds 1-4
+  moved OFF Blue after the empirical OOM.
+- Lizmark: chained driver starts when the seed0 pass completes:
+  gpu0 = tokennodrop + b25nodrop per seed, gpu1 = b25drop per seed,
+  seeds 1-4.
+
+Seed0 partial results (Lizmark; b25drop pending at time of writing):
+b75nodrop val_ppl 1119.0 @ 20297 MiB; b25nodrop 1117.5 @ 23791;
+tokennodrop 973.3 @ 22072. vs old recipe: b25 +25% PPL (and the blur
+ordering INVERTS at this island under the new recipe: b25 ~= b75),
+b75 +11%, token +3%. Under the new recipe b75 keeps a -8% VRAM edge
+vs token here (20297 vs 22072).
+
 Registered references (old recipe, 5 seeds, Lizmark):
 - token: 945.3 mean val_ppl @ 31035 MiB
 - b25: 893.5 mean val_ppl @ 29175 MiB (old frontier edge: -52 PPL AND

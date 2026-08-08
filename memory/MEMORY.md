@@ -9,5 +9,6 @@
 - [Experiment-host access](blue-demon-access.md) — blue/lizmark ownership and external sshpass workflow
 - [Verified before proposed](verified-before-proposed.md) — user wants tested-vs-untested attribution clarity; hold untested architecture (SD-10a/11) until explicit go
 - [Experiment comparison control tuple](experiment-comparison-control-tuple.md) — ALWAYS fix {batch,lr,backend,coverage,...} and vary one factor; never compare across strata (the 4-day waste: silent batch/LR + landmark-not-linear)
+- [Launch provenance and VRAM hygiene](launch-provenance-and-vram-hygiene.md) — never predict fit across recipe changes from old peaks; dropout=0 LOWERS VRAM; >=4GB headroom rule; record per-row host/seed provenance + failed launches in the audit before reporting
 - [Archived research synthesis](archive/set-attention-research-direction_legacy_through_20260625.md) —
   historical only; never use as current launch guidance
