@@ -38,7 +38,23 @@ Registered matrix references (same island, old recipe, 5 seeds):
 - b25: 861.6+-24.2, peak 13807 MiB
 - b75: 972.4+-27.7, peak 12963 MiB
 
-Findings (seed0; seeds 1-2 running per protocol):
+## 3-seed verdict (2026-08-06, all Blue) — seed0 findings CONFIRMED
+
+| row | val_ppl (3 seeds) | peak MiB | old recipe (5 seeds) |
+|---|---:|---:|---:|
+| tokennodrop | 857.9+-22.3 | 12343 | 815.6+-34.3 @ 13419 |
+| b25nodrop | 1070.9+-39.2 | 13030 | 861.6+-24.2 @ 13807 |
+| b75nodrop | 1155.5+-70.7 | 12463 | 972.4+-27.7 @ 12963 |
+| b75drop (new fiber, dropout 0.1) | 1151.9+-72.7 | 13019 | — |
+
+Verdict: the repaired recipe does NOT transfer to WT2 at the GOLD island
+— confirmed at 3 seeds. b25 +24% PPL, b75 +19% PPL vs the old recipe;
+the b75drop attribution row sits within 0.3% of b75nodrop, so the whole
+degradation is fiber/scoring/routing, not dropout. No memory edge (set
+~ token peak). Token mildly prefers dropout (+5% PPL without it,
+overlapping spreads — mild overfitting). Blur ordering preserved.
+
+Findings (seed0, all confirmed by the 3-seed set):
 1. **The repaired recipe does NOT transfer to WT2 at this island**: set
    PPL degrades materially — b25 861.6 -> 1033.8 (+20%), b75 972.4 ->
    1208.1 (+24%) — far beyond the 5-seed spread (+-24..28). Train PPL
@@ -76,3 +92,27 @@ Artifacts: `out/wt2_recipe_regression/{token,set}/L512/wt2rr_*_seed0.csv`,
 `out/wt2_recipe_regression/wt2_recipe_regression_blue.tsv`, logs
 `logs/wt2_recipe_regression/blue/` (remote). References:
 `out/paper_mechanisms/sd_grid_seeded_v1/{token,set}/L512/*_b16_*.csv`.
+
+## L3584/B3 island (seed0 launched 2026-08-08, Lizmark)
+
+User-directed extension: the longest complete direct comparison and the
+island closest to the WT2 capacity boundary (L4096/B4 set rows are
+censored in the registered matrix). Rows: tokennodrop, b25nodrop,
+b75nodrop, and b25drop (attribution switched from b75drop to b25drop —
+the question here is "does the old LM set winner survive the repaired
+fiber?", b25 being the old WT2 winner). Per-GPU sequential queues keep
+both Lizmark GPUs continuously fed: gpu0 = [b25nodrop, tokennodrop],
+gpu1 = [b75nodrop, b25drop].
+
+Host decision (data-backed): NO row of this island fits Blue's 24 GB —
+registered old-recipe peaks are token 31035 / b25 29175 / b75 22979 MiB,
+and the repaired fiber only adds memory (b75 old already exceeds Blue's
+admission headroom). All L3584/B3 rows therefore run on Lizmark, which
+also keeps host-consistency with the registered L3584/B3 reference rows
+(also Lizmark).
+
+Registered references (old recipe, 5 seeds, Lizmark):
+- token: 945.3 mean val_ppl @ 31035 MiB
+- b25: 893.5 mean val_ppl @ 29175 MiB (old frontier edge: -52 PPL AND
+  -6% VRAM vs token — the island where the local-fiber set row wins)
+- b75: 1006.4 mean val_ppl @ 22979 MiB

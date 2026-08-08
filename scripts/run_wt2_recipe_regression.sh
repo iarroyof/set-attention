@@ -17,6 +17,18 @@
 #   b75nodrop    LCA blur optimum (2 fine + 6 coarse) under repaired recipe
 #   b75drop      b75 repaired fiber/scoring/routing but dropout=0.1 —
 #                separates the dropout effect from the fiber/scoring effect
+#   b25drop      b25 repaired fiber/scoring/routing but dropout=0.1 —
+#                same attribution for the old LM winner (L3584 island)
+#
+# Islands used so far: GOLD L512/B16 (seed0-2, Blue, 2026-08-06) and the
+# L3584/B3 bridge (longest complete direct comparison, closest to the
+# capacity boundary; Lizmark — no row of this island fits Blue's 24 GB:
+# registered peaks are token 31035 / b25 29175 / b75 22979 MiB under the
+# OLD recipe, and the repaired fiber only adds memory).
+#
+# Scheduling: per-GPU sequential queues (GPU0_ROWS/GPU1_ROWS) so a fast
+# row never leaves its GPU idle waiting for its pair; if unset, ROWS is
+# split alternately.
 #
 # Labels wt2rr_*; GRID_ROOT=out/wt2_recipe_regression. NEVER pooled with
 # the registered sd_grid matrix — this is a bridge/control, not a
@@ -42,6 +54,8 @@ SEEDS="${SEEDS:-0}"
 ROWS="${ROWS:-tokennodrop b25nodrop b75nodrop b75drop}"
 GPU0="${GPU0:-0}"
 GPU1="${GPU1:-1}"
+GPU0_ROWS="${GPU0_ROWS:-}"
+GPU1_ROWS="${GPU1_ROWS:-}"
 DRY_RUN="${DRY_RUN:-0}"
 
 GRID_ROOT="out/wt2_recipe_regression"
@@ -103,6 +117,7 @@ run_row () { # label seed gpu
     b25nodrop)   family=set; groups="$B25_GROUPS"; drop=0 ;;
     b75nodrop)   family=set; groups="$B75_GROUPS"; drop=0 ;;
     b75drop)     family=set; groups="$B75_GROUPS"; drop=1 ;;
+    b25drop)     family=set; groups="$B25_GROUPS"; drop=1 ;;
     *) echo "ERROR unknown row $label" >&2; return 1 ;;
   esac
   name="wt2rr_${label}_L${L}b${BATCH}_seed${seed}"
@@ -185,21 +200,28 @@ run_row () { # label seed gpu
   return 0
 }
 
-echo "=== WT2 RECIPE REGRESSION ${HOST_TAG}: ROWS='${ROWS}', SEEDS='${SEEDS}', L=${L}, B=${BATCH}, EPOCHS=${EPOCHS}, DRY_RUN=${DRY_RUN} ==="
-for seed in $SEEDS; do
-  set -- $ROWS
-  while [ $# -gt 0 ]; do
-    row1="$1"; shift
-    row2="${1:-}"; [ $# -gt 0 ] && shift
-    run_row "$row1" "$seed" "$GPU0" &
-    p0=$!
-    if [ -n "$row2" ]; then
-      run_row "$row2" "$seed" "$GPU1" &
-      p1=$!
-      wait "$p0" "$p1"
-    else
-      wait "$p0"
-    fi
+if [ -z "${GPU0_ROWS}${GPU1_ROWS}" ]; then
+  i=0
+  for r in $ROWS; do
+    if [ $((i % 2)) -eq 0 ]; then GPU0_ROWS="${GPU0_ROWS} $r"; else GPU1_ROWS="${GPU1_ROWS} $r"; fi
+    i=$((i + 1))
   done
+fi
+
+run_queue () { # gpu row...
+  local gpu="$1"; shift
+  local row
+  for row in "$@"; do
+    run_row "$row" "$CURRENT_SEED" "$gpu"
+  done
+}
+
+echo "=== WT2 RECIPE REGRESSION ${HOST_TAG}: GPU0_ROWS='${GPU0_ROWS}', GPU1_ROWS='${GPU1_ROWS}', SEEDS='${SEEDS}', L=${L}, B=${BATCH}, EPOCHS=${EPOCHS}, DRY_RUN=${DRY_RUN} ==="
+for CURRENT_SEED in $SEEDS; do
+  run_queue "$GPU0" $GPU0_ROWS &
+  q0=$!
+  run_queue "$GPU1" $GPU1_ROWS &
+  q1=$!
+  wait "$q0" "$q1"
 done
 echo "=== WT2 RECIPE REGRESSION ${HOST_TAG} pass complete ==="
