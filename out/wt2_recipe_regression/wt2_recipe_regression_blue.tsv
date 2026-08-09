@@ -11,3 +11,11 @@ ts	host	label	gpu	exit	epochs	peak_vram_mib	train_ppl	val_ppl	csv
 2026-08-06 19:14:43	blue	wt2rr_b25nodrop_L512b16_seed2	1	0	10	13029.73779296875	333.951904296875	1111.940673828125	out/wt2_recipe_regression/set/L512/wt2rr_b25nodrop_L512b16_seed2.csv
 2026-08-06 20:44:58	blue	wt2rr_b75nodrop_L512b16_seed2	0	0	10	12462.66748046875	344.9389953613281	1075.134765625	out/wt2_recipe_regression/set/L512/wt2rr_b75nodrop_L512b16_seed2.csv
 2026-08-06 20:52:38	blue	wt2rr_b75drop_L512b16_seed2	1	0	10	13018.68896484375	348.01025390625	1070.1295166015625	out/wt2_recipe_regression/set/L512/wt2rr_b75drop_L512b16_seed2.csv
+2026-08-08 14:35:08	blue	wt2rr_tokennodrop_L3584b3_seed1	0	1	0	NA	NA	NA	out/wt2_recipe_regression/token/L3584/wt2rr_tokennodrop_L3584b3_seed1.csv
+2026-08-08 16:59:40	blue	wt2rr_b75nodrop_L3584b3_seed2	0	0	10	20296.50390625	421.1637268066406	1101.4561767578125	out/wt2_recipe_regression/set/L3584/wt2rr_b75nodrop_L3584b3_seed2.csv
+2026-08-08 17:08:51	blue	wt2rr_b75nodrop_L3584b3_seed1	1	0	10	20296.50390625	422.27093505859375	1135.9324951171875	out/wt2_recipe_regression/set/L3584/wt2rr_b75nodrop_L3584b3_seed1.csv
+2026-08-08 17:08:55	blue	wt2rr_tokennodrop_L3584b3_seed2	0	1	0	NA	NA	NA	out/wt2_recipe_regression/token/L3584/wt2rr_tokennodrop_L3584b3_seed2.csv
+2026-08-08 17:08:59	blue	wt2rr_tokennodrop_L3584b3_seed3	0	1	0	NA	NA	NA	out/wt2_recipe_regression/token/L3584/wt2rr_tokennodrop_L3584b3_seed3.csv
+2026-08-08 19:22:07	blue	wt2rr_b75nodrop_L3584b3_seed4	0	0	10	20296.50390625	423.5450134277344	1086.6612548828125	out/wt2_recipe_regression/set/L3584/wt2rr_b75nodrop_L3584b3_seed4.csv
+2026-08-08 19:43:28	blue	wt2rr_b75nodrop_L3584b3_seed3	1	0	10	20296.50390625	423.61065673828125	1159.7100830078125	out/wt2_recipe_regression/set/L3584/wt2rr_b75nodrop_L3584b3_seed3.csv
+2026-08-08 19:43:35	blue	wt2rr_tokennodrop_L3584b3_seed4	0	1	0	NA	NA	NA	out/wt2_recipe_regression/token/L3584/wt2rr_tokennodrop_L3584b3_seed4.csv

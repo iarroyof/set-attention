@@ -740,3 +740,18 @@ recipe is a different operating point for a different task class. Seeds
 L2048 nodrop frontier rows + L4096 trajectory figure + next-stage
 marking. Record: audit/WT2_recipe_regression_20260806.md,
 audit/LCA_research_story_20260727.md.
+
+2026-08-09 — WT2 recipe regression bridge COMPLETE (L512 3-seed +
+L3584/B3 5-seed, wt2rr): the repaired LCA recipe does NOT transfer to
+WT2 LM — L3584 5-seed: b25nodrop 1125.7+-46.0 (+26% vs old recipe),
+b75nodrop 1120.5+-28.7 (+11.3%), tokennodrop 990.6+-15.0 (+4.8%);
+b25drop 1125.0+-42.5 (dropout quality-neutral for set rows, +31%
+memory). Blur ordering inverts under the repaired recipe (b25 ~= b75;
+the fine-head advantage needs the local fiber). Old WT2 frontier win
+does not survive: best new-recipe set row +13.1% PPL at -8.0% VRAM vs
+token. Guard phrasing applies (local-fiber operating point vs
+global-fiber operating point, different task classes). Host-mixing
+caveat: L3584 seed0 all-Lizmark, b75 seeds 1-4 Blue; tokennodrop Blue
+OOM documented (>=4GB headroom rule). Record:
+audit/WT2_recipe_regression_20260806.md, memory/launch-provenance-and-
+vram-hygiene.md, audit/LCA_research_story_20260727.md.

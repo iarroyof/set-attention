@@ -531,17 +531,21 @@ largest and token approaches hardware exclusion.**
 - **Sum-routing / sparse scoring / hybrid branch**: motivated
   (Part IV 4-6), awaiting user approval.
 - **WT2 recipe regression bridge (new line, 2026-08-06)**: does the
-  repaired LCA recipe transfer back to WT2 LM? Seed0 answer at the GOLD
-  island (L512/B16): NO — b25 861.6 -> 1033.8 (+20%) and b75 972.4 ->
-  1208.1 (+24%) val PPL, train PPL also worse (not overfitting), and no
-  memory edge under the new recipe (set ~ token peak). Dropout is
-  near-neutral for the set row on WT2 (unlike LCA) and mildly helpful
-  for token. Blur ordering preserved (b25 < b75 on WT2 under both
-  recipes). Interpretation guard (user): the WT2 frontier stands as
-  measured under the local-fiber recipe; the repaired global-fiber
-  recipe is a different operating point for a different task class —
-  not an artifact claim. Seeds 1-2 running; full record
-  audit/WT2_recipe_regression_20260806.md.
+  repaired LCA recipe transfer back to WT2 LM? COMPLETE 2026-08-09
+  (L512 3-seed + L3584/B3 5-seed): NO — at L512 b25 +24% / b75 +19%
+  val PPL; at L3584 b25 +26% / b75 +11%, with train PPL also worse
+  (not overfitting). Dropout is quality-neutral for set rows on WT2
+  (b25nodrop 1125.7 vs b25drop 1125.0) but costs +31% memory; mildly
+  helpful for token (+4.8% PPL without it — task-dependent recipe,
+  not universal). Blur ordering INVERTS under the repaired recipe
+  (old: b25 << b75; new: b25 ~= b75 — the fine-head advantage needs
+  the local fiber). The old WT2 frontier win (b25: -52 PPL AND -6%
+  VRAM vs token at L3584) does not survive: new recipe's best set row
+  is +13.1% PPL at -8.0% VRAM. Guard phrasing: the WT2 frontier stands
+  as measured under the local-fiber recipe; the repaired global-fiber
+  recipe is a different operating point for a different task class.
+  Host-mixing caveat: L3584 seed0 all-Lizmark, b75 seeds 1-4 Blue.
+  Full record audit/WT2_recipe_regression_20260806.md.
 - **Learnable pooling alpha**: banned until the past instability is
   understood (fixed alpha only).
 - **Legacy debts surfaced by the bridge audit (I.3), outside the LCA

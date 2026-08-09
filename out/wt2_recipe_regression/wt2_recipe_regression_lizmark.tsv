@@ -1,0 +1,17 @@
+ts	host	label	gpu	exit	epochs	peak_vram_mib	train_ppl	val_ppl	csv
+2026-08-08 13:49:13	lizmark	wt2rr_b75nodrop_L3584b3_seed0	1	0	10	20296.50390625	420.46844482421875	1118.9547119140625	out/wt2_recipe_regression/set/L3584/wt2rr_b75nodrop_L3584b3_seed0.csv
+2026-08-08 13:51:42	lizmark	wt2rr_b25nodrop_L3584b3_seed0	0	0	10	23791.05712890625	412.84637451171875	1117.4744873046875	out/wt2_recipe_regression/set/L3584/wt2rr_b25nodrop_L3584b3_seed0.csv
+2026-08-08 14:07:37	lizmark	wt2rr_tokennodrop_L3584b3_seed0	0	0	10	22071.8974609375	314.4012145996094	973.3033447265625	out/wt2_recipe_regression/token/L3584/wt2rr_tokennodrop_L3584b3_seed0.csv
+2026-08-08 16:58:20	lizmark	wt2rr_b25drop_L3584b3_seed0	1	0	10	31153.6962890625	414.31085205078125	1118.7310791015625	out/wt2_recipe_regression/set/L3584/wt2rr_b25drop_L3584b3_seed0.csv
+2026-08-08 17:15:22	lizmark	wt2rr_tokennodrop_L3584b3_seed1	0	0	10	22071.8974609375	314.4027099609375	991.675048828125	out/wt2_recipe_regression/token/L3584/wt2rr_tokennodrop_L3584b3_seed1.csv
+2026-08-08 20:13:43	lizmark	wt2rr_b25drop_L3584b3_seed1	1	0	10	31153.6962890625	421.6791687011719	1145.283447265625	out/wt2_recipe_regression/set/L3584/wt2rr_b25drop_L3584b3_seed1.csv
+2026-08-08 20:23:54	lizmark	wt2rr_b25nodrop_L3584b3_seed1	0	0	10	23791.05712890625	419.8189392089844	1149.1181640625	out/wt2_recipe_regression/set/L3584/wt2rr_b25nodrop_L3584b3_seed1.csv
+2026-08-08 20:39:51	lizmark	wt2rr_tokennodrop_L3584b3_seed2	0	0	10	22071.8974609375	313.4331970214844	998.5972900390625	out/wt2_recipe_regression/token/L3584/wt2rr_tokennodrop_L3584b3_seed2.csv
+2026-08-08 23:37:55	lizmark	wt2rr_b25drop_L3584b3_seed2	1	0	10	31153.6962890625	421.3059387207031	1072.3677978515625	out/wt2_recipe_regression/set/L3584/wt2rr_b25drop_L3584b3_seed2.csv
+2026-08-08 23:48:48	lizmark	wt2rr_b25nodrop_L3584b3_seed2	0	0	10	23791.05712890625	420.6102294921875	1068.6328125	out/wt2_recipe_regression/set/L3584/wt2rr_b25nodrop_L3584b3_seed2.csv
+2026-08-09 00:04:46	lizmark	wt2rr_tokennodrop_L3584b3_seed3	0	0	10	22071.8974609375	312.7677917480469	1010.4840698242188	out/wt2_recipe_regression/token/L3584/wt2rr_tokennodrop_L3584b3_seed3.csv
+2026-08-09 03:03:29	lizmark	wt2rr_b25drop_L3584b3_seed3	1	0	10	31153.6962890625	425.8195495605469	1103.833740234375	out/wt2_recipe_regression/set/L3584/wt2rr_b25drop_L3584b3_seed3.csv
+2026-08-09 03:12:35	lizmark	wt2rr_b25nodrop_L3584b3_seed3	0	0	10	23791.05712890625	424.5959167480469	1103.7115478515625	out/wt2_recipe_regression/set/L3584/wt2rr_b25nodrop_L3584b3_seed3.csv
+2026-08-09 03:28:34	lizmark	wt2rr_tokennodrop_L3584b3_seed4	0	0	10	22071.8974609375	313.17266845703125	978.8134765625	out/wt2_recipe_regression/token/L3584/wt2rr_tokennodrop_L3584b3_seed4.csv
+2026-08-09 06:26:34	lizmark	wt2rr_b25drop_L3584b3_seed4	1	0	10	31153.6962890625	422.3851318359375	1184.6253662109375	out/wt2_recipe_regression/set/L3584/wt2rr_b25drop_L3584b3_seed4.csv
+2026-08-09 06:38:40	lizmark	wt2rr_b25nodrop_L3584b3_seed4	0	0	10	23791.05712890625	421.49884033203125	1189.6519775390625	out/wt2_recipe_regression/set/L3584/wt2rr_b25nodrop_L3584b3_seed4.csv

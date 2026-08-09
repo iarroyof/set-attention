@@ -143,3 +143,48 @@ Registered references (old recipe, 5 seeds, Lizmark):
 - b25: 893.5 mean val_ppl @ 29175 MiB (old frontier edge: -52 PPL AND
   -6% VRAM vs token — the island where the local-fiber set row wins)
 - b75: 1006.4 mean val_ppl @ 22979 MiB
+
+## L3584/B3 5-seed FINAL (2026-08-09) — complete picture
+
+All 20 rows complete. Host provenance (must travel into paper wording):
+seed0 all rows Lizmark; seeds 1-4 token/b25nodrop/b25drop Lizmark,
+b75nodrop Blue. tokennodrop seeds 1-4 attempted on Blue first — OOM in
+backward at 23.53 GiB (2.5 GB nominal headroom insufficient cross-host);
+moved to Lizmark. Blue s14 TSV carries those FAIL rows as provenance.
+
+| row (5 seeds) | val_ppl | train_ppl | peak MiB | vs old recipe |
+|---|---:|---:|---:|---|
+| tokennodrop | 990.6+-15.0 | 313.6 | 22072 | +4.8% PPL, -28.9% VRAM |
+| b25nodrop | 1125.7+-46.0 | 419.9 | 23791 | +26.0% PPL, -18.5% VRAM |
+| b75nodrop | 1120.5+-28.7 | 422.2 | 20297 | +11.3% PPL, -11.7% VRAM |
+| b25drop | 1125.0+-42.5 | 421.1 | 31154 | — |
+
+Findings:
+1. **Dropout is quality-neutral for the set row at L3584 too**:
+   b25nodrop 1125.7 vs b25drop 1125.0 (0.07%). The entire b25
+   degradation (+26%) is fiber/scoring/routing, as at L512. But dropout
+   is memory-expensive: b25drop peaks +31% over b25nodrop (31154 vs
+   23791) — on WT2 dropout buys the set row nothing and costs a third
+   more memory.
+2. **The blur ordering inverts under the repaired recipe**: old recipe
+   b25 893.5 << b75 1006.4; new recipe b25 1125.7 ~= b75 1120.5. The
+   old local-fiber recipe monetized b25's six fine heads; under
+   all_past+full routing the fine-head advantage vanishes (b25 degrades
+   +26%, b75 only +11%).
+3. **The old WT2 frontier win does not survive the repaired recipe**:
+   old b25 beat token on BOTH axes (-52 PPL AND -6% VRAM). New recipe's
+   best set row (b75) is +13.1% PPL vs tokennodrop at -8.0% VRAM —
+   cheaper but substantially worse. Guard phrasing applies verbatim:
+   the original WT2 frontier was measured under the local-fiber recipe;
+   the repaired global-fiber recipe changes the quality-memory
+   operating point. Both are valid; they answer different task classes.
+4. **Cross-island consistency**: L512 and L3584 tell the same story
+   (b25 +24%/+26%, b75 +19%/+11%, dropout-neutral set rows, token
+   mildly dropout-preferring). The L512 bridge 3-seed and L3584 5-seed
+   sets mutually reinforce.
+5. New-recipe memory ordering at L3584: b75 20297 < token 22072 < b25
+   23791 << b25drop 31154. All nodrop peaks below the old-recipe peaks.
+
+Artifacts: `out/wt2_recipe_regression/{token,set}/L3584/wt2rr_*.{csv,json}`,
+TSVs `wt2_recipe_regression_{blue,lizmark}.tsv`, logs
+`logs/wt2_recipe_regression/{blue,lizmark}/` (remote).
