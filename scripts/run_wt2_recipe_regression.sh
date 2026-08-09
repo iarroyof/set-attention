@@ -111,13 +111,14 @@ PY
 
 run_row () { # label seed gpu
   local label="$1" seed="$2" gpu="$3"
-  local family groups drop cfg name csv log donemark lock container_name
+  local family groups drop topk cfg name csv log donemark lock container_name
   case "$label" in
     tokennodrop) family=token; drop=0 ;;
     b25nodrop)   family=set; groups="$B25_GROUPS"; drop=0 ;;
     b75nodrop)   family=set; groups="$B75_GROUPS"; drop=0 ;;
     b75drop)     family=set; groups="$B75_GROUPS"; drop=1 ;;
     b25drop)     family=set; groups="$B25_GROUPS"; drop=1 ;;
+    b25ap16)     family=set; groups="$B25_GROUPS"; drop=0; topk=16 ;;
     *) echo "ERROR unknown row $label" >&2; return 1 ;;
   esac
   name="wt2rr_${label}_L${L}b${BATCH}_seed${seed}"
@@ -156,7 +157,7 @@ run_row () { # label seed gpu
          model.output_residual_mode=anchor_span model.token_mlp.enabled=false
          model.multiresolution.enabled=true "model.multiresolution.groups=${groups}"
          model.candidate_fiber=all_past model.router.score_mode=dense
-         "model.router_topk=${TOPK_FULL}")
+         "model.router_topk=${topk:-$TOPK_FULL}")
   fi
   if [ "$drop" = 0 ]; then
     ov+=("model.dropout=0.0" "model.attn_dropout=0.0"
