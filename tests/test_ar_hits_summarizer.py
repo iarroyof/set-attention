@@ -119,10 +119,10 @@ def test_bootstrap_gate_did_fails_when_nonar_improves_as_much() -> None:
 
     blocks = _blocks_by({"token": 0.0, "b0": 0.10, "b25": 0.0, "b100": 0.20})
     # make non-AR differences identical to AR differences -> DiD ~ 0
-    for key, blocks in blocks.items():
+    for key, row_blocks in blocks.items():
         row = key[0]
         ar_per_target = {"token": 0.0, "b0": 0.10, "b25": 0.0, "b100": 0.20}[row]
-        for i, block in enumerate(blocks):
+        for i, block in enumerate(row_blocks):
             block["non_ar_nll"] = (1.0 + ar_per_target + 0.01 * i) * 100
     gate = paired_bootstrap_gate(blocks, resamples=500, rng_seed=7)
     assert gate["cond2_pass"] is True
