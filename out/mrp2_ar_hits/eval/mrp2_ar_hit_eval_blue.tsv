@@ -1,0 +1,16 @@
+date	host	row	seed	gpu	rc	out_json
+2026-08-09 18:14:32	blue	token	0	0	1	out/mrp2_ar_hits/eval/token_seed0.json
+2026-08-09 18:14:36	blue	token	1	0	1	out/mrp2_ar_hits/eval/token_seed1.json
+2026-08-09 18:14:41	blue	token	2	0	1	out/mrp2_ar_hits/eval/token_seed2.json
+2026-08-09 18:15:05	blue	b0	0	1	0	out/mrp2_ar_hits/eval/b0_seed0.json
+2026-08-09 18:15:42	blue	b0	1	1	0	out/mrp2_ar_hits/eval/b0_seed1.json
+2026-08-09 18:16:19	blue	b0	2	1	0	out/mrp2_ar_hits/eval/b0_seed2.json
+2026-08-09 18:16:36	blue	b25	0	0	0	out/mrp2_ar_hits/eval/b25_seed0.json
+2026-08-09 18:16:46	blue	b100	0	1	0	out/mrp2_ar_hits/eval/b100_seed0.json
+2026-08-09 18:17:13	blue	b100	1	1	0	out/mrp2_ar_hits/eval/b100_seed1.json
+2026-08-09 18:17:40	blue	b100	2	1	0	out/mrp2_ar_hits/eval/b100_seed2.json
+2026-08-09 18:18:30	blue	b25	1	0	0	out/mrp2_ar_hits/eval/b25_seed1.json
+2026-08-09 18:20:25	blue	b25	2	0	0	out/mrp2_ar_hits/eval/b25_seed2.json
+2026-08-09 18:23:17	blue	token	0	0	0	out/mrp2_ar_hits/eval/token_seed0.json
+2026-08-09 18:23:33	blue	token	1	0	0	out/mrp2_ar_hits/eval/token_seed1.json
+2026-08-09 18:23:50	blue	token	2	0	0	out/mrp2_ar_hits/eval/token_seed2.json

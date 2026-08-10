@@ -104,8 +104,8 @@ fi
 log "=== MRP-2 AR-HIT EVAL ${HOST_TAG}: GPU0_ROWS='${GPU0_ROWS}', GPU1_ROWS='${GPU1_ROWS}', SEEDS='${SEEDS}', DRY_RUN=${DRY_RUN} ==="
 
 pids=()
-[ -n "$GPU0_ROWS" ] && run_queue 0 $GPU0_ROWS & pids+=($!)
-[ -n "$GPU1_ROWS" ] && run_queue 1 $GPU1_ROWS & pids+=($!)
+if [ -n "$GPU0_ROWS" ]; then run_queue 0 $GPU0_ROWS & pids+=($!); fi
+if [ -n "$GPU1_ROWS" ]; then run_queue 1 $GPU1_ROWS & pids+=($!); fi
 rc=0
 for p in "${pids[@]}"; do wait "$p" || rc=1; done
 

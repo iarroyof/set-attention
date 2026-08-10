@@ -1,6 +1,8 @@
 # MRP-2: Natural Associative-Recall Hit Evaluation
 
-Status: APPROVED; CHECKPOINT RETRAINING COMPLETE; EVALUATION PENDING
+Status: COMPLETE 2026-08-09; protocol PASS; scientific result NULL (gate
+not supportive — see `audit/MRP_2_natural_ar_hits.md`, 2026-08-09
+evaluation section).
 
 Owner: UNASSIGNED
 

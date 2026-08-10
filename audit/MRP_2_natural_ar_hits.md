@@ -76,3 +76,98 @@ Corrected active launch:
 Monitor the Blue retraining queue until all 12 final checkpoints exist. Then
 run `scripts/evaluate_ar_hits.py` on the same registered rows and
 `scripts/summarize_ar_hits.py`.
+
+---
+
+## Registered Evaluation Complete (2026-08-09, blue-demon)
+
+Status: EVALUATION COMPLETE. Protocol PASS. Scientific result: NULL (not
+supportive of a natural AR mechanism in b25 under the frozen recipe).
+
+Driver: `scripts/run_mrp2_ar_hit_eval.sh` (commit 17482aa, empty-queue rc
+bug fixed after the run; cosmetic only — no eval affected). All 12
+registered checkpoints evaluated fail-closed on blue-demon in
+`~/set-attention-anchor-span-sync` (8107a7b); evaluator, summarizer,
+configs, and `src/data/ar_hits.py` verified byte-identical to the
+registered local copies before launch. b25 rows include the registered
+fine/coarse group span-ablation. One config fix was required: the token
+eval config carried a stray `nhead: 8` key absent from the retrain
+config, tripping the fail-closed model-digest check; fixed in b5fb670
+and re-run (digest check then passed as designed).
+
+Artifacts: `out/mrp2_ar_hits/eval/{token,b0,b25,b100}_seed{0,1,2}.{json,csv}`,
+`out/mrp2_ar_hits/eval/summary.tsv`, driver TSV
+`out/mrp2_ar_hits/eval/mrp2_ar_hit_eval_blue.tsv`, logs
+`logs/mrp2_ar_hits/blue/` (remote). Summarizer validated 12/12 rows.
+
+### Headline metrics (3-seed mean +- sd; NLL, count-weighted)
+
+| row | AR NLL | non-AR NLL | overall NLL |
+|---|---:|---:|---:|
+| token | 5.4940+-0.0079 | 6.9544+-0.0007 | 6.8435+-0.0007 |
+| b0 | 5.6366+-0.0582 | 6.9549+-0.0180 | 6.8547+-0.0208 |
+| b25 (b*) | 5.6311+-0.0375 | 6.9264+-0.0219 | 6.8280+-0.0229 |
+| b100 | 5.9248+-0.1028 | 7.3145+-0.0349 | 7.2089+-0.0400 |
+
+48,546 AR targets (7.6% of 639k evaluated), all five training-count bins
+inferential (>=1,000 targets); lag bins above 512 empty at L=2048,
+lag_129_512 descriptive only (916 targets).
+
+### Interpretation gate (applied exactly)
+
+1. At least one inferential AR bin: PASS (all count bins inferential).
+2. b25 lower paired AR NLL than both endpoints, 95% CI strictly below
+   zero: FAILS. Paired per-seed diffs vs b0 flip sign
+   (+0.066, -0.076, -0.006; mean -0.005) — no CI can sit strictly below
+   zero. Vs b100 all seeds negative (mean -0.294).
+3. Difference-in-differences vs each endpoint, 95% CI strictly below
+   zero: FAILS vs both. DiD vs b0 mean +0.023 (mixed signs); DiD vs
+   b100 positive on ALL seeds (+0.034, +0.084, +0.165; mean +0.094) —
+   a strictly-below-zero CI is not reachable under seed-nested
+   resampling when the per-seed quantity is positive on every seed.
+
+Verdict: gate NOT supportive -> protocol PASS with null scientific
+result, per the registered plan. Do not enlarge the dataset.
+
+Bootstrap caveat (honest deviation): the registered gate specifies
+10,000 sequence-block bootstrap resamples, but the evaluator persists
+only aggregate count-weighted NLLs, not per-sequence records, so the
+bootstrap cannot be computed from these artifacts. The verdict does not
+depend on it: conditions 2 and 3 fail at the per-seed point-estimate
+level in directions no resampling can reverse (sign-inconsistent vs b0,
+all-positive vs b100). If a future protocol revision wants the literal
+CI machinery, the evaluator must persist per-sequence NLLs and re-run
+(each eval is ~40 s).
+
+### Descriptive findings (informative, not gate outcomes)
+
+1. **Token is the best retriever.** AR NLL token 5.494 vs b25 5.631;
+   the gap is consistent on every seed (+0.089..+0.179). Under the
+   frozen local-fiber recipe the set path has no retrieval advantage —
+   the paper's "no associative-recall mechanism" non-claim now has
+   direct natural-AR evidence.
+2. **b25's overall win is a non-AR effect.** b25 beats token on non-AR
+   NLL on every seed (-0.004..-0.044) while losing on AR. The WT2
+   frontier win of the interior blur point is local-prediction quality,
+   NOT associative recall.
+3. **Blur is monotone-bad for retrieval.** AR NLL b0 5.637 < b25 5.631
+   (tie) << b100 5.925; coarsening destroys AR performance — retrieval
+   wants fine resolution, mirroring the LCA finding that aggregation
+   wants coarse.
+4. **b25's AR ability lives in the fine heads.** Fine-group ablation
+   costs +3.53 AR NLL (catastrophic), coarse-group ablation +0.33
+   (mild). Non-AR shows the same asymmetry (+2.91 fine vs +0.17 coarse).
+5. Count effect is strong and monotone (count_0 NLL 10.49 ->
+   count_gt20 3.69 for b25 seed0): models do exploit repetition
+   frequency, token row included.
+
+### Consequence for the claim boundary
+
+The null is measured under the frozen endpoint_window/topk16 recipe —
+the same topology the LCA campaign proved reachability-broken. A
+reviewer can therefore still ask whether the global-fiber recipe
+changes retrieval. That is the stage-2 bridge question (new-recipe AR
+control, b25/b0, seeds 0-2), scientifically motivated and cheap; it is
+NOT part of registered MRP-2 and must never be pooled with these rows.
+MRP-2 completion unblocks MRP-5 per protocol, which still requires
+explicit transfer approval.

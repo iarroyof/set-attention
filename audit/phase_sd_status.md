@@ -761,3 +761,18 @@ b25ap16 1209.3+-86.7 vs b25nodrop 1205.4+-73.4 — global candidate
 support (fiber) is the active ingredient of the WT2 regression, not
 routing bandwidth; memory-neutral (~3.9 GB both). Completes the WT2
 bridge attribution. Record: audit/WT2_recipe_regression_20260806.md.
+
+2026-08-09 — MRP-2 natural AR-hit evaluation COMPLETE (registered, 12/12
+checkpoints, blue-demon, fail-closed): protocol PASS, scientific result
+NULL. Gate fails: b25 paired AR NLL not below b0 (sign-mixed), DiD
+positive vs both endpoints (all-seed-positive vs b100). Token is the
+best retriever (AR NLL 5.494 vs b25 5.631); b25's overall WT2 edge is a
+non-AR/local-prediction effect (beats token on non-AR every seed). Blur
+monotone-bad for retrieval (b100 worst); b25's AR ability lives in the
+fine heads (ablation +3.53 fine vs +0.33 coarse NLL). Bootstrap CI
+machinery not computable from persisted aggregates — verdict does not
+depend on it (documented). One config fix (stray nhead key in token eval
+config, b5fb670). Null is measured under the frozen local-fiber recipe;
+a new-recipe AR bridge control is the open stage-2 question. MRP-5
+unblocked per protocol, still needs explicit transfer approval. Record:
+audit/MRP_2_natural_ar_hits.md.
