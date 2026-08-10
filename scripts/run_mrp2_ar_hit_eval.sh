@@ -20,9 +20,11 @@ IMAGE="${IMAGE:-set-attention:latest}"
 DRY_RUN="${DRY_RUN:-0}"
 
 LOG_DIR="logs/mrp2_ar_hits/${HOST_TAG}"
-EVAL_ROOT="out/mrp2_ar_hits/eval"
+CKPT_ROOT="${CKPT_ROOT:-out/mrp2_ar_hits/retrain}"
+EVAL_ROOT="${EVAL_ROOT:-out/mrp2_ar_hits/eval}"
 RESULT_TSV="${EVAL_ROOT}/mrp2_ar_hit_eval_${HOST_TAG}.tsv"
 DRIVER_LOG="${LOG_DIR}/mrp2_eval_driver.log"
+FORCE="${FORCE:-0}"
 mkdir -p "$LOG_DIR" "$EVAL_ROOT"
 [ -f "$RESULT_TSV" ] || printf "date\thost\trow\tseed\tgpu\trc\tout_json\n" > "$RESULT_TSV"
 
@@ -31,7 +33,7 @@ log() { echo "$*" | tee -a "$DRIVER_LOG"; }
 run_one() {
   local gpu="$1" row="$2" seed="$3"
   local name="mrp2eval_${row}_seed${seed}"
-  local ckpt="out/mrp2_ar_hits/retrain/${row}_seed${seed}/checkpoints/final.pt"
+  local ckpt="${CKPT_ROOT}/${row}_seed${seed}/checkpoints/final.pt"
   local out_json="${EVAL_ROOT}/${row}_seed${seed}.json"
   local out_csv="${EVAL_ROOT}/${row}_seed${seed}.csv"
   local logf="${LOG_DIR}/${name}.log"
@@ -40,7 +42,7 @@ run_one() {
     log "=== SKIP $(date '+%F %T') $name missing checkpoint $ckpt ==="
     return 1
   fi
-  if [ -f "$out_json" ] && [ "$DRY_RUN" != 1 ]; then
+  if [ -f "$out_json" ] && [ "$DRY_RUN" != 1 ] && [ "$FORCE" != 1 ]; then
     log "=== SKIP $(date '+%F %T') $name already evaluated ==="
     return 0
   fi
@@ -49,6 +51,11 @@ run_one() {
   if [ "$row" = "b25" ]; then
     extra+=(--group-ablation)
   fi
+
+  local extra_mounts=()
+  case "$CKPT_ROOT" in
+    /*) extra_mounts=(-v "${CKPT_ROOT}:${CKPT_ROOT}:ro") ;;
+  esac
 
   log "=== RUN $(date '+%F %T') gpu${gpu} $name ==="
   if [ "$DRY_RUN" = 1 ]; then
@@ -59,7 +66,7 @@ run_one() {
     -u "$(id -u):$(id -g)" \
     -e HOME=/workspace -e XDG_CACHE_HOME=/workspace/.cache -e CUDA_VISIBLE_DEVICES=0 \
     -e HF_DATASETS_OFFLINE=1 -e HF_HUB_OFFLINE=1 -e WANDB_MODE=offline \
-    -v "${PWD}:/workspace" -w /workspace "$IMAGE" \
+    -v "${PWD}:/workspace" "${extra_mounts[@]}" -w /workspace "$IMAGE" \
     /usr/bin/python scripts/evaluate_ar_hits.py \
       --config "configs/eval/ar_hits/${row}.yaml" \
       --checkpoint "$ckpt" \
