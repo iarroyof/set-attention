@@ -188,3 +188,44 @@ Findings:
 Artifacts: `out/wt2_recipe_regression/{token,set}/L3584/wt2rr_*.{csv,json}`,
 TSVs `wt2_recipe_regression_{blue,lizmark}.tsv`, logs
 `logs/wt2_recipe_regression/{blue,lizmark}/` (remote).
+
+## Fiber isolation: b25ap16 vs b25nodrop, L512/B4, 3 seeds (2026-08-09, all Blue)
+
+Question: is the WT2 degradation caused by the global candidate fiber
+(all_past) itself, or by full-routing bandwidth (topk=L-1)? Control row
+`b25ap16` = all_past + dense scoring + **topk16** + nodrop, i.e. global
+support at the old routing bandwidth; compared against `b25nodrop`
+(all_past + dense + full routing + nodrop). All six runs on Blue,
+L512/B4, 10 epochs.
+
+| row (3 seeds) | val_ppl | peak MiB | vs old recipe b25 (933.4+-38.1) |
+|---|---:|---:|---|
+| b25ap16   | 1209.3+-86.7 | 3891 | +29.6% PPL |
+| b25nodrop | 1205.4+-73.4 | 3889 | +29.1% PPL |
+
+Per-seed val_ppl: b25ap16 1149.2 / 1308.7 / 1169.9; b25nodrop
+1125.8 / 1270.5 / 1220.0.
+
+Verdict: **the fiber is the culprit, routing bandwidth is irrelevant on
+WT2.** The two rows are statistically indistinguishable (mean diff 3.8
+PPL, ~0.05 of a std). Widening routing from topk16 to full over a global
+candidate set changes nothing because the damage is already done by
+exposing every query to every past set: the softmax spreads mass over
+hundreds of irrelevant candidates and the local structure that drives
+next-token prediction is diluted regardless of how many survive the
+top-k. This is consistent with the LCA top-k monotonicity running the
+other direction (global aggregation wants bandwidth); the two tasks
+select opposite operating points on the same knob. Memory is unchanged
+(~3.9 GB both rows, dense-score mode makes top-k memory-neutral, as on
+LCA).
+
+Story consequence: the old WT2 frontier and the repaired LCA recipe are
+different operating points of the same architecture, separated by one
+config dimension (candidate fiber locality). Guard phrasing unchanged:
+the original WT2 frontier was measured under the local-fiber recipe;
+the repaired global-fiber recipe changes the quality-memory operating
+point.
+
+Artifacts: `out/wt2_recipe_regression/set/L512/wt2rr_{b25ap16,b25nodrop}_L512b4_seed{0,1,2}.{csv,json}`,
+TSV `out/wt2_recipe_regression/wt2_recipe_regression_blue.tsv`, driver
+log `logs/wt2_recipe_regression/blue/wt2rr_ap16_s12_driver.log` (remote).

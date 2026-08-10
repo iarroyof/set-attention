@@ -755,3 +755,9 @@ caveat: L3584 seed0 all-Lizmark, b75 seeds 1-4 Blue; tokennodrop Blue
 OOM documented (>=4GB headroom rule). Record:
 audit/WT2_recipe_regression_20260806.md, memory/launch-provenance-and-
 vram-hygiene.md, audit/LCA_research_story_20260727.md.
+
+2026-08-09 — WT2 fiber-isolation verdict (3 seeds, L512/B4, all Blue):
+b25ap16 1209.3+-86.7 vs b25nodrop 1205.4+-73.4 — global candidate
+support (fiber) is the active ingredient of the WT2 regression, not
+routing bandwidth; memory-neutral (~3.9 GB both). Completes the WT2
+bridge attribution. Record: audit/WT2_recipe_regression_20260806.md.

@@ -545,7 +545,13 @@ largest and token approaches hardware exclusion.**
   as measured under the local-fiber recipe; the repaired global-fiber
   recipe is a different operating point for a different task class.
   Host-mixing caveat: L3584 seed0 all-Lizmark, b75 seeds 1-4 Blue.
-  Full record audit/WT2_recipe_regression_20260806.md.
+  Fiber isolation COMPLETE 2026-08-09 (L512/B4, 3 seeds, all Blue):
+  b25ap16 (all_past+dense+topk16+nodrop) 1209.3+-86.7 vs b25nodrop
+  (full routing) 1205.4+-73.4 — indistinguishable (diff 3.8 PPL).
+  The candidate fiber (global support) is the active ingredient of the
+  WT2 degradation; routing bandwidth is irrelevant there (opposite of
+  LCA's top-k monotonicity — the two tasks select opposite operating
+  points on the same knob). Full record audit/WT2_recipe_regression_20260806.md.
 - **Learnable pooling alpha**: banned until the past instability is
   understood (fixed alpha only).
 - **Legacy debts surfaced by the bridge audit (I.3), outside the LCA
