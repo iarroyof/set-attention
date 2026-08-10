@@ -5,7 +5,6 @@ model:
   architecture: transformer_lm
   vocab_size: 0
   d_model: 384
-  nhead: 8
   num_heads: 8
   num_layers: 6
   dim_feedforward: 1536
