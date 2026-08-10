@@ -263,6 +263,7 @@ def evaluate_ar_hits(
     *,
     train_bigram_counts: Mapping[tuple[int, int], int],
     min_inferential_targets: int = MIN_INFERENTIAL_TARGETS,
+    collect_blocks: bool = False,
 ) -> dict[str, Any]:
     if torch is None or F is None:
         raise RuntimeError("evaluate_ar_hits requires torch")
@@ -271,6 +272,7 @@ def evaluate_ar_hits(
     dataset = getattr(dataloader, "dataset", None)
     records = _record_offsets(dataset)
     seen_samples = 0
+    blocks: list[dict[str, Any]] = []
     with torch.no_grad():
         for input_ids, labels in dataloader:
             input_ids = input_ids.to(device)
@@ -291,6 +293,10 @@ def evaluate_ar_hits(
                     sample_start_offset=starts[b],
                     record_offsets=records,
                 )
+                seq_ar_nll = 0.0
+                seq_ar_targets = 0
+                seq_non_ar_nll = 0.0
+                seq_non_ar_targets = 0
                 for t, meta in enumerate(metadata):
                     if meta.count_bin == "ignored":
                         continue
@@ -300,8 +306,26 @@ def evaluate_ar_hits(
                     accumulator.add(meta.count_bin, nll)
                     if meta.is_ar:
                         accumulator.add(meta.lag_bin, nll)
+                        seq_ar_nll += nll
+                        seq_ar_targets += 1
+                    else:
+                        seq_non_ar_nll += nll
+                        seq_non_ar_targets += 1
+                if collect_blocks:
+                    blocks.append(
+                        {
+                            "seq": seen_samples + b,
+                            "ar_nll": seq_ar_nll,
+                            "ar_targets": seq_ar_targets,
+                            "non_ar_nll": seq_non_ar_nll,
+                            "non_ar_targets": seq_non_ar_targets,
+                        }
+                    )
             seen_samples += int(input_ids.shape[0])
-    return accumulator.metrics()
+    metrics = accumulator.metrics()
+    if collect_blocks:
+        metrics["blocks"] = blocks
+    return metrics
 
 
 def evaluate_ar_hit_group_ablation(

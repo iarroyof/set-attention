@@ -14,6 +14,7 @@ from data.ar_hits import (  # noqa: E402
     ar_hit_metadata_for_sequence,
     build_bigram_counts_from_samples,
     count_bin_name,
+    evaluate_ar_hits,
     evaluate_ar_hit_group_ablation,
 )
 from train.checkpoints import (  # noqa: E402
@@ -174,3 +175,40 @@ def test_group_ablation_restores_model_state_after_ar_eval() -> None:
     assert metrics["ablation/status"] == "ok"
     assert "ablation/fine/overall/delta_nll" in metrics
     assert model.span_ablation_mode == "none"
+
+
+def test_evaluate_ar_hits_collects_per_sequence_blocks() -> None:
+    model = _FakeAblationModel()
+    loader = [(torch.tensor([[1, 1, 1], [1, 1, 1]]), torch.tensor([[2, 2, 2], [2, 2, 2]]))]
+    metrics = evaluate_ar_hits(
+        model,
+        loader,
+        torch.device("cpu"),
+        train_bigram_counts={(1, 2): 3},
+        collect_blocks=True,
+    )
+    blocks = metrics["blocks"]
+    assert len(blocks) == 2
+    assert [b["seq"] for b in blocks] == [0, 1]
+    # sequence [1,1,1]->[2,2,2] with count (1,2)=3: t=0 non-AR, t=1..2 AR
+    for block in blocks:
+        assert block["ar_targets"] == 2
+        assert block["non_ar_targets"] == 1
+    total_ar = sum(b["ar_targets"] for b in blocks)
+    assert total_ar == metrics["ar/targets"]
+    ar_nll = sum(b["ar_nll"] for b in blocks) / total_ar
+    assert ar_nll == pytest.approx(metrics["ar/nll"])
+    non_ar_nll = sum(b["non_ar_nll"] for b in blocks) / sum(b["non_ar_targets"] for b in blocks)
+    assert non_ar_nll == pytest.approx(metrics["non_ar/nll"])
+
+
+def test_evaluate_ar_hits_blocks_default_off() -> None:
+    model = _FakeAblationModel()
+    loader = [(torch.tensor([[1, 1, 1]]), torch.tensor([[2, 2, 2]]))]
+    metrics = evaluate_ar_hits(
+        model,
+        loader,
+        torch.device("cpu"),
+        train_bigram_counts={(1, 2): 3},
+    )
+    assert "blocks" not in metrics

@@ -129,7 +129,9 @@ def main() -> None:
         device,
         train_bigram_counts=train_bigram_counts,
         min_inferential_targets=int(args.min_inferential_targets),
+        collect_blocks=True,
     )
+    blocks = metrics.pop("blocks", [])
     if args.group_ablation:
         metrics.update(
             evaluate_ar_hit_group_ablation(
@@ -154,6 +156,7 @@ def main() -> None:
     payload_out = {
         "row": row,
         "metrics": metrics,
+        "blocks": blocks,
         "checkpoint": {
             "path": str(checkpoint),
             "sha256": checkpoint_digest,
