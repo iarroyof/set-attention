@@ -48,9 +48,9 @@ run_one() {
   fi
 
   local extra=()
-  if [ "$row" = "b25" ]; then
-    extra+=(--group-ablation)
-  fi
+  case " ${ABLATE_ROWS:-b25} " in
+    *" ${row} "*) extra+=(--group-ablation) ;;
+  esac
 
   local extra_mounts=()
   case "$CKPT_ROOT" in
@@ -68,7 +68,7 @@ run_one() {
     -e HF_DATASETS_OFFLINE=1 -e HF_HUB_OFFLINE=1 -e WANDB_MODE=offline \
     -v "${PWD}:/workspace" "${extra_mounts[@]}" -w /workspace "$IMAGE" \
     /usr/bin/python scripts/evaluate_ar_hits.py \
-      --config "configs/eval/ar_hits/${row}.yaml" \
+      --config "${CFG_DIR:-configs/eval/ar_hits}/${row}.yaml" \
       --checkpoint "$ckpt" \
       --row "$row" --seed "$seed" \
       --device cuda \

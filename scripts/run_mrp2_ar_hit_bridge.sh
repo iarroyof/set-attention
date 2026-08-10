@@ -219,6 +219,10 @@ if [ -n "$GPU1_ROWS" ]; then run_queue 1 $GPU1_ROWS & pids+=($!); fi
 rc=0
 for p in "${pids[@]}"; do wait "$p" || rc=1; done
 
+if [ "$DRY_RUN" = 1 ]; then
+  log "=== MRP-2 AR-HIT BRIDGE ${HOST_TAG} dry run done ==="
+  exit 0
+fi
 if [ "$rc" -eq 0 ]; then
   log "=== MRP-2 AR-HIT BRIDGE ${HOST_TAG} pass complete ==="
 else
