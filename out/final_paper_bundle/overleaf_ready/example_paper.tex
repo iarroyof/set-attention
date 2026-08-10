@@ -1120,6 +1120,46 @@ above.  Both are next-stage work: neither is required for the frontier
 claims of this section, which stand on the measured rows of
 Table~\ref{tab:lca-frontier} alone.
 
+\paragraph{The reverse bridge: the repaired recipe on WikiText-2.}
+One boundary question remains: if the repaired configuration
+(\texttt{all\_past} fiber, dense scoring, full routing) is strictly better
+at global aggregation, does it also improve the WikiText-2 language-modeling
+frontier of Section~\ref{sec:results}?  It does not, and the failure is
+informative.  Re-running the WikiText-2 islands under the repaired recipe
+(dropout-free, as confirmed on LCA) degrades every set row: at $L=512$
+(three seeds) b25 moves from $861.6\pm24.2$ to $1070.9\pm39.2$ validation
+perplexity ($+24$\%) and b75 from $972.4\pm27.7$ to $1155.5\pm70.7$
+($+19$\%); at $L=3584$/batch 3 (five seeds) b25 moves from $893.5\pm26.8$ to
+$1125.7\pm46.0$ ($+26$\%) and b75 from $1006.4$ to $1120.5\pm28.7$ ($+11$\%),
+while the token control is nearly unchanged ($990.6\pm15.0$, $+4.8$\%).
+Train perplexity degrades alongside validation, so this is not overfitting.
+Two attribution controls isolate the cause.  First, restoring dropout 0.1 to
+the repaired b25 row leaves quality unchanged ($1125.0\pm42.5$) while raising
+peak memory by $31$\%: dropout is quality-neutral for the set row on
+WikiText-2, so the degradation is not a regularization side effect.  Second,
+and decisively, a fiber-isolation control at $L=512$ (three seeds) holds the
+routing bandwidth at the original top-$k{=}16$ while opening only the
+candidate fiber to \texttt{all\_past}: it lands at $1209.3\pm86.7$,
+statistically indistinguishable from the full-routing row
+($1205.4\pm73.4$).  The active ingredient is therefore the \emph{candidate
+fiber}, not routing bandwidth: exposing every query to every past set atom
+dilutes the local structure that next-token prediction depends on, no matter
+how few candidates survive pruning --- the exact opposite of LCA, where the
+same global fiber is what makes the task solvable at all and quality is
+monotone in bandwidth.  Consistently, the blur ordering inverts between
+recipes: under the local fiber b25 is the interior optimum and b75 is worse,
+while under the global fiber b25 and b75 are indistinguishable on WikiText-2
+--- b25's six fine heads only pay off when routing is local.  We therefore
+do not replace the WikiText-2 frontier, and we state the boundary precisely:
+the original WikiText-2 frontier was measured under the local-fiber recipe;
+the repaired global-fiber recipe changes the quality--memory operating
+point.  Both measurements stand; they are two operating points of the same
+architecture on two task classes, and the candidate fiber --- a
+configuration choice, not an architecture change --- is what selects between
+them.  One provenance caveat: the $L=3584$ seed-0 rows ran on the larger GPU
+host and b75 seeds 1--4 on the smaller one, so a small part of that island's
+seed spread may be host variance (Section~\ref{sec:results-lca-frontier}).
+
 \iffalse
 Legacy Results content from here through the capacity-diagnostics subsection
 is deprecated for the current set-dictionary paper direction.  It is retained
