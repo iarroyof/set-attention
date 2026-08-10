@@ -129,15 +129,26 @@ lag_129_512 descriptive only (916 targets).
 Verdict: gate NOT supportive -> protocol PASS with null scientific
 result, per the registered plan. Do not enlarge the dataset.
 
-Bootstrap caveat (honest deviation): the registered gate specifies
-10,000 sequence-block bootstrap resamples, but the evaluator persists
-only aggregate count-weighted NLLs, not per-sequence records, so the
-bootstrap cannot be computed from these artifacts. The verdict does not
-depend on it: conditions 2 and 3 fail at the per-seed point-estimate
-level in directions no resampling can reverse (sign-inconsistent vs b0,
-all-positive vs b100). If a future protocol revision wants the literal
-CI machinery, the evaluator must persist per-sequence NLLs and re-run
-(each eval is ~40 s).
+Bootstrap (added 2026-08-10, literal CIs): the evaluator was extended
+to persist per-sequence NLL blocks (`collect_blocks`, be25de3) and the
+summarizer now implements the registered 10,000 sequence-block bootstrap
+nested within seed (paired draws shared across rows, rng seed 13). All
+12 checkpoints were re-evaluated with the extended evaluator; aggregate
+metrics reconcile bitwise with the first pass (e.g. b25 seed0 AR NLL
+5.6355223 both times), and per-sequence blocks reconcile exactly with
+the aggregate target counts. Literal gate CIs:
+
+- vs b0: AR diff -0.0054, 95% CI [-0.0219, +0.0101] (straddles zero,
+  cond2 FAIL); DiD +0.0230, 95% CI [+0.0077, +0.0375] (strictly ABOVE
+  zero, cond3 FAIL).
+- vs b100: AR diff -0.2937, 95% CI [-0.3127, -0.2749] (cond2 PASS);
+  DiD +0.0944, 95% CI [+0.0766, +0.1118] (strictly above zero,
+  cond3 FAIL).
+
+The literal CIs confirm the null and sharpen it: b25's advantage over
+the blur endpoints is significantly SMALLER on AR targets than on
+non-AR targets (positive DiD CIs on both sides). Gate verdict:
+supportive=False. Machine-readable gate: out/mrp2_ar_hits/eval/gate.json.
 
 ### Descriptive findings (informative, not gate outcomes)
 

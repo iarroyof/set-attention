@@ -776,3 +776,14 @@ config, b5fb670). Null is measured under the frozen local-fiber recipe;
 a new-recipe AR bridge control is the open stage-2 question. MRP-5
 unblocked per protocol, still needs explicit transfer approval. Record:
 audit/MRP_2_natural_ar_hits.md.
+
+2026-08-10 — MRP-2 bootstrap caveat CLOSED: evaluator persists
+per-sequence NLL blocks (be25de3), summarizer implements the registered
+10k sequence-block bootstrap; all 12 checkpoints re-evaluated
+(aggregates bitwise-identical to first pass). Literal gate: vs b0 AR
+diff -0.0054 CI [-0.022,+0.010] (cond2 FAIL), DiD +0.023 CI
+[+0.008,+0.038] (cond3 FAIL, strictly positive); vs b100 cond2 PASS, DiD
++0.094 CI [+0.077,+0.112] (cond3 FAIL, strictly positive). supportive=
+False confirmed with literal CIs; b25's edge concentrates on non-AR.
+Bridge retrain driver + eval configs committed (token/b0/b25/b75 nodrop
+global, 3 seeds, no contract, never pooled with MRP-2).

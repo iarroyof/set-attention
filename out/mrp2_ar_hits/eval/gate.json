@@ -1,0 +1,35 @@
+{
+  "cond2_pass": false,
+  "cond3_pass": false,
+  "endpoints": {
+    "b0": {
+      "ar_diff_ci_hi": 0.010095412349492369,
+      "ar_diff_ci_lo": -0.021882714836570116,
+      "ar_diff_point": -0.005425135980174763,
+      "cond2_pass": false,
+      "cond3_pass": false,
+      "did_ci_hi": 0.037543920226283944,
+      "did_ci_lo": 0.007662588833506827,
+      "did_point": 0.023026386652137337
+    },
+    "b100": {
+      "ar_diff_ci_hi": -0.27491383194777325,
+      "ar_diff_ci_lo": -0.312666311411979,
+      "ar_diff_point": -0.2936803432244745,
+      "cond2_pass": true,
+      "cond3_pass": false,
+      "did_ci_hi": 0.11178440494895743,
+      "did_ci_lo": 0.0766082373454342,
+      "did_point": 0.09439264584220582
+    }
+  },
+  "resamples": 10000,
+  "rng_seed": 13,
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "star": "b25",
+  "supportive": false
+}
