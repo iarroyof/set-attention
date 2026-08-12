@@ -62,8 +62,11 @@ agents must not prefer their local prose over this tracker/matrix.
   `d_ff=1536`, 6 layers, 8 heads, LR `1e-4`, warmup metadata `1000`.
 - Regular paper blur rows: `{b0,b25,b50,b75,b100}`. Existing b62 rows are exploratory and excluded
   from the five-seed queue.
-- Set guards: exact backend, `output_residual_mode=anchor_span`, `token_mlp.enabled=false`,
-  `anchor.enabled=false`, CE-only, `candidate_fiber=endpoint_window`, no re-read/all_past/multivector.
+- Registered WikiText-2 matrix guards: exact backend,
+  `output_residual_mode=anchor_span`, `token_mlp.enabled=false`,
+  `anchor.enabled=false`, CE-only, `candidate_fiber=endpoint_window`, no
+  re-read/all_past/multivector.  The completed, separately labeled LCA
+  diagnostic uses the global `all_past` fiber and does not alter this matrix.
 - Corrected rows require `training.experiment_contract=sd_grid_seeded_v1`,
   `training.diagnostics_contract=current_matrix_v1`, applied seed equality,
   and complete family-specific diagnostics.
@@ -80,14 +83,14 @@ subplans under `docs/agent_plans/`:
 |---|---|---|
 | MRP-0 reproducibility/checkpoint platform | PASS | Blue container validation passed on 2026-07-07: focused suite, duplicate strict token/b25 smokes, checkpoint replay, and eval-only immutability |
 | MRP-1 five-seed exact-dense closure | PASS | Blue 120/120 and Lizmark 135/135 endpoint-valid; strict scan accepted 255 CSVs; later short-B3 bridge added 60/60 descriptive endpoint-valid rows; `b*=b25` frozen |
-| MRP-2 natural AR-hit evaluation | APPROVED; CHECKPOINT RETRAINING COMPLETE; EVAL PENDING | user approval recorded 2026-07-08; registered 12-cell checkpoint retraining completed on blue-demon before the post-shutdown audit |
+| MRP-2 natural AR-hit evaluation | COMPLETE; PROTOCOL PASS; SCIENTIFIC NULL | 12/12 checkpoints evaluated; registered sequence-block bootstrap gate fails; local-routing-recipe scope retained |
 | MRP-3 synthetic MQAR | COMPLETE; NULL/INCONCLUSIVE | all 18 registered rows completed and summarized; frozen b25 accuracy mean 0.0002474, below the 0.90 support threshold, so no specialization claim |
 | MRP-4 larger scale separation | NOT_TRIGGERED | MRP-3 failed support condition 3; do not launch scale-separation rows from the current MQAR result |
-| MRP-lca-cmp long-context aggregation comparison | ACTIVE; batching runtime validation passed; LCA generator pending | separate compressed-aggregation branch after MQAR null result; exact dense only; Lizmark container guard passed for grad accumulation/eval microbatch preservation |
-| MRP-5 tokenizer-matched WT2/PG-19 | BLOCKED | requires MRP-2 completion and explicit transfer approval; MRP-3 review is complete but null |
+| MRP-lca-cmp long-context aggregation comparison | COMPLETE | L4096 dropout-free b75 endpoint parity at -13.7% peak VRAM; top-k and routing-recipe attributions complete; WT2 reverse bridge is negative |
+| MRP-5 tokenizer-matched WT2/PG-19 | UNBLOCKED; LAUNCH APPROVAL REQUIRED | MRP-2 is complete; no transfer launch is implied by this tracker |
 | MRP-6 theory/proofs | PASS for analytic theory package | MRP-6A/B/C focused tests passed in Blue container; MRP-6D canonical TeX integration and clean build passed; MRP-3 completed null, so empirical specialization remains unestablished |
-| MRP-7A current-evidence paper rewrite | ACTIVE; no new experiments | MRP-1, short-B3 bridge, and MRP-6D support Results/table/figure cleanup; no AR/MQAR/PG-19 final claims |
-| MRP-7 paper synthesis | PARTIAL DRAFTING ALLOWED; FINAL BLOCKED | MRP-1, MRP-3-null, MRP-4-not-triggered, and MRP-6D are available; final synthesis still waits for MRP-2/5 |
+| MRP-7A current-evidence paper rewrite | ACTIVE; no new experiments | MRP-1, MQAR, natural AR, LCA, reverse bridge, and amended theory are available; PG-19 remains absent |
+| MRP-7 paper synthesis | ACTIVE; FINAL CLOSEOUT PENDING | supported evidence is integrated; global-fiber natural-AR bridge and separately approval-gated MRP-5 remain tracked follow-ups |
 
 No new experimental queue is authorized by the plan alone.
 
@@ -598,7 +601,11 @@ was stopped and relaunched within minutes after the CSV schema gap above was
 found; no pre-fix CSV is retained as a result. Final completion check
 recorded above (2026-07-18 19:23 pass complete).
 
-## MRP-2 Natural AR-Hit Launch State
+## Historical MRP-2 Natural AR-Hit Launch State
+
+This subsection records the pre-evaluation launch state.  It is superseded by
+the 2026-08-09/10 completion entries below and by
+`audit/MRP_2_natural_ar_hits.md`; it is not current launch guidance.
 
 Checkpoint inventory found no compatible registered MRP-2 final checkpoints in
 local, blue-demon, or Lizmark artifact trees. The active plan is therefore
@@ -613,8 +620,9 @@ The earlier log `logs/mrp2_ar_hit_retrain_20260708_175000.log` is a failed
 launch-environment attempt with no HF cache mount; it produced no checkpoint
 and no training endpoint. Do not use it as a scientific result.
 
-Next MRP-2 atomic action is the registered AR-hit evaluation over the completed
-checkpoints, not retraining.
+At this historical checkpoint, the next MRP-2 action was registered AR-hit
+evaluation over the completed checkpoints, not retraining.  That evaluation is
+now complete.
 
 The completed Lizmark watcher cleaned the legacy registry, deployed tested
 source, and launched the corrected queue. An unrelated process was then found
@@ -645,12 +653,12 @@ rows. The registered selection island `L2048,B4` is complete and freezes
 `b*=b25`; see `audit/SD_dense_paper5_final_20260708.md` and
 `docs/sd_dense_paper5_matrix.md`.
 
-MRP-2 and MRP-3 are no longer approval-gated: MRP-2 checkpoint retraining is
-complete and awaits registered AR-hit evaluation, while MRP-3 is complete and
-null. MRP-lca-cmp is now active as a separate long-context aggregation branch;
-it is not an authorization to reopen MQAR or MRP-4. MRP-5 remains blocked until
-MRP-2 completion and explicit transfer approval. Do not launch B2, landmark,
-sparse, fixed-k, SD-10a, SD-11, MRP-4, or MRP-5 from this tracker alone.
+Historical gate state at this point: MRP-2 checkpoint retraining was complete
+and still awaited evaluation, while MRP-3 was complete and null.  Current
+state is in the summary table: MRP-2 and MRP-lca-cmp are complete, and MRP-5
+is dependency-unblocked but still needs explicit launch approval. Do not
+launch B2, landmark, sparse, fixed-k, SD-10a, SD-11, MRP-4, or MRP-5 from this
+tracker alone.
 
 2026-07-31 — MRP-lca-cmp L4096 trajectory probe (l4096tj, commits 9ab8104 +
 25481f3): b75full + token control, L4096/prefix/B4, 8000 upd, validation every
@@ -787,3 +795,15 @@ diff -0.0054 CI [-0.022,+0.010] (cond2 FAIL), DiD +0.023 CI
 False confirmed with literal CIs; b25's edge concentrates on non-AR.
 Bridge retrain driver + eval configs committed (token/b0/b25/b75 nodrop
 global, 3 seeds, no contract, never pooled with MRP-2).
+
+2026-08-12 — MRP-2 new-recipe AR bridge COMPLETE (12/12 train + eval,
+all blue-demon): the no-recall finding is RECIPE-ROBUST. Under
+all_past+dense+full-routing+nodrop, every set row retrieves
+significantly worse than the matched token control (paired bootstrap
+CIs strictly positive: b25-token +0.146 [+0.124,+0.168]); the global
+fiber itself slightly DEGRADES set retrieval (b25 new-vs-old AR +0.050
+CI strictly positive) while its cost concentrates on non-AR (cross-
+recipe DiD -0.171). Ablation inverts with blur (b25 AR rides fine
+heads, b75 rides coarse). Aggregation != retrieval is now evidenced on
+both sides: LCA requires the global fiber, AR-hit is hurt by it. Record:
+audit/MRP_2_natural_ar_hits.md bridge section.

@@ -1,8 +1,7 @@
 # LCA Research Story: From the Paper's Results to the L4096 Frontier
 
-Status document, created 2026-07-27, updated 2026-07-29 (unreported
-Codex-era bridge section I.3 added; Stage A results, Stage B seed0
-results, plan motivations). Purpose: keep the full
+Status document, created 2026-07-27, updated 2026-08-10 after LCA, the
+WikiText-2 reverse bridge, and registered natural-AR closure. Purpose: keep the full
 experimental pathway traceable — every question posed, every answer
 obtained, how the nodes connect, what remains open. Authoritative numbers
 live in `audit/LCA_calibration_20260718.md`; this document is the
@@ -65,9 +64,11 @@ topology/pooling/interface help or fail.
 ## I.2 The blind spots the paper could not see — and itself flagged
 
 Every set row in the paper's matrix ran the same frozen routing
-configuration: `endpoint_window` candidate fiber, `router_topk=16`,
-`router.score_mode=candidate_gather`, final-token LM loss. Two
-consequences, one recognized and one not:
+configuration: `endpoint_window` candidate fiber, `router_topk=16`, and
+`router.score_mode=candidate_gather`. WikiText-2 language modeling densely
+supervised every next-token position. The separate initial LCA calibration
+used final-query-only endpoint supervision. Two consequences, one recognized
+and one not:
 
 1. **Recognized (paper's own Future Work):** "Set states should also be
    evaluated directly as compressed memories, not only through
@@ -148,15 +149,16 @@ continuation, not a new departure.
 4. **MRP-3 B4 common-batch preflight** (2026-07-09, minor): token
    9365.9 / b0 10951.7 / b25 8826.3 / b50 7396.5 / b75 6050.4 / b100
    3969.1 MiB — same monotone memory story at L2048. Feasibility only.
-5. **MRP-2 natural AR-hit: retrained but NEVER evaluated.** No
+5. **MRP-2 natural AR-hit was retrained but not yet evaluated at this historical
+   checkpoint.** No
    compatible checkpoints existed anywhere, so the registered 12-cell
    retrain (token/b0/b25/b100, L2048/B4, seeds 0-2) ran 2026-07-08 →
    ~07-10 and completed 12/12 finals (after two failed launches: HF
-   cache mount, then a zero-head b0/b100 encoding bug). **The
-   registered `evaluate_ar_hits.py` pass was never launched — no hit
-   rates exist.** The paper's "next mechanism test" language still
-   stands on nothing; MRP-5 (tokenizer-matched WT2/PG-19) remains
-   blocked behind it. Evidence: `audit/MRP_2_natural_ar_hits.md`,
+   cache mount, then a zero-head b0/b100 encoding bug). The
+   registered `evaluate_ar_hits.py` pass had yet been launched, so no hit
+   rates existed at that time. The evaluation later completed null under the
+   local routing recipe; see Part VI. MRP-5 was therefore still blocked at
+   this checkpoint. Evidence: `audit/MRP_2_natural_ar_hits.md`,
    `audit/phase_sd_status.md` §"MRP-2 Natural AR-Hit Launch State".
 
 **The pivot (2026-07-16 → 07-18):** the MQAR null was read as
@@ -554,11 +556,19 @@ largest and token approaches hardware exclusion.**
   points on the same knob). Full record audit/WT2_recipe_regression_20260806.md.
 - **Learnable pooling alpha**: banned until the past instability is
   understood (fixed alpha only).
-- **Legacy debts surfaced by the bridge audit (I.3), outside the LCA
-  line but tracked**: MRP-2 natural AR-hit evaluation (12/12
-  checkpoints ready since ~2026-07-10, `evaluate_ar_hits.py` never
-  launched — no hit rates exist); MRP-5 (tokenizer-matched WT2/PG-19)
-  blocked behind MRP-2; PG-19 transfer table missing from the paper.
+- **Bridge debts after evidence closure**: MRP-2 natural AR-hit evaluation is
+  COMPLETE and NULL under the local routing recipe, including literal
+  sequence-block bootstrap intervals (2026-08-10).  The global-fiber
+  natural-AR bridge is now COMPLETE too (2026-08-12, 12/12 rows, all
+  blue-demon): the no-recall finding is RECIPE-ROBUST — under
+  all_past+dense+full-routing+nodrop every set row retrieves significantly
+  worse than the matched token control (paired bootstrap CIs strictly
+  positive), and the global fiber itself slightly degrades set retrieval
+  while its cost concentrates on non-AR.  Aggregation != retrieval is now
+  evidenced on both sides (LCA requires the fiber; AR-hit is hurt by it).
+  Full record audit/MRP_2_natural_ar_hits.md bridge section.  MRP-5
+  tokenizer-matched WT2/PG-19 is unblocked by MRP-2 but still requires
+  explicit launch approval; no PG-19 transfer table exists in the paper.
 
 # Part VII — Retrospective: why top-k was never swept before the matrix
 

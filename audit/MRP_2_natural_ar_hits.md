@@ -1,8 +1,9 @@
 # MRP-2 Natural AR-Hit Evaluation Infrastructure
 
-Status: REGISTERED CHECKPOINT RETRAINING RUNNING ON BLUE-DEMON.
+Status: COMPLETE; protocol PASS; scientific result NULL under the registered
+local-candidate-fiber routing recipe.
 
-Updated: 2026-07-08.
+Updated: 2026-08-10 after literal bootstrap gate closure.
 
 ## Scope Completed
 
@@ -22,16 +23,19 @@ Updated: 2026-07-08.
   the registered checkpoint-producing rows: token, b0, b25, and b100 at
   `L=2048,B=4`, exact dense, seeds `0,1,2`.
 
-## Launch State
+## Historical Launch State
+
+This subsection preserves the state before the registered evaluation.  The
+completion record later in this file supersedes it for current decisions.
 
 Checkpoint inventory found no compatible registered MRP-2 final checkpoints in
 the local tree, the isolated blue-demon checkout, the older blue-demon
 checkout, or the Lizmark checkout. Existing paper summary CSVs are not
 substitutes because AR-hit evaluation requires token-level checkpoint logits.
 
-Therefore the active launch is targeted retraining with checkpoint saving, not
-eval-only reuse. Primary AR-hit evaluation remains blocked until those final
-checkpoints exist.
+Therefore the action at that time was targeted retraining with checkpoint
+saving, not eval-only reuse. Primary AR-hit evaluation was blocked until those
+final checkpoints existed; it is now complete.
 
 An initial Blue launch attempt at
 `logs/mrp2_ar_hit_retrain_20260708_175000.log` failed before training because
@@ -71,11 +75,11 @@ Corrected active launch:
   `0`. Treat this as a functional smoke, not a pytest-suite substitute.
 - `bash -n scripts/run_mrp2_ar_hit_retrain.sh` passed.
 
-## Next Atomic Action
+## Historical Next Atomic Action
 
-Monitor the Blue retraining queue until all 12 final checkpoints exist. Then
-run `scripts/evaluate_ar_hits.py` on the same registered rows and
-`scripts/summarize_ar_hits.py`.
+The next action at that time was to monitor the Blue retraining queue until all
+12 final checkpoints existed, then run `scripts/evaluate_ar_hits.py` and
+`scripts/summarize_ar_hits.py`. Both steps are complete below.
 
 ---
 
@@ -182,3 +186,67 @@ control, b25/b0, seeds 0-2), scientifically motivated and cheap; it is
 NOT part of registered MRP-2 and must never be pooled with these rows.
 MRP-2 completion unblocks MRP-5 per protocol, which still requires
 explicit transfer approval.
+
+---
+
+## New-Recipe AR Bridge (2026-08-12, blue-demon) — retrieval vs aggregation
+
+Question: does the repaired global recipe (all_past fiber, dense scoring,
+full routing topk=2047, dropout 0) change the set path's natural
+associative-recall behavior? Bridge rows: token/b0/b25/b75 x seeds 0-2 at
+the registered MRP-2 island (L2048/B4, WT2, 10 epochs, lr 1e-4). Bridge
+rows carry NO experiment contract and are never pooled with registered
+MRP-2. Driver scripts/run_mrp2_ar_hit_bridge.sh; eval configs
+configs/eval/ar_hits_bridge/ (digest-matched, fail-closed); same
+blocks-bearing evaluator; b25 AND b75 group ablations.
+
+Training (all Blue, 12/12 clean): val PPL token 978.2+-9.6 @ 14677 MiB,
+b0 1157.8 @ 16189, b25 1136.1 @ 15679, b75 1215.7 @ 14068. Blur memory
+ordering preserved (b75 < token < b25 < b0); global-fiber LM quality
+ordering b25 ~= b0 < b75, consistent with the WT2 recipe regression.
+
+AR-hit metrics (3-seed mean +- sd, NLL):
+
+| row | AR | non-AR | overall |
+|---|---:|---:|---:|
+| token nodrop | 5.5346+-0.0266 | 6.9967+-0.0109 | 6.8856 |
+| b0 | 5.7084+-0.0987 | 7.1636+-0.0567 | 7.0531 |
+| b25 | 5.6806+-0.0827 | 7.1467+-0.0059 | 7.0353 |
+| b75 | 5.7680+-0.0751 | 7.2123+-0.0342 | 7.1026 |
+
+Paired sequence-block bootstrap (10k resamples, nested within seed,
+rng 13), key contrasts:
+
+1. **Retrieval gap vs the matched token control persists under the
+   global fiber, strictly significant on every set row**: b0-token
+   +0.174 CI [+0.155,+0.192]; b25-token +0.146 CI [+0.124,+0.168];
+   b75-token +0.233 CI [+0.213,+0.254]. DiDs vs token ~= 0 (the deficit
+   is uniform across AR and non-AR).
+2. **The global fiber does not repair retrieval — it slightly degrades
+   it**: b25 new-vs-old AR +0.050 CI [+0.020,+0.078]; b0 new-vs-old AR
+   +0.072 CI [+0.046,+0.098]. Meanwhile non-AR degrades MORE (cross-
+   recipe DiD -0.171 CI [-0.195,-0.148] for b25): the global fiber's
+   cost concentrates on local prediction, its benefit (LCA) is
+   aggregation-specific.
+3. Token dropout removal alone: AR +0.041 CI [+0.034,+0.047] (dropout
+   mildly helps token retrieval; DiD ~0, uniform effect).
+4. **Ablation inverts with blur**: b25's AR ability rides on its fine
+   heads (+3.85 fine vs +0.38 coarse delta NLL), b75's on its coarse
+   heads (+3.42 coarse vs +0.60 fine). Routing uses whatever heads it
+   has; there is no dedicated retrieval circuit to unmask.
+
+Verdict: **the no-recall finding is recipe-robust.** Across two
+maximally different operating points (local fiber/topk16/dropout 0.1 and
+global fiber/full-routing/nodrop), set-dictionary attention does not
+reach token-like associative retrieval, and opening the fiber moves AR
+NLL in the wrong direction. Combined with LCA (where the same global
+fiber is REQUIRED for aggregation), this separates the two mechanisms
+cleanly: the set path can sum many weak signals globally but does not
+select or preserve a specific past association the way direct token
+attention does. This is now the paper's strongest claim-boundary
+evidence: aggregation != retrieval, with recipe-robust nulls on the
+retrieval side.
+
+Artifacts: out/mrp2_ar_hits_bridge/{retrain,eval}/ (Blue),
+TSVs mrp2_ar_hit_bridge_blue.tsv, logs logs/mrp2_ar_hits_bridge/blue/
+(remote). All rows single-host (blue-demon); no host mixing.
