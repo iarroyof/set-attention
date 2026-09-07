@@ -3,8 +3,9 @@
 
 Two panels, one shared y axis. Left: the original dropout=0.1 rows
 (l4096trajectory grid). Right: the confirmed dropout-free recipe
-(l4096nodrop grid). Three seeds per family per panel (thin lines) with the
-seed mean overlaid (thick line). The figure makes the two paper points
+(l4096nodrop grid). Three seeds per family per panel are summarized by one
+seed-mean line with a pointwise 95% Student-t confidence band. The figure makes
+the two paper points
 visually: (a) the with-dropout endpoint is oscillation phase luck for both
 families; (b) under dropout=0 the set row's endpoint variance collapses
 (every seed ends at its ceiling) while token still oscillates at update
@@ -15,6 +16,7 @@ matplotlib) so the figure regenerates in minimal environments.
 from __future__ import annotations
 
 import csv
+import statistics
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +37,7 @@ PANELS = [
     ),
 ]
 SEEDS = (0, 1, 2)
+T_CRIT_95_DF2 = 4.3026527299
 
 COLORS = {
     "token": (0.45, 0.45, 0.45),
@@ -68,6 +71,16 @@ class Canvas:
         parts = [f"{pts[0][0]:.2f} {pts[0][1]:.2f} m"]
         parts += [f"{x:.2f} {y:.2f} l" for x, y in pts[1:]]
         self.ops.append(" ".join(parts) + " S")
+
+    def fill_polygon(self, pts: list[tuple[float, float]]) -> None:
+        if len(pts) < 3:
+            return
+        parts = [f"{pts[0][0]:.2f} {pts[0][1]:.2f} m"]
+        parts += [f"{x:.2f} {y:.2f} l" for x, y in pts[1:]]
+        self.ops.append(" ".join(parts) + " h f")
+
+    def fill_rect(self, x: float, y: float, width: float, height: float) -> None:
+        self.ops.append(f"{x:.2f} {y:.2f} {width:.2f} {height:.2f} re f")
 
     def text(self, x: float, y: float, text: str, size: int = 10) -> None:
         self.ops.append(f"BT /F1 {size} Tf {x:.2f} {y:.2f} Td ({esc(text)}) Tj ET")
@@ -112,11 +125,16 @@ def read_curve(path: Path) -> list[tuple[float, float]]:
     return [(float(r["update"]), float(r["val_acc"])) for r in rows]
 
 
-def mean_curve(curves: list[list[tuple[float, float]]]) -> list[tuple[float, float]]:
-    return [
-        (curves[0][i][0], sum(c[i][1] for c in curves) / len(curves))
-        for i in range(len(curves[0]))
-    ]
+def mean_ci_curve(
+    curves: list[list[tuple[float, float]]],
+) -> list[tuple[float, float, float, float]]:
+    result = []
+    for i in range(len(curves[0])):
+        values = [curve[i][1] for curve in curves]
+        mean = statistics.fmean(values)
+        half_width = T_CRIT_95_DF2 * statistics.stdev(values) / len(values) ** 0.5
+        result.append((curves[0][i][0], mean, mean - half_width, mean + half_width))
+    return result
 
 
 def main() -> None:
@@ -162,18 +180,42 @@ def main() -> None:
             c.line(left - 4, y, left, y)
             c.text(left - 34, y - 3, f"{tick:.1f}", 8)
 
+        summaries = {}
         for family in ("token", "b75"):
-            curves = [read_curve(grid / family / "L4096" / patterns[family].format(d=s)) for s in SEEDS]
+            curves = [
+                read_curve(grid / family / "L4096" / patterns[family].format(d=s))
+                for s in SEEDS
+            ]
+            summaries[family] = mean_ci_curve(curves)
+
+        # Draw both bands first so neither band's fill can hide a mean line.
+        for family in ("token", "b75"):
             rgb = COLORS[family]
-            # per-seed thin, semi-light
-            c.color(rgb[0] + (1 - rgb[0]) * 0.55, rgb[1] + (1 - rgb[1]) * 0.55, rgb[2] + (1 - rgb[2]) * 0.55)
-            c.line_width(0.7)
-            for curve in curves:
-                c.polyline([(sx(x, left), sy(y)) for x, y in curve])
-            # mean thick
+            summary = summaries[family]
+            lower = [(sx(x, left), sy(max(ymin, lo))) for x, _, lo, _ in summary]
+            upper = [(sx(x, left), sy(min(ymax, hi))) for x, _, _, hi in summary]
+            c.color(
+                rgb[0] + (1 - rgb[0]) * 0.82,
+                rgb[1] + (1 - rgb[1]) * 0.82,
+                rgb[2] + (1 - rgb[2]) * 0.82,
+            )
+            c.fill_polygon(lower + list(reversed(upper)))
+
+        for family in ("token", "b75"):
+            rgb = COLORS[family]
+            summary = summaries[family]
             c.color(*rgb)
-            c.line_width(1.8)
-            c.polyline([(sx(x, left), sy(y)) for x, y in mean_curve(curves)])
+            c.line_width(2.0)
+            c.polyline([(sx(x, left), sy(mean)) for x, mean, _, _ in summary])
+
+        if title == "dropout-free":
+            box_x, box_y, box_w, box_h = left + 10, sy(0.565), panel_w - 20, 46
+            c.color(1.0, 1.0, 1.0)
+            c.fill_rect(box_x, box_y, box_w, box_h)
+            c.color(0.25, 0.25, 0.25)
+            c.text(box_x + 8, box_y + 32, "peak VRAM after removing dropout", 8)
+            c.text(box_x + 8, box_y + 19, "token: 33746 -> 20766 MiB (-38.5%)", 8)
+            c.text(box_x + 8, box_y + 7, "b75:   24916 -> 17925 MiB (-28.1%)", 8)
 
     # legend under the right panel title row
     lx = lefts[1] + 150
@@ -185,7 +227,7 @@ def main() -> None:
     c.line(lx + 70, top + 22, lx + 92, top + 22)
     c.text(lx + 96, top + 19, LABELS["b75"], 9)
     c.color(0.08, 0.08, 0.08)
-    c.text(lefts[0] + 4, 22, "thin: individual seeds; thick: seed mean; validation every 500 updates", 9)
+    c.text(lefts[0] + 4, 22, "line: seed mean; band: pointwise 95% t-CI; validation every 500 updates", 9)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_bytes(c.pdf_bytes())

@@ -63,8 +63,9 @@ Gate 2 failure triggers the plan's STOP condition: no scale rows.
 
 ## Diagnosis — why set rows stay at chance
 
-The evidence converges on a **structural receptive-field ceiling**, not
-optimization budget, generator difficulty, or generalization:
+The original matrix establishes a joint-protocol failure; the later all-past,
+bandwidth, and supervision probes separate its components.  It does not
+establish a structural receptive-field ceiling:
 
 1. **Training loss is flat at chance for the whole run (optimization never
    starts), not a generalization gap.** The logged `train/loss` is the
@@ -76,15 +77,16 @@ optimization budget, generator difficulty, or generalization:
    learning). If set rows were merely generalizing poorly, train loss would
    have dropped; it did not move at all.
 
-2. **The routing diagnostics show the set pathway is degenerate by
-   construction in this configuration.** Every set row's ausa columns report
+2. **The routing diagnostics show that the local token router never
+   specializes in this configuration.** Every set row's ausa columns report
    `candidate_count_max = 2.0` (mean ≈ 1.99) for *both* fine and coarse
    groups, `routing_entropy ≈ 0.688 ≈ ln 2` (normalized ≈ 0.993–0.998,
    i.e. uniform over the available candidates), and
    `delta_routing_entropy = 0.0` exactly — the router never specialized in
    2000 updates. `router_topk=16` is a no-op over a 2-candidate fiber.
 
-3. **Root cause in the bank construction.** With
+3. **The bank construction imposes a direct-readback bottleneck, not a global
+   set-stack receptive-field limit.** With
    `candidate_fiber=endpoint_window` + `set_causality_mode=strict_past`
    (`src/models/set_only/banks.py:182-190`), token *t*'s candidate sets are
    exactly the sets whose endpoint falls in `(t − window, t]`. For the fine
@@ -93,17 +95,16 @@ optimization budget, generator difficulty, or generalization:
    for L=1024/2048 (num_sets 1023/2047 fine, 511/1023 coarse; candidates per
    token max 2, last-token candidates 2, matching the ausa columns).
    Supervision exists only at the last position (query token;
-   `src/data/lca_cmp.py:101,113`), and that query can attend only to sets
-   ending at the last ~2–4 positions. Information can only diffuse backward
-   ~O(window) positions per layer, so after 6 layers the query's effective
-   receptive field is on the order of **tens of tokens** (≲ ~20 fine /
-   ~50 coarse), while the count statistic is spread uniformly over 1023/2047
-   positions. A marker count visible in a ~20–50-token window is nearly
-   uninformative of the global count (window/global count correlation
-   ≈ √(w_eff/L) ≲ 0.2), so chance-level accuracy is the structural optimum
-   for the set rows. This also explains why b0 (all-fine) fails identically
-   to b100 (all-coarse): the bottleneck is the endpoint-window candidate
-   fiber, not the fine/coarse resolution mix.
+   `src/data/lca_cmp.py:101,113`), and that token can select only atoms
+   ending near the final position.  However, `set_only_lm.py:1121-1135`
+   applies exact-dense causal set attention, so each recent atom can attend
+   every earlier atom in one layer.  Distant markers are not topologically
+   unreachable and there is no O(window)-per-layer diffusion bound.  The local
+   fiber instead requires global evidence to survive pooling, set-stack
+   interaction, and compression into a recent readable atom.  The later
+   all-past+dense row also stayed at chance, proving that direct candidate
+   reachability alone was not the binding constraint; full bandwidth and prefix
+   supervision were separate bottlenecks.
 
 4. **Not a generator-degeneracy issue for token.** Token dense attention
    (full causal) learns at L1024 (0.77/0.62/0.75) and partially at L2048,
@@ -122,44 +123,31 @@ optimization budget, generator difficulty, or generalization:
    NA for all rows (probe not wired for this runner), but `delta_routing_*
    = 0.0` and the flat train loss already localize the failure.
 
-## Recommendation
+## Initial Recommendation (subsequently narrowed)
 
-**Option (c), sharpened: this is a structural task/model mismatch in the set
-path, not a budget or generator-difficulty problem — investigate the
-endpoint_window receptive-field ceiling before any further calibration
-spend.** Concretely:
+The chance-level matrix motivated a controlled direct-readback probe with
+`candidate_fiber=all_past`.  The initial audit described the local fiber as a
+receptive-field ceiling.  Code-grounded review and the later dense-router result
+narrow that diagnosis: `endpoint_window` lets the final token select at most
+two recent atoms, but each recent atom can attend every earlier atom through
+the exact-dense causal set stack.  Distant evidence is therefore not invisible
+by construction; it must survive pooling and be compressed into a readable
+recent atom.
 
-- Extending the budget (a) cannot help: train loss is flat *from the start*
-  and the information the loss requires is not in the query's receptive
-  field at any update count.
-- Adjusting generator difficulty (b) cannot help either: any task whose
-  supervision depends on content beyond ~50 tokens from the last position is
-  invisible to the set pathway under the registered boundary; making the
-  task easier (wider count separation) keeps it invisible, and making the
-  signal local would defeat the purpose of a long-context aggregation
-  comparison.
-- Do **not** read these 30 rows as evidence about set-dictionary quality
-  (option d is not warranted): the rows measure a degenerate
-  routing/candidate configuration, not the mechanism's aggregation capacity.
-  They are usable as negative calibration evidence about the
-  `endpoint_window` fiber itself.
-- Suggested next check before any relaunch (needs plan amendment, since the
-  Active Model Boundary pins `candidate_fiber=endpoint_window`): repeat one
-  set-row calibration (e.g. b25, L1024, seed 0, same budget) with
-  `candidate_fiber=all_past` — already implemented
-  (`banks.py:176-190`, `set_only_lm.py:199-200`) — which gives each token
-  all past set endpoints as candidates and makes `router_topk=16`
-  meaningful. If that single probe moves train loss below ln 2, the
-  diagnosis above is confirmed end-to-end and the plan can be amended with
-  the fiber as a labeled configuration change. Secondary checks: log
-  per-update train loss (currently only the run mean is retained) and wire
-  the ausa gradient probes for this runner so router-gradient flow is
-  directly observable.
+- The flat curves justified stopping the original matrix, but did not prove
+  that additional budget could never help or that candidate reachability was
+  the sole cause.
+- The rows remain negative calibration evidence for the joint local-fiber,
+  top-k, and final-query-supervision protocol, not an architecture-wide quality
+  verdict.
+- The registered next check was still appropriate: repeat b25/L1024/seed0 with
+  `candidate_fiber=all_past`, then distinguish direct reachability from score
+  materialization, routing bandwidth, and supervision density.
 
 No adjustment has been implemented; this audit is diagnosis only, per
 instructions.
 
-## Fiber Probe Outcome (2026-07-19/20): all_past is memory-infeasible exact-dense
+## Fiber Probe Outcome (2026-07-19/20): all_past candidate gathering is memory-infeasible
 
 The user approved exactly one fiber-diagnosis probe (`b25`, `L=1024`, seed 0,
 `candidate_fiber=all_past`, `max_updates=2000`, all other settings identical
@@ -178,9 +166,9 @@ All three CSVs are header-only (no trained row). Logs:
 
 Interpretation:
 
-- The receptive-field diagnosis (endpoint_window fiber sees only ~2 candidate
-  sets per query) stands as the best explanation of the Gate-2 failure; the
-  confirming training probe is blocked by memory, not by ambiguity.
+- The local-fiber observation stands descriptively: the token router sees at
+  most two candidate sets per query.  This OOM did not confirm that observation
+  as the cause of Gate 2; the later dense-score run was required.
 - The block is itself a registered finding: the `all_past` fiber makes the
   multihead candidate-gather router materialize a `T x C` score tensor
   (C = all past set endpoints, ~L/stride), i.e. **O(L^2) router memory in the
@@ -216,17 +204,21 @@ not the O(L^2) scores, matching the user's analysis.
 Verdict per the pre-registered criteria: **the probe fits but does not
 learn** — at the same budget where token dense reached val_acc 0.77, the
 set path with full all-past candidate reach remains at chance (val_loss
-0.817 > ln 2). Phrasing per user review (2026-07-20): endpoint-window
-reachability is definitely broken for global aggregation; all-past+dense
-fixes topological reachability but does not by itself make the current set
-path learn a global count under sparse final-token supervision. This is
+0.817 > ln 2).  The probe confirms that `all_past` expands direct
+token-to-atom eligibility, but falsifies candidate reachability as a sufficient
+or sole explanation of the chance result.  The local fiber imposes a
+transport/compression burden; it is not a topological impossibility because
+the exact-dense set stack already connects each recent atom to every earlier
+atom.  The all-past+dense change does not by itself make the current set path
+learn a global count under sparse final-token supervision. This is
 **not** proof of an inherent architecture disadvantage; it is evidence of a
 current set-path/task mismatch involving supervision sparsity, pooling,
 softmax routing, top-k selection, and the lack of an explicit additive
 accumulator. Final-token-only supervision is structurally more damaging for
 endpoint-window set attention than for token attention: the token final
-query attends directly to all positions, while the set final query reaches
-distant markers only through O(window)-per-layer diffusion. Caveats: single
+query attends directly to all positions, while the set final query receives
+distant evidence only after set-stack transport into a recent routed atom.
+Caveats: single
 seed, single budget, `train/loss` is the run mean (late learning would be
 masked in that column, but endpoint val metrics are unambiguous).
 

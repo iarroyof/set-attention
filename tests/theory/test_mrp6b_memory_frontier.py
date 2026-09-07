@@ -41,6 +41,15 @@ def score_elements(seq_len: int, batch: int, fine_heads: int, coarse_heads: int)
     )
 
 
+def dense_router_score_elements(
+    seq_len: int, batch: int, fine_heads: int, coarse_heads: int
+) -> int:
+    return batch * seq_len * sum(
+        h * num_sets(seq_len, w, s)
+        for h, w, s in groups_for_blur(fine_heads, coarse_heads)
+    )
+
+
 def group_params(seq_len: int, group_heads: int, window: int, stride: int) -> int:
     stream_dim = D_MODEL * group_heads // HEADS
     set_count = num_sets(seq_len, window, stride)
@@ -110,6 +119,39 @@ def test_finite_score_ratios_are_monotone_in_coarse_heads() -> None:
     assert values[0] > values[-1]
 
 
+def test_leading_dense_router_score_coefficients() -> None:
+    cases = [
+        ("b0", 1.0),
+        ("b25", 0.875),
+        ("b50", 0.75),
+        ("b75", 0.625),
+        ("b100", 0.5),
+    ]
+    for label, expected in cases:
+        fine, coarse = BLURS[label]
+        coeff = fine / HEADS + (coarse / HEADS) / 2
+        assert coeff == expected
+
+
+def test_dense_router_score_ratios_are_monotone_and_quadratic() -> None:
+    values = [
+        dense_router_score_elements(4096, batch=4, fine_heads=f, coarse_heads=c)
+        for f, c in BLURS.values()
+    ]
+    assert values == sorted(values, reverse=True)
+
+    fine, coarse = BLURS["b75"]
+    ratios = []
+    for seq_len in (512, 1024, 2048, 4096):
+        count = dense_router_score_elements(
+            seq_len, batch=1, fine_heads=fine, coarse_heads=coarse
+        )
+        ratios.append(count / (HEADS * seq_len**2))
+    assert all(ratio < 0.625 for ratio in ratios)
+    assert abs(ratios[-1] - 0.625) < abs(ratios[0] - 0.625)
+    assert math.isclose(ratios[-1], 0.625, rel_tol=0.002)
+
+
 def test_registered_parameter_counts_are_not_blur_identical() -> None:
     counts = {
         label: runtime_params(seq_len=2048, fine_heads=f, coarse_heads=c)
@@ -176,6 +218,8 @@ if __name__ == "__main__":
     test_strict_past_set_counts_match_registered_banks()
     test_leading_score_coefficients()
     test_finite_score_ratios_are_monotone_in_coarse_heads()
+    test_leading_dense_router_score_coefficients()
+    test_dense_router_score_ratios_are_monotone_and_quadratic()
     test_registered_parameter_counts_are_not_blur_identical()
     test_exact_score_formula_preserves_quadratic_class()
     test_fit_rows_reject_cross_stratum_and_uncertified_oom()

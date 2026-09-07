@@ -1,23 +1,25 @@
 # Exact-Dense Memory Frontier For Multiresolution Set Dictionary
 
-Status: analytic MRP-6B complete; empirical fit and final table pending MRP-1
-replacement closure.
+Status: analytic MRP-6B complete; amended for the global dense-router LCA
+recipe and reconciled with the completed empirical matrix.
 
-Updated: 2026-07-07.
+Updated: 2026-08-10.
 
-This memo covers only the analytic part of MRP-6B. It is code-faithful to the
-active exact-dense `set-dictionary/anchor-span` branch and does not edit the
-canonical TeX. Empirical VRAM fits, bootstrap intervals, and final table
-replacement are intentionally left pending until the 15 `L3584,B4` diagnostic
-replacement rows close.
+This memo covers the analytic tensor counts used by the current exact-dense
+`set-dictionary/anchor-span` branch. It distinguishes the exact set-attention
+score tensor from the dense token-to-atom router score tensor; neither count is
+a formula for total peak VRAM.
 
 ## Implemented Variables
 
 Active set rows use `SetOnlyLM` with exact dense set attention, `D=384`,
 `d_ff=1536`, `K=6` set-attention blocks, `H=8` routing/set heads,
 `set_state_dim=d_phi=384`, `output_residual_mode=anchor_span`, token MLP
-disabled, anchor disabled, `candidate_fiber=endpoint_window`, and
-`strict_past` banks.
+disabled, anchor disabled, and `strict_past` banks. The registered
+WikiText-2 matrix uses `candidate_fiber=endpoint_window` with candidate-gather
+scoring. The repaired LCA and reverse-bridge diagnostics use
+`candidate_fiber=all_past` with dense router scoring. These are declared
+routing recipes over the same model modules.
 
 Each multiresolution group `g` has:
 
@@ -48,7 +50,7 @@ M_c(L)=floor((L-4)/2)+1.
 
 For even registered lengths, `M_c=L/2-1`.
 
-## Exact Score Tensor Count
+## Exact Set-Attention Score Tensor Count
 
 In `DenseExactBackend.forward`, each group computes `q`, `k`, and then
 materializes
@@ -61,7 +63,7 @@ before score biases and causal masks are applied. Therefore the materialized
 dense score-element count across batch and layers is
 
 ```text
-A_score(L,B) = B K sum_g H_g M_g(L)^2.
+A_set(L,B) = B K sum_g H_g M_g(L)^2.
 ```
 
 This is a full-square count. The implementation does not store triangular
@@ -72,7 +74,7 @@ For a coarse-head fraction `p=H_c/H`, with fine stride `s_f=1` and coarse
 stride `s_c=2`,
 
 ```text
-A_score / (B K H L^2)
+A_set / (B K H L^2)
   = (1-p) / s_f^2 + p / s_c^2 + O(1/L)
   = 1 - 3p/4 + O(1/L).
 ```
@@ -98,9 +100,33 @@ For every registered length `L >= 4`, `M_f=L-1` and `M_c <= L/2-1`, hence
 score tensor count, while every row remains `Theta(B K H L^2)` because at
 least one active group has `M_g = Theta(L)`.
 
+## Dense Global-Router Score Tensor Count
+
+With `candidate_fiber=all_past` and `router.score_mode=dense`, each group
+materializes
+
+```text
+router_scores_g in R^{B x H_g x L x M_g}
+A_route_dense(L,B) = B L sum_g H_g M_g(L).
+```
+
+The causal mask is applied after allocation, so it does not halve this tensor.
+For coarse-head fraction `p`,
+
+```text
+A_route_dense / (B H L^2)
+  = (1-p) / s_f + p / s_c + O(1/L)
+  = 1 - p/2 + O(1/L).
+```
+
+The leading coefficients for b0, b25, b50, b75, and b100 are respectively
+`1.000`, `0.875`, `0.750`, `0.625`, and `0.500`. Thus blur reduces this
+quadratic tensor more slowly than it reduces the set-to-set score tensor.
+Top-k applied after dense scoring cannot reduce this allocation.
+
 ## Activation And Tensor Scaling
 
-The score tensor is the leading exact-dense allocation:
+The set score tensor is one leading exact-dense allocation:
 
 ```text
 scores, attention probabilities: O(B sum_g H_g M_g^2) per layer.
@@ -123,8 +149,8 @@ C_f <= 2, C_c <= 2
 ```
 
 before `router_topk=16`, so router candidate-gather scores are linear in `L`
-under the active endpoint-window path. This statement is not true for
-`all_past` or dense router scoring, which are outside the active branch.
+under the registered local routing recipe. Under the registered global LCA
+recipe, `C_g=M_g=Theta(L)` and the dense router count above is quadratic.
 
 The set-state linear allocation term used by the empirical model is
 
@@ -208,12 +234,12 @@ attention scores per transformer layer:
 A_token_score(L,B) = B K H L^2.
 ```
 
-The set rows have leading score coefficient `1-3p/4` relative to this token
-score count, plus finite `O(1/L)` corrections from windows. This is a
-constant-factor reduction inside an exact-dense `Theta(L^2)` family. The
-analysis does not imply subquadratic complexity and does not make b0
-equivalent to token attention: b0 still pools `(w,s)=(2,1)` sets and routes
-through set atoms.
+The set rows have set-attention coefficient `1-3p/4` relative to this token
+score count. Under dense global routing they additionally have router-score
+coefficient `1-p/2`, each with finite `O(1/L)` corrections. Both are
+constant-factor reductions inside quadratic families. The analysis does not
+imply subquadratic complexity and does not make b0 equivalent to token
+attention: b0 still pools `(w,s)=(2,1)` sets and routes through set atoms.
 
 ## Peak-VRAM Interpretation Limits
 
@@ -248,7 +274,7 @@ checks, not additional independently fit strata.
 
 ## Pareto And Frontier Definitions
 
-MRP-1 uses an within-island memory-quality frontier. An island fixes dataset,
+MRP-1 uses a within-island memory-quality frontier. An island fixes dataset,
 tokenizer, objective, architecture width/depth, backend family, `L`, native
 batch, effective batch, optimizer, LR, warmup, training-token budget, seed
 contract, hardware class, and metric implementation.
@@ -269,7 +295,7 @@ The analytic memory frontier is the ordered set of blur rows by exact count
 tuple, for example
 
 ```text
-(A_score, A_linear, P_runtime)
+(A_set, A_route_dense if used, A_linear, P_runtime)
 ```
 
 at fixed `(L,B,V)`. This analytic frontier explains monotone score-memory
@@ -277,15 +303,13 @@ pressure with blur. It does not select the lowest-PPL blur row and does not
 claim an interior quality optimum; that selection remains empirical and, for
 MRP-6C, mechanistic.
 
-## Pending Empirical Replacement Closure
+## Empirical Status
 
-Pending after MRP-1 closure:
-
-1. fit the lizmark `B=4` nonnegative VRAM model using successful regular blur
-   cells at `L in {2048,3584,4096}`;
-2. use only admission-certified exclusive OOMs as primary censored capacity
-   observations;
-3. bootstrap cell-level uncertainty and report leave-one-length-out residuals;
-4. report B3, B16, and blue residuals without refitting;
-5. replace provisional/frozen tables with final MRP-1 rows only after strict
-   validation accepts the 15 replacement cells.
+The MRP-1 matrix and its replacement rows are complete. The paper reports
+measured peak VRAM within fixed `(L,B,host,recipe)` strata and uses the analytic
+counts only to explain direction; it does not substitute fitted VRAM values
+for measurements. The originally proposed nonnegative empirical VRAM fit was
+not executed and is no longer a blocker for this theorem. If revisited, it
+must fit only admission-consistent rows, use only exclusive certified OOMs as
+censored observations, and report leave-one-length-out and held-out-stratum
+residuals.

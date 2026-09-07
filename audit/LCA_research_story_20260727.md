@@ -188,12 +188,15 @@ between the rollout, the audits, and the artifact TSVs.
 Registered calibration matrix (36 rows: token + b0..b100 × L{1024,2048}
 × seeds 0-2, `endpoint_window` fiber, final-token loss, 2000 updates).
 **Result: token 0.77 at L1024; every set row at chance (Gate 2 FAIL).**
-Diagnosis: with `endpoint_window`, each query routes only to the ~2 set
-atoms adjacent to its position — distant markers are topologically
-unreachable from the supervised final token, and 6 layers of local
-diffusion cannot bridge L=1024. The paper's frozen fiber is incapable
-of global aggregation by construction. Question refined: reachability
-first.
+Initial diagnosis: with `endpoint_window`, each query directly reads only the
+two set atoms adjacent to its position, so distant markers cannot be selected
+by the final token router.  Code review and the later router-dense probe narrow
+that statement: the exact-dense set stack lets a recent atom attend every
+earlier atom in one layer, so distant evidence is not topologically unreachable
+and there is no O(window)-per-layer diffusion limit.  The local fiber instead
+forces global evidence to survive pooling and be compressed into a recent
+readable atom.  The chance result therefore motivated a direct-reachability
+probe but did not establish reachability as the sole cause.
 
 ### Node 2 — Fiber probe: all_past is OOM-censored in candidate_gather
 (2026-07-19). Switching `candidate_fiber=all_past` fixes reachability in
@@ -401,9 +404,12 @@ largest and token approaches hardware exclusion.**
 
 # Part V — Discoveries to date (the durable list)
 
-1. **Reachability is a config-level property, not an architectural
-   limit.** `endpoint_window` cannot do global aggregation; `all_past`
-   can. The paper's frozen fiber was the binding constraint.
+1. **Direct token-to-atom reachability is a config-level property, not an
+   architectural limit.** `endpoint_window` exposes at most two recent atoms;
+   `all_past` exposes every sealed past atom.  Because the causal set stack is
+   already globally dense and all-past alone stayed at chance, the evidence
+   supports a transport/compression bottleneck, not a topology-impossibility or
+   a claim that candidate reachability was the sole binding constraint.
 2. **Final-token-only supervision interacts with routing topology.**
    Token attention tolerates sparse supervision; sparse-fiber set
    attention does not. Prefix supervision repairs it.
@@ -558,14 +564,16 @@ largest and token approaches hardware exclusion.**
   understood (fixed alpha only).
 - **Bridge debts after evidence closure**: MRP-2 natural AR-hit evaluation is
   COMPLETE and NULL under the local routing recipe, including literal
-  sequence-block bootstrap intervals (2026-08-10).  The global-fiber
+  sequence-block bootstrap intervals (2026-08-10).  The global-recipe
   natural-AR bridge is now COMPLETE too (2026-08-12, 12/12 rows, all
-  blue-demon): the no-recall finding is RECIPE-ROBUST — under
-  all_past+dense+full-routing+nodrop every set row retrieves significantly
-  worse than the matched token control (paired bootstrap CIs strictly
-  positive), and the global fiber itself slightly degrades set retrieval
-  while its cost concentrates on non-AR.  Aggregation != retrieval is now
-  evidenced on both sides (LCA requires the fiber; AR-hit is hurt by it).
+  blue-demon): the null for set-specific repeated-bigram AR advantage is
+  RECIPE-ROBUST.  Under all_past+dense+full-routing+nodrop every set row has
+  significantly higher absolute AR NLL than the matched token control, but
+  b0/b25 AR-vs-non-AR DiDs are near zero, so most of that gap tracks overall
+  LM quality.  The combined global recipe slightly worsens AR NLL and worsens
+  non-AR NLL more; the cross-recipe contrast cannot be attributed to candidate
+  fiber alone.  LCA success therefore does not transfer to this AR proxy, but
+  the diagnostic does not prove the absence of an internal retrieval circuit.
   Full record audit/MRP_2_natural_ar_hits.md bridge section.  MRP-5
   tokenizer-matched WT2/PG-19 is unblocked by MRP-2 but still requires
   explicit launch approval; no PG-19 transfer table exists in the paper.

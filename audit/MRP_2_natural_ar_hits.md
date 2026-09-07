@@ -3,7 +3,7 @@
 Status: COMPLETE; protocol PASS; scientific result NULL under the registered
 local-candidate-fiber routing recipe.
 
-Updated: 2026-08-10 after literal bootstrap gate closure.
+Updated: 2026-08-12 after global-recipe bridge closure and interpretation audit.
 
 ## Scope Completed
 
@@ -158,9 +158,9 @@ supportive=False. Machine-readable gate: out/mrp2_ar_hits/eval/gate.json.
 
 1. **Token is the best retriever.** AR NLL token 5.494 vs b25 5.631;
    the gap is consistent on every seed (+0.089..+0.179). Under the
-   frozen local-fiber recipe the set path has no retrieval advantage —
-   the paper's "no associative-recall mechanism" non-claim now has
-   direct natural-AR evidence.
+   frozen local-fiber recipe the set path has no retrieval advantage. This is
+   direct natural-AR evidence against a set-specific repeated-bigram advantage;
+   it does not establish that no internal retrieval mechanism exists.
 2. **b25's overall win is a non-AR effect.** b25 beats token on non-AR
    NLL on every seed (-0.004..-0.044) while losing on AR. The WT2
    frontier win of the interior blur point is local-prediction quality,
@@ -178,14 +178,12 @@ supportive=False. Machine-readable gate: out/mrp2_ar_hits/eval/gate.json.
 
 ### Consequence for the claim boundary
 
-The null is measured under the frozen endpoint_window/topk16 recipe —
-the same topology the LCA campaign proved reachability-broken. A
-reviewer can therefore still ask whether the global-fiber recipe
-changes retrieval. That is the stage-2 bridge question (new-recipe AR
-control, b25/b0, seeds 0-2), scientifically motivated and cheap; it is
-NOT part of registered MRP-2 and must never be pooled with these rows.
-MRP-2 completion unblocks MRP-5 per protocol, which still requires
-explicit transfer approval.
+This first null was measured under the frozen endpoint_window/topk16 recipe,
+the same topology the LCA campaign later showed cannot support global
+aggregation. That limitation motivated the separately labeled global-recipe
+bridge reported below. The bridge is complete, is not part of registered
+MRP-2, and must never be pooled with these rows. MRP-2 completion unblocks
+MRP-5 per protocol, which still requires explicit transfer approval.
 
 ---
 
@@ -217,35 +215,39 @@ AR-hit metrics (3-seed mean +- sd, NLL):
 Paired sequence-block bootstrap (10k resamples, nested within seed,
 rng 13), key contrasts:
 
-1. **Retrieval gap vs the matched token control persists under the
-   global fiber, strictly significant on every set row**: b0-token
+1. **The absolute AR-target gap vs the matched token control persists under
+   the global recipe, strictly significant on every set row**: b0-token
    +0.174 CI [+0.155,+0.192]; b25-token +0.146 CI [+0.124,+0.168];
-   b75-token +0.233 CI [+0.213,+0.254]. DiDs vs token ~= 0 (the deficit
-   is uniform across AR and non-AR).
-2. **The global fiber does not repair retrieval — it slightly degrades
-   it**: b25 new-vs-old AR +0.050 CI [+0.020,+0.078]; b0 new-vs-old AR
-   +0.072 CI [+0.046,+0.098]. Meanwhile non-AR degrades MORE (cross-
-   recipe DiD -0.171 CI [-0.195,-0.148] for b25): the global fiber's
-   cost concentrates on local prediction, its benefit (LCA) is
-   aggregation-specific.
+   b75-token +0.233 CI [+0.213,+0.254]. DiDs vs token are near zero for
+   b0/b25 (their absolute AR deficits track their non-AR deficits); b75
+   has a small positive DiD. This rejects a set-specific AR advantage but
+   does not isolate an AR-only architecture deficit.
+2. **The global recipe does not repair the AR-target gap and slightly
+   worsens it**: b25 new-vs-old AR +0.050 CI [+0.020,+0.078]; b0
+   new-vs-old AR +0.072 CI [+0.046,+0.098]. Meanwhile non-AR degrades
+   MORE (cross-recipe DiD -0.171 CI [-0.195,-0.148] for b25). This
+   contrast changes candidate fiber, score mode, post-score bandwidth,
+   and dropout together; it must not be attributed to the fiber alone.
 3. Token dropout removal alone: AR +0.041 CI [+0.034,+0.047] (dropout
    mildly helps token retrieval; DiD ~0, uniform effect).
-4. **Ablation inverts with blur**: b25's AR ability rides on its fine
-   heads (+3.85 fine vs +0.38 coarse delta NLL), b75's on its coarse
-   heads (+3.42 coarse vs +0.60 fine). Routing uses whatever heads it
-   has; there is no dedicated retrieval circuit to unmask.
+4. **Whole-group ablation follows the head allocation**: b25 loses more
+   when its six fine heads are removed (+3.85 vs +0.38 AR delta NLL for
+   two coarse heads), while b75 loses more when its six coarse heads are
+   removed (+3.42 vs +0.60 for two fine heads). Because group sizes
+   differ and the readout is nonlinear, this establishes allocation
+   dependence, not a per-head effect or the absence of a retrieval circuit.
 
-Verdict: **the no-recall finding is recipe-robust.** Across two
+Verdict: **the null for demonstrated set-specific repeated-bigram recall
+advantage is recipe-robust.** Across two
 maximally different operating points (local fiber/topk16/dropout 0.1 and
-global fiber/full-routing/nodrop), set-dictionary attention does not
-reach token-like associative retrieval, and opening the fiber moves AR
-NLL in the wrong direction. Combined with LCA (where the same global
-fiber is REQUIRED for aggregation), this separates the two mechanisms
-cleanly: the set path can sum many weak signals globally but does not
-select or preserve a specific past association the way direct token
-attention does. This is now the paper's strongest claim-boundary
-evidence: aggregation != retrieval, with recipe-robust nulls on the
-retrieval side.
+global fiber/full-routing/nodrop), set-dictionary attention does not beat
+the token control on the AR proxy, and the global recipe moves absolute
+AR NLL in the wrong direction. Combined with LCA (where global readback
+is required for aggregation), this shows that aggregation success does
+not transfer to repeated-bigram AR specialization. It does not prove
+that every AR label requires retrieval, that no internal retrieval
+computation exists, or that candidate fiber alone caused the cross-recipe
+change.
 
 Artifacts: out/mrp2_ar_hits_bridge/{retrain,eval}/ (Blue),
 TSVs mrp2_ar_hit_bridge_blue.tsv, logs logs/mrp2_ar_hits_bridge/blue/

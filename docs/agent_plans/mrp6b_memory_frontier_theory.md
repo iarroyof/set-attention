@@ -152,7 +152,8 @@ empirical VRAM predictions.
 
 ## Durable Handoff
 
-Status: analytic work PASS; empirical fit BLOCKED on MRP-1.
+Status: PASS.  MRP-1 is complete; measured peak VRAM is used directly and the
+optional empirical fit is deferred, not blocked.
 
 Last completed action: finite-count exact-dense memory/frontier memo and
 focused formula tests added for the active multiresolution branch.
@@ -179,8 +180,8 @@ Known incident or limitation: score count predicts a leading term, not total
 VRAM or exact OOM; one-length strata are held out rather than independently
 fit. Local default Python lacks project runtime dependencies and pytest.
 
-Next atomic action: after MRP-1 closes, implement and run the constrained
-lizmark-B4 VRAM fit and replace pending empirical sections.
+Next atomic action: none required for the current theorem.  A future empirical
+fit, if useful, must remain separate from measured paper values.
 
 Inputs required: validated lizmark-B4 MRP-1 table and any admission-certified
 OOM metadata.

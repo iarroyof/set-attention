@@ -1,8 +1,9 @@
 # MRP-6B Memory Frontier Theory Audit
 
-Status: ANALYTIC PASS; empirical fit BLOCKED on MRP-1 replacement closure.
+Status: PASS; amended for the completed matrix and global dense-router LCA
+recipe.  The optional empirical fit is deferred and is not used in the paper.
 
-Updated: 2026-07-07.
+Updated: 2026-08-10.
 
 ## Scope Completed
 
@@ -24,7 +25,8 @@ The memo states:
 - concrete runtime/training parameter counts for registered lengths;
 - peak-VRAM interpretation limits;
 - MRP-1-compatible Pareto/frontier definitions;
-- pending empirical fit and final-table replacement gates.
+- measured-VRAM interpretation and explicit separation of set-score and
+  dense-router-score tensor counts.
 
 ## Validation
 
@@ -49,10 +51,11 @@ python -m pytest -q \
 
 ## Empirical Fit Status
 
-Not run and not finalized. The 15 `L3584,B4` mixed replacement rows are still
-the registered blocker. Legacy `L4096,B4` token/b0/b25 OOM rows remain
-observed feasibility outcomes only because their launchers did not archive
-external-process telemetry.
+The MRP-1 replacement rows are complete.  No constrained VRAM fit was run;
+the paper uses measured within-island peaks and the analytic count only for
+directional explanation.  The fit is therefore deferred rather than blocked.
+Legacy OOM rows remain fixed-admission feasibility observations unless they
+carry exclusive telemetry.
 
 ## Write-Scope Compliance
 
@@ -86,14 +89,14 @@ Artifacts and digests: no generated empirical artifacts.
 
 Host/PID/log/ETA: no launched jobs.
 
-Decision or gate result: analytic MRP-6B passes; final empirical fit remains
-blocked on strict MRP-1 closure.
+Decision or gate result: MRP-6B passes for the current paper; no fitted VRAM
+value is used as evidence.
 
 Known incident or limitation: default local Python lacks project runtime
 dependencies and pytest. Empirical fit is intentionally absent.
 
-Next atomic action: after MRP-1 closes, implement the constrained lizmark-B4
-VRAM fit and replace pending sections with final fit tables.
+Next atomic action: none required.  Revisit the constrained fit only as an
+optional model-checking appendix.
 
 Inputs required: validated final MRP-1 lizmark `B=4` regular blur rows and
 admission-certified OOM metadata, if any.

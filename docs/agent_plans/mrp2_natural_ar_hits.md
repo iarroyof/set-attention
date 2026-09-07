@@ -1,12 +1,13 @@
 # MRP-2: Natural Associative-Recall Hit Evaluation
 
-Status: COMPLETE 2026-08-09; protocol PASS; scientific result NULL (gate
-not supportive — see `audit/MRP_2_natural_ar_hits.md`, 2026-08-09
-evaluation section).
+Status: COMPLETE; protocol PASS; scientific result NULL.  The registered local
+gate is not supportive, and the separately labeled global-recipe bridge also
+finds no set-specific repeated-bigram AR advantage (see
+`audit/MRP_2_natural_ar_hits.md`).
 
 Owner: UNASSIGNED
 
-Updated: 2026-07-08.
+Updated: 2026-08-12 after the global-recipe bridge completed.
 
 ## Mission
 
@@ -137,7 +138,8 @@ null, or inconclusive.
 
 ## Durable Handoff
 
-Status: APPROVED; CHECKPOINT RETRAINING COMPLETE; EVALUATION PENDING.
+Status: COMPLETE; protocol PASS; scientific result NULL under the local
+candidate fiber.
 
 Last completed action: evaluator/summarizer infrastructure implemented,
 focused syntax/smoke validation completed, checkpoint inventory found no
@@ -172,8 +174,11 @@ environment before final closeout. The first retrain attempt missed the HF
 cache mount; the second launch exposed and fixed zero-head companion-group
 encoding for b0/b100.
 
-Next atomic action: run the registered AR-hit evaluations over the 12 completed
-checkpoints, then summarize and apply the support/null/inconclusive gate.
+Next atomic action: none inside MRP-2.  The global-recipe AR bridge is complete,
+remains separately labeled, and must not be pooled with registered rows.  Its
+cross-recipe change is a whole-recipe contrast, not a candidate-fiber-only
+effect, and its null does not prove the absence of an internal retrieval
+circuit.
 
 Inputs required: MRP-0 checkpoint API, frozen `b*`, applied seeds, full
 WikiText-2, and approved host allocation.

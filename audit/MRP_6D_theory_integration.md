@@ -1,20 +1,24 @@
 # MRP-6D Theory Integration Audit
 
-Status: PASS with empirical specialization still conditional on MRP-3.
+Status: PASS; amended after the completed MRP-1, natural-AR, MQAR, and LCA
+results.
 
-Updated: 2026-07-07.
+Updated: 2026-08-10.
 
 ## Scope
 
 This audit covers the independent proof review and canonical TeX integration
 for the current exact-dense multiresolution set-dictionary branch. No
-experiments were launched. Empirical tables were not rewritten.
+experiments were launched.  The 2026-08-10 amendment also aligns the LCA table,
+figure captions, and theoretical vocabulary with already completed evidence;
+it does not alter any result value.
 
 Canonical objects audited:
 
-- strict-past endpoint banks and candidate fibers;
+- strict-past endpoint banks with local and global candidate fibers;
 - independent fine/coarse banks, poolers, set stacks, features, and routers;
-- candidate-gather routing with empty-fiber zero routes;
+- candidate-gather routing for the local recipe and dense scoring for the
+  global LCA recipe, both with empty-fiber zero routes;
 - `anchor_span` readout with token MLP and trained anchor disabled;
 - exact dense set-attention score tensor materialization;
 - conditional routed approximation and discrete allocation results.
@@ -31,7 +35,7 @@ Canonical objects audited:
 | `prop:topk-support-entropy` | A | router top-k mask | top-k applied before softmax | Repaired | none | support bounded by `min(c_t^g,k)` |
 | `thm:degenerate-topology`, `cor:stride-equals-window` | A | endpoint-window fibers | group-local singleton fiber | Repaired | none | singleton group fibers force deterministic routing |
 | common-mixture / strict-inclusion / dimension / rank legacy labels | A | multigroup routing matrix | tagged disjoint union of group atoms | Replaced | none | direct-sum rank ceiling is `sum_g min(H_g,c_t^g)` |
-| `thm:exact-dense-score-memory` | A | `DenseExactBackend.forward` | exact dense backend, full square scores | Retained new | none | blur changes score-memory coefficient inside quadratic family |
+| `thm:exact-dense-score-memory` | A | `DenseExactBackend.forward`; dense router score mode | exact dense set backend; named router score mode | Amended | none | blur changes set-score and dense-router-score coefficients separately inside quadratic families |
 | `thm:boltzmann-maxent`, `rem:soft-trimmed-boltzmann` | A/C | pooling rule in `banks.py` | pure Gibbs only under feasible moment/fixed-energy constraint | Repaired | none | implemented pooling is soft-trimmed Gibbs reweighting |
 | pooling-gradient labels | B | active full autograd graph | all branch paths would need to be named | Removed | none | no full-graph pooling-gradient theorem retained |
 | raw/logged gradient ratio labels | C | diagnostic ratio definitions | variables match logged graph objects | Partially retained | diagnostics only | algebraic stabilizer identity only, no bottleneck causality |
@@ -60,16 +64,20 @@ Canonical objects audited:
   identities plus conditional diagnostics.
 - Empty-fiber proof: repaired with moving endpoint grid.
 - Span ablation: described as removing historical-context paths, not unigram.
-- Candidate gather: described as the current implemented router path.
+- Candidate gather and dense scoring: separated as the registered local and
+  global router paths; top-k after dense scoring does not reduce the dense
+  score allocation.
 - b0/singleton/token attention: explicit nonclaim retained.
 
 ## TeX Integration
 
 Changed canonical TeX:
 
-- replaced the main theory section with four formal statements:
+- replaced the main theory section with four formal statements and later
+  nested it under Model Overview:
   contextual-path factorization, direct-sum multigroup routing capacity,
-  exact-dense memory coefficient, and conditional interior allocation;
+  exact-dense set/router memory coefficients, and conditional interior
+  allocation;
 - replaced the detailed theory appendix with the current multiresolution
   definitions, Tier A/B/C results, full proofs, code correspondence,
   limitations, and legacy-label disposition;
@@ -88,6 +96,7 @@ python tests/theory/test_mrp6a_formal_model.py
 python -m py_compile tests/theory/test_mrp6a_formal_model.py tests/theory/test_mrp6b_memory_frontier.py tests/theory/test_mrp6c_approximation_allocation.py
 pdflatex -interaction=nonstopmode -halt-on-error -jobname=mrp6d_build -output-directory=../checks/mrp6d_tex example_paper.tex
 pdftotext out/final_paper_bundle/checks/mrp6d_tex/mrp6d_build.pdf out/final_paper_bundle/checks/mrp6d_tex/mrp6d_build.txt
+scripts/compile_paper_bundle.sh
 ```
 
 MRP-6A runtime test still depends on local `torch`; Blue-container pytest had
@@ -95,9 +104,12 @@ already passed for MRP-6A/B/C before this integration. The local MRP-6A runtime
 attempt failed with `ImportError: cannot import name 'nn' from 'torch'`, matching
 the earlier local-environment limitation.
 
-Canonical TeX build status: PASS. The final clean-job PDF is
-`out/final_paper_bundle/checks/mrp6d_tex/mrp6d_build.pdf`; the final log has
-no undefined references and no unresolved citation warnings.
+Canonical TeX build status: PASS. The amended final PDF is
+`out/final_paper_bundle/overleaf_ready/example_paper.pdf`; the archived build
+is `out/final_paper_bundle/checks/compile_logs/run_QBwb2p/example_paper.pdf`.
+The final log has no TeX error, undefined reference or citation, or overfull
+box.  The source-directory build path matches Overleaf and avoids stale
+BibTeX auxiliary reuse.
 
 Forbidden/mis-scoped language audit:
 
@@ -108,12 +120,9 @@ Forbidden/mis-scoped language audit:
 - `linear` appears as the existing landmark-backend family and linear-algebra
   terminology, not as a current subquadratic claim.
 
-Remaining LaTeX warnings:
-
-- one float specifier changed from `h` to `ht`;
-- overfull boxes in the legacy-disposition longtable from long theorem-label
-  strings;
-- existing underfull layout warnings elsewhere in the manuscript.
+Remaining LaTeX warnings are underfull page-layout notices only; no content is
+clipped or outside the page in the inspected Model Overview, Table 6, or LCA
+figures.
 
 ## Known Limitations
 
@@ -122,5 +131,6 @@ single-resolution architecture. The current theory section explicitly
 supersedes it for set-dictionary claims, and duplicate theorem labels were
 renamed so reviewer-facing references resolve to the current proofs.
 
-MRP-3-dependent specialization remains conditional. No empirical specialization,
-PPL superiority, or OOM theorem is claimed.
+MQAR specialization remains unsupported after the MRP-3 null.  LCA supplies a
+separate task-scoped global-aggregation result; it does not establish PPL
+superiority, associative retrieval, or an OOM theorem.

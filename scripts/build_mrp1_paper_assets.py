@@ -646,7 +646,7 @@ def write_operating_regime_map(cells: dict[tuple[int, int, str], dict[str, str]]
         "\\definecolor{coststrong}{HTML}{D18A7A}",
         "\\begin{document}",
         "\\begin{tikzpicture}[font=\\sffamily\\small]",
-        "\\node[anchor=west,font=\\sffamily\\bfseries] at (0,0.85) {Operating-regime map: quality and memory relative to token};",
+        "\\node[anchor=west,font=\\sffamily\\bfseries] at (0,0.85) {Exact-dense matrix map: quality and memory relative to token};",
         "\\node[anchor=west,font=\\scriptsize] at (0,0.35) {Cell text: $\\Delta$PPL vs token on top, GiB saved vs token below. Gray = censored/OOM or no token control.};",
     ]
     for j, name in enumerate(SET_ROWS):

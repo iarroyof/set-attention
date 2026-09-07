@@ -83,14 +83,14 @@ subplans under `docs/agent_plans/`:
 |---|---|---|
 | MRP-0 reproducibility/checkpoint platform | PASS | Blue container validation passed on 2026-07-07: focused suite, duplicate strict token/b25 smokes, checkpoint replay, and eval-only immutability |
 | MRP-1 five-seed exact-dense closure | PASS | Blue 120/120 and Lizmark 135/135 endpoint-valid; strict scan accepted 255 CSVs; later short-B3 bridge added 60/60 descriptive endpoint-valid rows; `b*=b25` frozen |
-| MRP-2 natural AR-hit evaluation | COMPLETE; PROTOCOL PASS; SCIENTIFIC NULL | 12/12 checkpoints evaluated; registered sequence-block bootstrap gate fails; local-routing-recipe scope retained |
+| MRP-2 natural AR-hit evaluation | COMPLETE; PROTOCOL PASS; SCIENTIFIC NULL | Registered 12/12 local rows plus 12/12 global-recipe bridge rows; no set-specific repeated-bigram AR advantage under either recipe |
 | MRP-3 synthetic MQAR | COMPLETE; NULL/INCONCLUSIVE | all 18 registered rows completed and summarized; frozen b25 accuracy mean 0.0002474, below the 0.90 support threshold, so no specialization claim |
 | MRP-4 larger scale separation | NOT_TRIGGERED | MRP-3 failed support condition 3; do not launch scale-separation rows from the current MQAR result |
 | MRP-lca-cmp long-context aggregation comparison | COMPLETE | L4096 dropout-free b75 endpoint parity at -13.7% peak VRAM; top-k and routing-recipe attributions complete; WT2 reverse bridge is negative |
 | MRP-5 tokenizer-matched WT2/PG-19 | UNBLOCKED; LAUNCH APPROVAL REQUIRED | MRP-2 is complete; no transfer launch is implied by this tracker |
 | MRP-6 theory/proofs | PASS for analytic theory package | MRP-6A/B/C focused tests passed in Blue container; MRP-6D canonical TeX integration and clean build passed; MRP-3 completed null, so empirical specialization remains unestablished |
 | MRP-7A current-evidence paper rewrite | ACTIVE; no new experiments | MRP-1, MQAR, natural AR, LCA, reverse bridge, and amended theory are available; PG-19 remains absent |
-| MRP-7 paper synthesis | ACTIVE; FINAL CLOSEOUT PENDING | supported evidence is integrated; global-fiber natural-AR bridge and separately approval-gated MRP-5 remain tracked follow-ups |
+| MRP-7 paper synthesis | ACTIVE; FINAL CLOSEOUT PENDING | global-recipe natural-AR bridge is complete and integrated; separately approval-gated MRP-5 remains a tracked follow-up |
 
 No new experimental queue is authorized by the plan alone.
 
@@ -434,8 +434,9 @@ strict log scan clean (no traceback/NaN/Inf/OOM), both blue-demon GPUs idle
 (1 MiB, 0% util, no `lcacmp_*` containers). Gate outcome: Gate 1 (token
 learnability) PASS at L1024, marginal at L2048; **Gate 2 FAIL — all 30 set
 rows at chance**. Diagnosis and recommendation (structural `endpoint_window`
-receptive-field ceiling; probe `candidate_fiber=all_past` before any
-relaunch) in `audit/LCA_calibration_20260718.md`. Per the plan's STOP
+direct-readback bottleneck under final-query supervision; probe
+`candidate_fiber=all_past` before any relaunch) in
+`audit/LCA_calibration_20260718.md`. Per the plan's STOP
 condition, no scale rows were launched.
 
 Fiber probe update (2026-07-20): the single approved `all_past` probe
@@ -444,7 +445,7 @@ Fiber probe update (2026-07-20): the single approved `all_past` probe
 microbatch retry (b2 x accum2) also OOMed on Lizmark (~60 GiB total demand).
 Root cause: the all_past candidate-gather router materializes an O(L^2)
 score tensor. No trained probe row exists; the receptive-field diagnosis
-remains the best Gate-2 explanation, and any further probe attempt (batch 1
+was not yet confirmed, and any further probe attempt (batch 1
 x accum 4 or a chunked gather) needs a new explicit user decision. Details:
 `audit/LCA_calibration_20260718.md` "Fiber Probe Outcome". Both hosts idle.
 
@@ -796,14 +797,15 @@ False confirmed with literal CIs; b25's edge concentrates on non-AR.
 Bridge retrain driver + eval configs committed (token/b0/b25/b75 nodrop
 global, 3 seeds, no contract, never pooled with MRP-2).
 
-2026-08-12 — MRP-2 new-recipe AR bridge COMPLETE (12/12 train + eval,
-all blue-demon): the no-recall finding is RECIPE-ROBUST. Under
-all_past+dense+full-routing+nodrop, every set row retrieves
-significantly worse than the matched token control (paired bootstrap
-CIs strictly positive: b25-token +0.146 [+0.124,+0.168]); the global
-fiber itself slightly DEGRADES set retrieval (b25 new-vs-old AR +0.050
-CI strictly positive) while its cost concentrates on non-AR (cross-
-recipe DiD -0.171). Ablation inverts with blur (b25 AR rides fine
-heads, b75 rides coarse). Aggregation != retrieval is now evidenced on
-both sides: LCA requires the global fiber, AR-hit is hurt by it. Record:
-audit/MRP_2_natural_ar_hits.md bridge section.
+2026-08-12 — MRP-2 global-recipe AR bridge COMPLETE (12/12 train + eval,
+all blue-demon): the null for set-specific repeated-bigram AR advantage
+is RECIPE-ROBUST. Under all_past+dense+full-routing+nodrop, every set row
+has higher absolute AR NLL than the matched token control (paired
+bootstrap CIs strictly positive: b25-token +0.146 [+0.124,+0.168]);
+b0/b25 AR-vs-non-AR DiDs are near zero, so most of the deficit tracks
+overall LM quality. The combined global recipe slightly worsens AR NLL
+(b25 new-vs-old +0.050, CI strictly positive) and worsens non-AR more
+(DiD -0.171); this four-control contrast is not a candidate-fiber-only
+effect. Whole-group ablation follows the head majority and cannot prove
+the presence or absence of a dedicated circuit. LCA success does not
+transfer to this AR proxy. Record: audit/MRP_2_natural_ar_hits.md.

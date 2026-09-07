@@ -1,13 +1,11 @@
 # MRP-lca-cmp: Long-Context Aggregation / Compressed-Memory Comparison
 
-Status: ACTIVE; batching tests and generator validation passed; calibration launch pending approval
+Status: COMPLETE; LCA calibration, mechanism cascade, blur/bandwidth sweeps,
+L2048/L4096 frontier, dropout controls, and WikiText-2 reverse bridge recorded.
 
 Owner: MRP-lca-cmp mechanism worker
 
-Updated: 2026-07-16 after MRP-3 MQAR completed null/inconclusive, the
-research direction shifted from token-precision retrieval to compressed
-long-context aggregation, and the batching-preservation guard passed in the
-Lizmark `set-attention:latest` container.
+Updated: 2026-08-10 after final LCA and reverse-bridge evidence closure.
 
 ## Purpose
 
@@ -327,6 +325,10 @@ module, validated 2026-07-18 in the blue-demon `set-attention` container at
   (`updates=1 train_loss=4.8507 val_loss=4.5152`, untrained chance regime as
   expected).
 
-Next atomic action: launch the registered calibration rows (`L=1024,B=4` and
-`L=2048,B=4`, token + b0--b100, seeds 0--2) behind the learnability gate. This
-requires explicit user approval; no queue is authorized by this plan alone.
+Final state: no MRP-lca-cmp training row is pending.  The dropout-free L4096
+b75 row reaches endpoint parity with token at 13.7% lower peak VRAM, while
+token retains higher best-of-trajectory accuracy.  The reverse bridge shows
+that the global routing recipe degrades WikiText-2 LM, so local LM and global
+aggregation retain separate routing recipes.  Additive routing or a hybrid
+linear/sparse architecture is new-operator work, not continuation of this
+completed no-architecture-change plan.
